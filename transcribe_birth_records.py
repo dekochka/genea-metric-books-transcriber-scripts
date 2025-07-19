@@ -11,9 +11,13 @@ Features:
 - Test mode processes only the first TEST_IMAGE_COUNT images
 
 Image Selection:
-- Set IMAGE_START_NUMBER to specify starting image (e.g., 101 for image00101.jpg)
-- Set IMAGE_COUNT to specify how many consecutive images to process
-- Files must follow pattern: imageXXXXX.jpg where XXXXX is a 5-digit number
+- Set IMAGE_START_NUMBER to specify starting image (e.g., 101 for image00101.jpg or 101.jpg)
+- Set IMAGE_COUNT to specify how many consecutive images to process (e.g., 5 will process image00101.jpg through image00105.jpg or 101.jpg through 105.jpg)
+- Files must follow one of these patterns: 
+  * image (N).jpg where N is a number (e.g., image (7).jpg, image (10).jpg)
+  * imageXXXXX.jpg where XXXXX is a 5-digit number (e.g., image00101.jpg)
+  * XXXXX.jpg where XXXXX is a number (e.g., 52.jpg, 102.jpg)
+- The script will fetch up to MAX_IMAGES from Google Drive, then filter based on these parameters
 
 Test mode processes only the first TEST_IMAGE_COUNT images. Max images processed is capped by MAX_IMAGES.
 """
@@ -32,21 +36,29 @@ from google.genai import types
 
 # ------------------------- CONFIGURATION -------------------------
 PROJECT_ID = "ru-ocr-genea"
-DRIVE_FOLDER_ID = "1Hqd3Kgys9yyDg_iXlXDQm1GNBLVABVVX"
-FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
+#DRIVE_FOLDER_ID = "1Hqd3Kgys9yyDg_iXlXDQm1GNBLVABVVX"
+#FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
+#DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
+#FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
+DRIVE_FOLDER_ID = "10vwVBiJITeImpNpbpbILBKR6vnwOgt1z"
+FOLDER_NAME = "1850-1891 МК Вовкивцы Борщев о рождении"
+
 REGION = "global"  # Changed to global as per sample
-OCR_MODEL_ID = "gemini-2.5-pro-preview-06-05"
+OCR_MODEL_ID = "gemini-2.5-pro"
 ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 101  # Starting image number (e.g., 101 for image00101.jpg)
-IMAGE_COUNT = 90  # Number of images to process starting from IMAGE_START_NUMBER
+IMAGE_START_NUMBER = 2  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_COUNT = 95  # Number of images to process starting from IMAGE_START_NUMBER
 
 # Image Selection Notes:
-# - IMAGE_START_NUMBER: The starting image number (e.g., 101 will start from image00101.jpg)
-# - IMAGE_COUNT: How many consecutive images to process (e.g., 5 will process image00101.jpg through image00105.jpg)
-# - Files must follow the pattern: imageXXXXX.jpg where XXXXX is a 5-digit number
+# - IMAGE_START_NUMBER: The starting image number (e.g., 101 will start from image00101.jpg or 101.jpg)
+# - IMAGE_COUNT: How many consecutive images to process (e.g., 5 will process image00101.jpg through image00105.jpg or 101.jpg through 105.jpg)
+# - Files must follow one of these patterns: 
+#   * image (N).jpg where N is a number (e.g., image (7).jpg, image (10).jpg)
+#   * imageXXXXX.jpg where XXXXX is a 5-digit number (e.g., image00101.jpg)
+#   * XXXXX.jpg where XXXXX is a number (e.g., 52.jpg, 102.jpg)
 # - The script will fetch up to MAX_IMAGES from Google Drive, then filter based on these parameters
 
 # Create logs directory if it doesn't exist
@@ -81,7 +93,7 @@ ai_logger.propagate = False  # Prevent duplicate logging
 globals()['ai_logger'] = ai_logger
 
 # LLM Instruction for transcription
-INSTRUCTION = """Extract and transcribe all text from this handwritten 18th-century birth record from eastern Ukraine, written in Latin or Ukrainian. 
+INSTRUCTION_BIRTH_RECORD = """Extract and transcribe all text from this handwritten 18th-century birth record from eastern Ukraine, written in Latin or Ukrainian. 
     The record contains the following fields: year (usually top left corner), page (usually top right corner), dateOfBirth (source is in in format like  day of birth, day of baptism, month in latin and year,  
     example of source: 14 14 septembris 1889 ), house number, short village name (e.g 21 Turyl), child's name, obstetrician's name, religion, 
     parents names (e.g "Onuphreus filius Stachii Martyniuk et Josephae Humeniuk - Eudoxia filia Michaii Hanczaryk et Parascevy Husak", extract full exact info as is), 
@@ -115,6 +127,135 @@ last column rawinfo must include full text related to a row in original format a
   - Ignore irrelevant text (e.g., marginal notes, page numbers) unless it clearly relates to the specified fields."""
 
 # ------------------------------------------------------------------
+
+# LLM Instruction for transcription
+INSTRUCTION_BIRTH_RECORD_WOWKIWCI = """Extract and transcribe all text from this handwritten 18th-century birth record from eastern Ukraine, written in Latin or Ukrainian. 
+    The record contains the following fields: year (usually top left corner), page (usually top right corner), dateOfBirth (source is in in format like  day of birth, day of baptism, month in latin and year,  
+    example of source: 14 14 septembris 1889 ), house number, short village name (e.g 21 Turyl), child's name, obstetrician's name, religion, 
+    parents names (e.g "Onuphreus filius Stachii Martyniuk et Josephae Humeniuk - Eudoxia filia Michaii Hanczaryk et Parascevy Husak", extract full exact info as is), 
+    godfather (patrini, e.g. Basilius Federczuk & Catarina uxor Joannis Lazaruk , agricola ), 
+    Notes (e.g include info if child is illigitimate and other notes). 
+    list of some villages related to this book: Wolkiwci (Волківці). 
+    Some common surnames:  Baziuk, Basiuk, Bijak, Juskiw, Szepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick,   
+
+Follow these instructions:
+
+1. **Transcription Accuracy**:
+  - Transcribe the text exactly as it appears, preserving Latin or Ukrainian spelling, abbreviations, and historical orthography.
+  - If handwriting is unclear, provide the most likely transcription and note uncertainty in square brackets, e.g., [illegible] or [possibly Anna].
+  - Handle Latin-specific characters (e.g., æ, œ) and common abbreviations (e.g., \"Joannes\" for \"Johannes\").
+
+2. **Structured Output**:
+  - Format the output for each record with the following fields (on new line):  
+    year, page, (common page info)
+        then for each row (every child birth record): 
+        full child name with fathers name in between triple star (dont put name of field, just put value, start with child name) : ***Name Fathers Name Surname DOB*** e.g.  ***Maria Onuphreus Martyniuk 14/09/1889***
+        extracted "**field**: value" on new line: dateofbirth,  dateofbaptism,  house_number, village_name, child_name,  parents, patrini, notes (any extra info), obstetrician, rawinfo.
+last column rawinfo must include full text related to a row in original format as close to source row as possible
+
+3. **Historical Context**:
+  - Expect 18th-century Latin handwriting with potential flourishes, ligatures, or faded ink.
+  - Dates may use Roman numerals (e.g., XVII for 17) or Latin month names (e.g., Januarius, Februarius).
+  - Names may include patronymics or Latinized forms (e.g., \"Petri\" for Peter, \"Mariae\" for Maria).
+
+4. **Error Handling**:
+  - If text is ambiguous, prioritize the most contextually appropriate interpretation based on typical birth record structure.
+  - Ignore irrelevant text (e.g., marginal notes, page numbers) unless it clearly relates to the specified fields."""
+
+
+
+# LLM Instruction for transcription
+INSTRUCTION_DEATH_RECORD = """Extract and transcribe all text from this handwritten 18th or 19th-century death record from eastern Ukraine, written in Latin or Ukrainian.
+
+The record contains the following fields: year (usually top left corner), page (usually top right corner), date of death, date of burial, house number, short village name (e.g 21 Turyl), full name of the deceased, religion, sex, age, reason/cause of death, Notes, and raw info.
+
+Specifically, look for:
+
+Year, Page: (Usually top left and top right corners, respectively).
+Date of death, Date of burial: (Source might be in a format like "obiit 14 septembris 1889", "sepultus 16 septembris 1889").
+House Number: (e.g., No 21, Domus 45).
+Village Name: (e.g., Turyl, Werbiwka).
+Full name: (Of the deceased, including any given marital status, profession, or parentage if indicated, e.g., "Joannes Kowalczuk filius Mathiae", "Maria Nowak vidua Josephi Nowak", "Anna Szewczuk uxor Petri").
+Religion: (e.g., Graeco Catholica, Romano Catholica).
+Sex: (e.g., masculi/masculinus for male, feminae/femininus for female).
+Age: (Often in years, months, or days, e.g., aetatis suae 60 annorum, 2 menses, infans).
+Reason/Cause of Death: (e.g., senectute - old age, morbus - illness, dysenteria - dysentery, pestis - plague, ignota - unknown).
+Burial Details: (e.g., name of the officiating priest, witnesses present at burial, if explicitly stated and distinct from other notes).
+Notes: (Any other relevant information such as marital status if not included in the name, specific profession, or unusual circumstances surrounding the death).
+List of some villages related to this book/region: Werbiwka, Turylche, Pidpilipje, Zalesje, Slobodka, Pukljaki.
+Some common surnames: Lazaruk, Szewczuk, Babij, Kowalczuk, Baziuk, Juskiw, Szepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick.
+
+Follow these instructions:
+
+Transcription Accuracy:
+
+Transcribe the text exactly as it appears, preserving Latin or Ukrainian spelling, abbreviations, and historical orthography.
+If handwriting is unclear, provide the most likely transcription and note uncertainty in square brackets, e.g., [illegible] or [possibly Anna].
+Handle Latin-specific characters (e.g., æ, œ) and common abbreviations (e.g., "obiit" for "died", "sepultus" for "buried", "aet." for "aetatis").
+Structured Output:
+
+Format the output for each record with the following fields (on new line):
+year, page, (common page info)
+Then for each row (every death record):
+full deceased's name, followed by their age and date of death in between triple star (don't put name of field, just put value, start with deceased's name): e.g. ***Joannes Kowalczuk, aet. 70, 10/10/1890***
+extracted "field: value" on new line: date_of_death, date_of_burial, house_number, village_name, deceased_name, religion, sex, age, cause_of_death, burial_details, notes (any extra info), raw_info.
+raw_info must include the full text related to a row in original format as close to the source row as possible.
+Historical Context:
+
+Expect 18th-century Latin/Ukrainian handwriting with potential flourishes, ligatures, or faded ink.
+Dates may use Roman numerals (e.g., XVII for 17) or Latin month names (e.g., Januarius, Februarius).
+Names may include patronymics or Latinized forms (e.g., "Petri" for Peter, "Mariae" for Maria). Pay attention to titles like filius (son), filia (daughter), uxor (wife), vidua (widow), caelebs (bachelor), virgo (spinster).
+Error Handling:
+
+If text is ambiguous, prioritize the most contextually appropriate interpretation based on typical death record structure.
+Ignore irrelevant text (e.g., marginal notes, page numbers) unless it clearly relates to the specified fields."""
+
+# ------------------------------------------------------------------
+#    list of some villages related to this book: Werbiwka, Turylche, Pidpilipje, Zalesje, Slobodka, Pukljaki. 
+#    Some common surnames: Lazaruk, Shewczuk, Babij, Kowalczuk, Basiuk, Juskiw, Sczepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick,   
+
+INSTRUCTION = """Extract and transcribe all text from this handwritten 18th-century marriage records from eastern Ukraine, written in Latin or Ukrainian. 
+    The record typically contains the following fields - table columns from left to right: 
+    mensis (month, year, date of marriage), 
+    Sponsus info - nrus domus (house number with sometimes short village name e.g 21 Turyl), 
+    name (including names of parents and address e.g  Gregorius filiusBasilius Federczuk & Catarina uxor Joannis Lazaruk ), 
+    religion, aetas (age), marriage status(coelebs, viduus),
+    Sponsa info - same info/columns as for Sponsus;
+    Testes info & Conditio - e.g +Nikitas Sofroniek +Ignatus Patyga 
+    Notes (other notes usually below row). 
+    list of some villages related to this book: Wolkiwci (Волківці). 
+    Some common surnames:  Baziuk, Basiuk, Bijak, Juskiw, Szepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick,   
+
+Follow these instructions:
+
+1. **Transcription Accuracy**:
+  - Transcribe the text exactly as it appears, preserving Latin or Ukrainian spelling, abbreviations, and historical orthography.
+  - If handwriting is unclear, provide the most likely transcription and note uncertainty in square brackets, e.g., [illegible] or [possibly Anna].
+  - Handle Latin-specific characters (e.g., æ, œ) and common abbreviations (e.g., \"Joannes\" for \"Johannes\").
+
+2. **Structured Output**:
+  - Format the output for each record with the following fields (on new line):  
+    year, page, (common page info)
+        then for each row (every marriage record): 
+        full groom name with fathers name in between triple star (dont put name of field, just put value, start with child name) : 
+        ***Name Fathers Name Surname DOB*** e.g.  ***Gregorii Ignatus Lazaruk 14/09/1889***
+        full bride name with fathers name in between triple star (dont put name of field, just put value, start with child name) : 
+        ***Name Fathers Name Surname DOB*** e.g.  ***Maria Onuphreus Martyniuk 14/09/1889***
+        then extracted "field: value" on new line: 
+        dateofmarriage (format: DD/MM/YYYY), 
+        house_number, village_name, groom_name, groom_age, groom_dob (derived year of birth of groom), groom_parents, religion, marriage_status,
+        bride_name, bride_age, bride_dob (derived year of birth of bride), bride_parents (including village and house number of found in parents info), religion, marriage_status,
+        testes, notes (any extra info), rawinfo.
+last column rawinfo must include full text related to a row in original format as close to source row as possible with related notes
+
+3. **Historical Context**:
+  - Expect 18th-century Latin or Ukrainian handwriting with potential flourishes, ligatures, or faded ink.
+  - Dates may use Roman numerals (e.g., XVII for 17) or Latin month names (e.g., Januarius, Februarius).
+  - Names may include patronymics or Latinized forms (e.g., \"Petri\" for Peter, \"Mariae\" for Maria).
+
+4. **Error Handling**:
+  - If text is ambiguous, prioritize the most contextually appropriate interpretation based on typical birth record structure.
+  - Ignore irrelevant text (e.g., marginal notes, page numbers) unless it clearly relates to the specified fields."""
 
 def authenticate():
     """
@@ -155,6 +296,7 @@ def list_images(drive_service):
     """
     Get list of images from Google Drive folder, sorted by filename.
     Handles pagination to fetch up to 1000 images and filters based on IMAGE_START_NUMBER and IMAGE_COUNT.
+    Supports both filename patterns: imageXXXXX.jpg and XXXXX.jpg
     Returns list of image metadata including id, name, and webViewLink.
     """
     query = (
@@ -196,27 +338,76 @@ def list_images(drive_service):
     
     # Filter images based on IMAGE_START_NUMBER and IMAGE_COUNT
     filtered_images = []
-    start_filename = f"image{IMAGE_START_NUMBER:05d}.jpg"
-    end_filename = f"image{IMAGE_START_NUMBER + IMAGE_COUNT - 1:05d}.jpg"
     
-    logging.info(f"Filtering images from {start_filename} to {end_filename}")
+    # Define expected filename patterns for logging
+    start_filename_pattern1 = f"image ({IMAGE_START_NUMBER}).jpg"
+    end_filename_pattern1 = f"image ({IMAGE_START_NUMBER + IMAGE_COUNT - 1}).jpg"
+    start_filename_pattern2 = f"image{IMAGE_START_NUMBER:05d}.jpg"
+    end_filename_pattern2 = f"image{IMAGE_START_NUMBER + IMAGE_COUNT - 1:05d}.jpg"
+    start_filename_pattern3 = f"{IMAGE_START_NUMBER}.jpg"
+    end_filename_pattern3 = f"{IMAGE_START_NUMBER + IMAGE_COUNT - 1}.jpg"
+    
+    logging.info(f"Filtering images from {start_filename_pattern1} to {end_filename_pattern1} OR {start_filename_pattern2} to {end_filename_pattern2} OR {start_filename_pattern3} to {end_filename_pattern3}")
     
     for img in all_images:
         filename = img['name']
+        number = None
+        
+        # Check if filename matches the pattern image (N).jpg
+        if filename.startswith('image (') and filename.endswith(').jpg'):
+            try:
+                # Extract the number from filename (e.g., "image (7).jpg" -> 7)
+                # Find the opening and closing parentheses
+                start_idx = filename.find('(') + 1
+                end_idx = filename.find(')')
+                number_str = filename[start_idx:end_idx]
+                number = int(number_str)
+            except (ValueError, IndexError):
+                # Skip files that don't match the expected pattern
+                continue
+        
         # Check if filename matches the pattern imageXXXXX.jpg
-        if filename.startswith('image') and filename.endswith('.jpg'):
+        elif filename.startswith('image') and filename.endswith('.jpg') and not '(' in filename:
             try:
                 # Extract the number from filename (e.g., "image00101.jpg" -> 101)
                 number_str = filename[5:-4]  # Remove "image" prefix and ".jpg" suffix
                 number = int(number_str)
-                
-                # Check if number is in the desired range
-                if IMAGE_START_NUMBER <= number < IMAGE_START_NUMBER + IMAGE_COUNT:
-                    filtered_images.append(img)
-                    
             except ValueError:
                 # Skip files that don't match the expected pattern
                 continue
+        
+        # Check if filename matches the pattern XXXXX.jpg (like 52.jpg, 102.jpg)
+        elif filename.endswith('.jpg') and not filename.startswith('image'):
+            try:
+                # Extract the number from filename (e.g., "52.jpg" -> 52, "102.jpg" -> 102)
+                number_str = filename[:-4]  # Remove ".jpg" suffix
+                number = int(number_str)
+            except ValueError:
+                # Skip files that don't match the expected pattern
+                continue
+        
+        # If we found a valid number, check if it's in the desired range
+        if number is not None:
+            if IMAGE_START_NUMBER <= number < IMAGE_START_NUMBER + IMAGE_COUNT:
+                filtered_images.append(img)
+    
+    # Sort filtered images numerically by their extracted number
+    def extract_number_for_sorting(img):
+        filename = img['name']
+        if filename.startswith('image (') and filename.endswith(').jpg'):
+            # Extract number from "image (N).jpg" format
+            start_idx = filename.find('(') + 1
+            end_idx = filename.find(')')
+            number_str = filename[start_idx:end_idx]
+        elif filename.startswith('image') and filename.endswith('.jpg') and not '(' in filename:
+            # Extract number from "imageXXXXX.jpg" format
+            number_str = filename[5:-4]  # Remove "image" prefix and ".jpg" suffix
+        else:
+            # Extract number from "XXXXX.jpg" format
+            number_str = filename[:-4]  # Remove ".jpg" suffix
+        return int(number_str)
+    
+    filtered_images.sort(key=extract_number_for_sorting)
     
     logging.info(f"Selected {len(filtered_images)} images for processing (from {IMAGE_START_NUMBER} to {IMAGE_START_NUMBER + IMAGE_COUNT - 1})")
     

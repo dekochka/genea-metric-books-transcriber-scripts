@@ -2,5 +2,6 @@ google-cloud-aiplatform>=1.36.0
 google-api-python-client>=2.108.0
 google-auth-httplib2>=0.1.1
 google-auth-oauthlib>=1.1.0
+google-genai>=0.8.0
 Pillow>=10.0.0
 python-dotenv>=1.0.0 
