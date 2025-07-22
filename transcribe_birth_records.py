@@ -17,9 +17,16 @@ Image Selection:
   * image (N).jpg where N is a number (e.g., image (7).jpg, image (10).jpg)
   * imageXXXXX.jpg where XXXXX is a 5-digit number (e.g., image00101.jpg)
   * XXXXX.jpg where XXXXX is a number (e.g., 52.jpg, 102.jpg)
+  * image - YYYY-MM-DDTHHMMSS.mmm.jpg (timestamp format, e.g., image - 2025-07-20T112914.366.jpg)
 - The script will fetch up to MAX_IMAGES from Google Drive, then filter based on these parameters
 
 Test mode processes only the first TEST_IMAGE_COUNT images. Max images processed is capped by MAX_IMAGES.
+
+Retry Mode:
+- Set RETRY_MODE = True to process only specific failed images from previous runs
+- Add failed image filenames to RETRY_IMAGE_LIST (can be with or without "image - " prefix)
+- When retry mode is enabled, IMAGE_START_NUMBER and IMAGE_COUNT are ignored
+- Useful for reprocessing images that failed due to network timeouts or server errors
 """
 
 import io
@@ -40,8 +47,8 @@ PROJECT_ID = "ru-ocr-genea"
 #FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
 #DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
 #FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "10vwVBiJITeImpNpbpbILBKR6vnwOgt1z"
-FOLDER_NAME = "1850-1891 МК Вовкивцы Борщев о рождении"
+DRIVE_FOLDER_ID = "1-IkGrRBc6Fr-OsabPWmnuZt2qbYS0C5S"
+FOLDER_NAME = "1848-1896 МК Вовкивцы Борщев рождения"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-2.5-pro"
@@ -49,8 +56,63 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 2  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
-IMAGE_COUNT = 95  # Number of images to process starting from IMAGE_START_NUMBER
+IMAGE_START_NUMBER = 200  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_COUNT = 300  # Number of images to process starting from IMAGE_START_NUMBER
+
+# RETRY MODE - Set to True to retry specific failed images
+RETRY_MODE = True
+RETRY_IMAGE_LIST = [
+    # Complete list of all images with "No response text received from Vertex AI" errors
+    # Extracted from logs 20250720*, 20250721*, 20250722* - Total: 48 images
+    "2025-07-20T112519.385.jpg",
+    "2025-07-20T112522.938.jpg",
+    "2025-07-20T112528.377.jpg",
+    "2025-07-20T112544.332.jpg",
+    "2025-07-20T112551.367.jpg",
+    "2025-07-20T112553.471.jpg",
+    "2025-07-20T112601.854.jpg",
+    "2025-07-20T112609.044.jpg",
+    "2025-07-20T112620.042.jpg",
+    "2025-07-20T112622.286.jpg",
+    "2025-07-20T112628.271.jpg",
+    "2025-07-20T112639.662.jpg",
+    "2025-07-20T112709.093.jpg",
+    "2025-07-20T112712.160.jpg",
+    "2025-07-20T112727.715.jpg",
+    "2025-07-20T112732.117.jpg",
+    "2025-07-20T112734.448.jpg",
+    "2025-07-20T112747.332.jpg",
+    "2025-07-20T112751.226.jpg",
+    "2025-07-20T112755.647.jpg",
+    "2025-07-20T112759.892.jpg",
+    "2025-07-20T112807.803.jpg",
+    "2025-07-20T112809.729.jpg",
+    "2025-07-20T112811.697.jpg",
+    "2025-07-20T112830.064.jpg",
+    "2025-07-20T112835.861.jpg",
+    "2025-07-20T112855.914.jpg",
+    "2025-07-20T112916.700.jpg",
+    "2025-07-20T112939.521.jpg",
+    "2025-07-20T112946.336.jpg",
+    "2025-07-20T113026.573.jpg",
+    "2025-07-20T113040.781.jpg",
+    "2025-07-20T113128.157.jpg",
+    "2025-07-20T113233.281.jpg",
+    "2025-07-20T113259.045.jpg",
+    "2025-07-20T113335.360.jpg",
+    "2025-07-20T113339.509.jpg",
+    "2025-07-20T113351.813.jpg",
+    "2025-07-20T113359.967.jpg",
+    "2025-07-20T113410.088.jpg",
+    "2025-07-20T113412.034.jpg",
+    "2025-07-20T113416.201.jpg",
+    "2025-07-20T113433.524.jpg",
+    "2025-07-20T113507.088.jpg",
+    "2025-07-20T113510.674.jpg",
+    "2025-07-20T113516.313.jpg",
+    "2025-07-20T113544.156.jpg",
+    "2025-07-20T113621.536.jpg"
+]
 
 # Image Selection Notes:
 # - IMAGE_START_NUMBER: The starting image number (e.g., 101 will start from image00101.jpg or 101.jpg)
@@ -59,6 +121,7 @@ IMAGE_COUNT = 95  # Number of images to process starting from IMAGE_START_NUMBER
 #   * image (N).jpg where N is a number (e.g., image (7).jpg, image (10).jpg)
 #   * imageXXXXX.jpg where XXXXX is a 5-digit number (e.g., image00101.jpg)
 #   * XXXXX.jpg where XXXXX is a number (e.g., 52.jpg, 102.jpg)
+#   * image - YYYY-MM-DDTHHMMSS.mmm.jpg (timestamp format, e.g., image - 2025-07-20T112914.366.jpg)
 # - The script will fetch up to MAX_IMAGES from Google Drive, then filter based on these parameters
 
 # Create logs directory if it doesn't exist
@@ -129,14 +192,14 @@ last column rawinfo must include full text related to a row in original format a
 # ------------------------------------------------------------------
 
 # LLM Instruction for transcription
-INSTRUCTION_BIRTH_RECORD_WOWKIWCI = """Extract and transcribe all text from this handwritten 18th-century birth record from eastern Ukraine, written in Latin or Ukrainian. 
+INSTRUCTION = """Extract and transcribe all text from this handwritten 18th-century birth record from eastern Ukraine, written in Latin or Ukrainian. 
     The record contains the following fields: year (usually top left corner), page (usually top right corner), dateOfBirth (source is in in format like  day of birth, day of baptism, month in latin and year,  
     example of source: 14 14 septembris 1889 ), house number, short village name (e.g 21 Turyl), child's name, obstetrician's name, religion, 
     parents names (e.g "Onuphreus filius Stachii Martyniuk et Josephae Humeniuk - Eudoxia filia Michaii Hanczaryk et Parascevy Husak", extract full exact info as is), 
     godfather (patrini, e.g. Basilius Federczuk & Catarina uxor Joannis Lazaruk , agricola ), 
     Notes (e.g include info if child is illigitimate and other notes). 
     list of some villages related to this book: Wolkiwci (Волківці). 
-    Some common surnames:  Baziuk, Basiuk, Bijak, Juskiw, Szepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick,   
+    Some common surnames:  Baziuk, Basiuk, Lazaruk, Szewczuk, Bijak, Juskiw, Szepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick,   
 
 Follow these instructions:
 
@@ -214,7 +277,7 @@ Ignore irrelevant text (e.g., marginal notes, page numbers) unless it clearly re
 #    list of some villages related to this book: Werbiwka, Turylche, Pidpilipje, Zalesje, Slobodka, Pukljaki. 
 #    Some common surnames: Lazaruk, Shewczuk, Babij, Kowalczuk, Basiuk, Juskiw, Sczepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick,   
 
-INSTRUCTION = """Extract and transcribe all text from this handwritten 18th-century marriage records from eastern Ukraine, written in Latin or Ukrainian. 
+INSTRUCTION_MARRIAGES = """Extract and transcribe all text from this handwritten 18th-century marriage records from eastern Ukraine, written in Latin or Ukrainian. 
     The record typically contains the following fields - table columns from left to right: 
     mensis (month, year, date of marriage), 
     Sponsus info - nrus domus (house number with sometimes short village name e.g 21 Turyl), 
@@ -296,9 +359,16 @@ def list_images(drive_service):
     """
     Get list of images from Google Drive folder, sorted by filename.
     Handles pagination to fetch up to 1000 images and filters based on IMAGE_START_NUMBER and IMAGE_COUNT.
-    Supports both filename patterns: imageXXXXX.jpg and XXXXX.jpg
+    Supports filename patterns: 
+    - image (N).jpg where N is a number (e.g., image (7).jpg, image (10).jpg)
+    - imageXXXXX.jpg where XXXXX is a 5-digit number (e.g., image00101.jpg)
+    - XXXXX.jpg where XXXXX is a number (e.g., 52.jpg, 102.jpg)
+    - image - YYYY-MM-DDTHHMMSS.mmm.jpg (timestamp format, e.g., image - 2025-07-20T112914.366.jpg)
     Returns list of image metadata including id, name, and webViewLink.
     """
+    import re
+    from datetime import datetime
+    
     query = (
         f"mimeType='image/jpeg' and '{DRIVE_FOLDER_ID}' in parents and trashed=false"
     )
@@ -336,44 +406,69 @@ def list_images(drive_service):
     all_images = all_images[:MAX_IMAGES]
     logging.info(f"Found {len(all_images)} total images in folder '{FOLDER_NAME}' (sorted by filename)")
     
-    # Filter images based on IMAGE_START_NUMBER and IMAGE_COUNT
-    filtered_images = []
+    # RETRY MODE: If enabled, filter for specific failed images only
+    if RETRY_MODE:
+        logging.info(f"RETRY MODE ENABLED: Looking for {len(RETRY_IMAGE_LIST)} specific failed images")
+        retry_images = []
+        
+        # Convert retry list to full image names (add "image - " prefix if needed)
+        retry_full_names = []
+        for retry_img in RETRY_IMAGE_LIST:
+            if retry_img.startswith('image - '):
+                retry_full_names.append(retry_img)
+            else:
+                retry_full_names.append(f"image - {retry_img}")
+        
+        # Find matching images
+        for img in all_images:
+            if img['name'] in retry_full_names:
+                retry_images.append(img)
+        
+        logging.info(f"Found {len(retry_images)} retry images out of {len(RETRY_IMAGE_LIST)} requested")
+        if retry_images:
+            retry_filenames = [img['name'] for img in retry_images]
+            logging.info(f"Retry images found: {retry_filenames}")
+        else:
+            logging.warning("No retry images found! Check the RETRY_IMAGE_LIST names.")
+        
+        return retry_images
     
-    # Define expected filename patterns for logging
-    start_filename_pattern1 = f"image ({IMAGE_START_NUMBER}).jpg"
-    end_filename_pattern1 = f"image ({IMAGE_START_NUMBER + IMAGE_COUNT - 1}).jpg"
-    start_filename_pattern2 = f"image{IMAGE_START_NUMBER:05d}.jpg"
-    end_filename_pattern2 = f"image{IMAGE_START_NUMBER + IMAGE_COUNT - 1:05d}.jpg"
-    start_filename_pattern3 = f"{IMAGE_START_NUMBER}.jpg"
-    end_filename_pattern3 = f"{IMAGE_START_NUMBER + IMAGE_COUNT - 1}.jpg"
+    # NORMAL MODE: Separate images by pattern type
+    numbered_images = []
+    timestamp_images = []
     
-    logging.info(f"Filtering images from {start_filename_pattern1} to {end_filename_pattern1} OR {start_filename_pattern2} to {end_filename_pattern2} OR {start_filename_pattern3} to {end_filename_pattern3}")
+    # Regex pattern for timestamp format: image - YYYY-MM-DDTHHMMSS.mmm.jpg
+    timestamp_pattern = re.compile(r'^image - (\d{4}-\d{2}-\d{2}T\d{6}\.\d{3})\.jpg$')
     
     for img in all_images:
         filename = img['name']
         number = None
+        timestamp_match = None
+        
+        # Check for timestamp pattern first
+        timestamp_match = timestamp_pattern.match(filename)
+        if timestamp_match:
+            timestamp_images.append(img)
+            continue
         
         # Check if filename matches the pattern image (N).jpg
         if filename.startswith('image (') and filename.endswith(').jpg'):
             try:
                 # Extract the number from filename (e.g., "image (7).jpg" -> 7)
-                # Find the opening and closing parentheses
                 start_idx = filename.find('(') + 1
                 end_idx = filename.find(')')
                 number_str = filename[start_idx:end_idx]
                 number = int(number_str)
             except (ValueError, IndexError):
-                # Skip files that don't match the expected pattern
                 continue
         
         # Check if filename matches the pattern imageXXXXX.jpg
-        elif filename.startswith('image') and filename.endswith('.jpg') and not '(' in filename:
+        elif filename.startswith('image') and filename.endswith('.jpg') and not '(' in filename and not ' - ' in filename:
             try:
                 # Extract the number from filename (e.g., "image00101.jpg" -> 101)
                 number_str = filename[5:-4]  # Remove "image" prefix and ".jpg" suffix
                 number = int(number_str)
             except ValueError:
-                # Skip files that don't match the expected pattern
                 continue
         
         # Check if filename matches the pattern XXXXX.jpg (like 52.jpg, 102.jpg)
@@ -383,38 +478,118 @@ def list_images(drive_service):
                 number_str = filename[:-4]  # Remove ".jpg" suffix
                 number = int(number_str)
             except ValueError:
-                # Skip files that don't match the expected pattern
                 continue
         
         # If we found a valid number, check if it's in the desired range
         if number is not None:
             if IMAGE_START_NUMBER <= number < IMAGE_START_NUMBER + IMAGE_COUNT:
-                filtered_images.append(img)
+                numbered_images.append(img)
     
-    # Sort filtered images numerically by their extracted number
-    def extract_number_for_sorting(img):
-        filename = img['name']
-        if filename.startswith('image (') and filename.endswith(').jpg'):
-            # Extract number from "image (N).jpg" format
-            start_idx = filename.find('(') + 1
-            end_idx = filename.find(')')
-            number_str = filename[start_idx:end_idx]
-        elif filename.startswith('image') and filename.endswith('.jpg') and not '(' in filename:
-            # Extract number from "imageXXXXX.jpg" format
-            number_str = filename[5:-4]  # Remove "image" prefix and ".jpg" suffix
-        else:
-            # Extract number from "XXXXX.jpg" format
-            number_str = filename[:-4]  # Remove ".jpg" suffix
-        return int(number_str)
+    # Handle numbered images (existing logic)
+    filtered_images = []
     
-    filtered_images.sort(key=extract_number_for_sorting)
+    if numbered_images:
+        # Define expected filename patterns for logging
+        start_filename_pattern1 = f"image ({IMAGE_START_NUMBER}).jpg"
+        end_filename_pattern1 = f"image ({IMAGE_START_NUMBER + IMAGE_COUNT - 1}).jpg"
+        start_filename_pattern2 = f"image{IMAGE_START_NUMBER:05d}.jpg"
+        end_filename_pattern2 = f"image{IMAGE_START_NUMBER + IMAGE_COUNT - 1:05d}.jpg"
+        start_filename_pattern3 = f"{IMAGE_START_NUMBER}.jpg"
+        end_filename_pattern3 = f"{IMAGE_START_NUMBER + IMAGE_COUNT - 1}.jpg"
+        
+        logging.info(f"Filtering numbered images from {start_filename_pattern1} to {end_filename_pattern1} OR {start_filename_pattern2} to {end_filename_pattern2} OR {start_filename_pattern3} to {end_filename_pattern3}")
+        
+        # Sort numbered images numerically by their extracted number
+        def extract_number_for_sorting(img):
+            filename = img['name']
+            if filename.startswith('image (') and filename.endswith(').jpg'):
+                # Extract number from "image (N).jpg" format
+                start_idx = filename.find('(') + 1
+                end_idx = filename.find(')')
+                number_str = filename[start_idx:end_idx]
+            elif filename.startswith('image') and filename.endswith('.jpg') and not '(' in filename and not ' - ' in filename:
+                # Extract number from "imageXXXXX.jpg" format
+                number_str = filename[5:-4]  # Remove "image" prefix and ".jpg" suffix
+            else:
+                # Extract number from "XXXXX.jpg" format
+                number_str = filename[:-4]  # Remove ".jpg" suffix
+            return int(number_str)
+        
+        numbered_images.sort(key=extract_number_for_sorting)
+        filtered_images.extend(numbered_images)
     
-    logging.info(f"Selected {len(filtered_images)} images for processing (from {IMAGE_START_NUMBER} to {IMAGE_START_NUMBER + IMAGE_COUNT - 1})")
+    # Handle timestamp images
+    if timestamp_images:
+        logging.info(f"Found {len(timestamp_images)} timestamp-based images")
+        
+        # Sort timestamp images chronologically
+        def extract_timestamp_for_sorting(img):
+            filename = img['name']
+            match = timestamp_pattern.match(filename)
+            if match:
+                timestamp_str = match.group(1)
+                # Parse timestamp: YYYY-MM-DDTHHMMSS.mmm -> datetime
+                try:
+                    # Convert format 2025-07-20T112914.366 to 2025-07-20T11:29:14.366
+                    formatted_timestamp = f"{timestamp_str[:11]}{timestamp_str[11:13]}:{timestamp_str[13:15]}:{timestamp_str[15:]}"
+                    return datetime.fromisoformat(formatted_timestamp)
+                except ValueError:
+                    return datetime.min
+            return datetime.min
+        
+        timestamp_images.sort(key=extract_timestamp_for_sorting)
+        
+        # For timestamp images, treat IMAGE_START_NUMBER as the starting position (1-indexed)
+        # and IMAGE_COUNT as the number of images to process
+        start_pos = max(1, IMAGE_START_NUMBER) - 1  # Convert to 0-indexed
+        end_pos = min(len(timestamp_images), start_pos + IMAGE_COUNT)
+        
+        selected_timestamp_images = timestamp_images[start_pos:end_pos]
+        filtered_images.extend(selected_timestamp_images)
+        
+        if selected_timestamp_images:
+            logging.info(f"Selected {len(selected_timestamp_images)} timestamp images from position {IMAGE_START_NUMBER} to {start_pos + len(selected_timestamp_images)}")
+            filenames = [img['name'] for img in selected_timestamp_images]
+            logging.info(f"Selected timestamp files: {filenames}")
+    
+    # Final sort of all filtered images
+    if filtered_images:
+        # Sort mixed list: numbered images by number, timestamp images by timestamp
+        def mixed_sorting_key(img):
+            filename = img['name']
+            timestamp_match = timestamp_pattern.match(filename)
+            
+            if timestamp_match:
+                # Timestamp image - sort by timestamp
+                timestamp_str = timestamp_match.group(1)
+                try:
+                    formatted_timestamp = f"{timestamp_str[:11]}{timestamp_str[11:13]}:{timestamp_str[13:15]}:{timestamp_str[15:]}"
+                    return (1, datetime.fromisoformat(formatted_timestamp))  # 1 to sort timestamp images after numbered
+                except ValueError:
+                    return (1, datetime.min)
+            else:
+                # Numbered image - sort by number
+                if filename.startswith('image (') and filename.endswith(').jpg'):
+                    start_idx = filename.find('(') + 1
+                    end_idx = filename.find(')')
+                    number_str = filename[start_idx:end_idx]
+                elif filename.startswith('image') and filename.endswith('.jpg') and not '(' in filename and not ' - ' in filename:
+                    number_str = filename[5:-4]
+                else:
+                    number_str = filename[:-4]
+                try:
+                    return (0, int(number_str))  # 0 to sort numbered images first
+                except ValueError:
+                    return (0, 0)
+        
+        filtered_images.sort(key=mixed_sorting_key)
+    
+    logging.info(f"Selected {len(filtered_images)} total images for processing")
     
     # Log the selected filenames for verification
     if filtered_images:
         filenames = [img['name'] for img in filtered_images]
-        logging.info(f"Selected files: {filenames}")
+        logging.info(f"Final selected files: {filenames}")
     
     return filtered_images
 
@@ -689,9 +864,14 @@ def main():
         ai_logger.info(f"Folder: {FOLDER_NAME}")
         ai_logger.info(f"Model: {OCR_MODEL_ID}")
         ai_logger.info(f"Test mode: {TEST_MODE}")
-        ai_logger.info(f"Max images: {MAX_IMAGES}")
-        ai_logger.info(f"Image start number: {IMAGE_START_NUMBER}")
-        ai_logger.info(f"Image count: {IMAGE_COUNT}")
+        ai_logger.info(f"Retry mode: {RETRY_MODE}")
+        if RETRY_MODE:
+            ai_logger.info(f"Retry images count: {len(RETRY_IMAGE_LIST)}")
+            ai_logger.info(f"Retry images: {RETRY_IMAGE_LIST}")
+        else:
+            ai_logger.info(f"Max images: {MAX_IMAGES}")
+            ai_logger.info(f"Image start number: {IMAGE_START_NUMBER}")
+            ai_logger.info(f"Image count: {IMAGE_COUNT}")
         ai_logger.info(f"=== Session Configuration ===\n")
         
         # Initialize services
@@ -701,8 +881,12 @@ def main():
         images = list_images(drive_service)
         
         if not images:
-            logging.error(f"No images found in folder '{FOLDER_NAME}' for the specified range (start: {IMAGE_START_NUMBER}, count: {IMAGE_COUNT})")
-            ai_logger.error(f"No images found for range {IMAGE_START_NUMBER} to {IMAGE_START_NUMBER + IMAGE_COUNT - 1}")
+            if RETRY_MODE:
+                logging.error(f"No retry images found in folder '{FOLDER_NAME}' from the RETRY_IMAGE_LIST")
+                ai_logger.error(f"No retry images found from list of {len(RETRY_IMAGE_LIST)} images")
+            else:
+                logging.error(f"No images found in folder '{FOLDER_NAME}' for the specified range (start: {IMAGE_START_NUMBER}, count: {IMAGE_COUNT})")
+                ai_logger.error(f"No images found for range {IMAGE_START_NUMBER} to {IMAGE_START_NUMBER + IMAGE_COUNT - 1}")
             return
         
         # First, transcribe all images
