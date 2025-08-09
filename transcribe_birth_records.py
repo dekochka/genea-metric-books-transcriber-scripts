@@ -47,8 +47,8 @@ PROJECT_ID = "ru-ocr-genea"
 #FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
 #DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
 #FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "1-IkGrRBc6Fr-OsabPWmnuZt2qbYS0C5S"
-FOLDER_NAME = "1848-1896 МК Вовкивцы Борщев рождения"
+DRIVE_FOLDER_ID = "1r6HuLNHrgywpe2oaHz64RzfYcEufrdtv"
+FOLDER_NAME = "1837-1850 Demeshkivtsi Nymshin 004932904 Item 5"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-2.5-pro"
@@ -56,62 +56,14 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 200  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
-IMAGE_COUNT = 300  # Number of images to process starting from IMAGE_START_NUMBER
+IMAGE_START_NUMBER = 1  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_COUNT = 120  # Number of images to process starting from IMAGE_START_NUMBER
 
 # RETRY MODE - Set to True to retry specific failed images
-RETRY_MODE = True
+RETRY_MODE = False
 RETRY_IMAGE_LIST = [
-    # Complete list of all images with "No response text received from Vertex AI" errors
-    # Extracted from logs 20250720*, 20250721*, 20250722* - Total: 48 images
-    "2025-07-20T112519.385.jpg",
-    "2025-07-20T112522.938.jpg",
-    "2025-07-20T112528.377.jpg",
-    "2025-07-20T112544.332.jpg",
-    "2025-07-20T112551.367.jpg",
-    "2025-07-20T112553.471.jpg",
-    "2025-07-20T112601.854.jpg",
-    "2025-07-20T112609.044.jpg",
-    "2025-07-20T112620.042.jpg",
-    "2025-07-20T112622.286.jpg",
-    "2025-07-20T112628.271.jpg",
-    "2025-07-20T112639.662.jpg",
-    "2025-07-20T112709.093.jpg",
-    "2025-07-20T112712.160.jpg",
-    "2025-07-20T112727.715.jpg",
-    "2025-07-20T112732.117.jpg",
-    "2025-07-20T112734.448.jpg",
-    "2025-07-20T112747.332.jpg",
-    "2025-07-20T112751.226.jpg",
-    "2025-07-20T112755.647.jpg",
-    "2025-07-20T112759.892.jpg",
-    "2025-07-20T112807.803.jpg",
-    "2025-07-20T112809.729.jpg",
-    "2025-07-20T112811.697.jpg",
-    "2025-07-20T112830.064.jpg",
-    "2025-07-20T112835.861.jpg",
-    "2025-07-20T112855.914.jpg",
-    "2025-07-20T112916.700.jpg",
-    "2025-07-20T112939.521.jpg",
-    "2025-07-20T112946.336.jpg",
-    "2025-07-20T113026.573.jpg",
-    "2025-07-20T113040.781.jpg",
-    "2025-07-20T113128.157.jpg",
-    "2025-07-20T113233.281.jpg",
-    "2025-07-20T113259.045.jpg",
-    "2025-07-20T113335.360.jpg",
-    "2025-07-20T113339.509.jpg",
-    "2025-07-20T113351.813.jpg",
-    "2025-07-20T113359.967.jpg",
-    "2025-07-20T113410.088.jpg",
-    "2025-07-20T113412.034.jpg",
-    "2025-07-20T113416.201.jpg",
-    "2025-07-20T113433.524.jpg",
-    "2025-07-20T113507.088.jpg",
-    "2025-07-20T113510.674.jpg",
-    "2025-07-20T113516.313.jpg",
-    "2025-07-20T113544.156.jpg",
-    "2025-07-20T113621.536.jpg"
+    # Image that failed with timeout on 2025-08-03 (now fixed)
+     "2025-07-23T065033.080.jpg"
 ]
 
 # Image Selection Notes:
@@ -192,7 +144,7 @@ last column rawinfo must include full text related to a row in original format a
 # ------------------------------------------------------------------
 
 # LLM Instruction for transcription
-INSTRUCTION = """Extract and transcribe all text from this handwritten 18th-century birth record from eastern Ukraine, written in Latin or Ukrainian. 
+INSTRUCTION_BIRTH_2 = """Extract and transcribe all text from this handwritten 18th-century birth record from eastern Ukraine, written in Latin or Ukrainian. 
     The record contains the following fields: year (usually top left corner), page (usually top right corner), dateOfBirth (source is in in format like  day of birth, day of baptism, month in latin and year,  
     example of source: 14 14 septembris 1889 ), house number, short village name (e.g 21 Turyl), child's name, obstetrician's name, religion, 
     parents names (e.g "Onuphreus filius Stachii Martyniuk et Josephae Humeniuk - Eudoxia filia Michaii Hanczaryk et Parascevy Husak", extract full exact info as is), 
@@ -277,17 +229,17 @@ Ignore irrelevant text (e.g., marginal notes, page numbers) unless it clearly re
 #    list of some villages related to this book: Werbiwka, Turylche, Pidpilipje, Zalesje, Slobodka, Pukljaki. 
 #    Some common surnames: Lazaruk, Shewczuk, Babij, Kowalczuk, Basiuk, Juskiw, Sczepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick,   
 
-INSTRUCTION_MARRIAGES = """Extract and transcribe all text from this handwritten 18th-century marriage records from eastern Ukraine, written in Latin or Ukrainian. 
-    The record typically contains the following fields - table columns from left to right: 
+INSTRUCTION = """Extract and transcribe all text from this handwritten 18th-century birth, death orarriage records from eastern Ukraine, written in Latin or Ukrainian from village Temerowce (or other). 
+    Marriage record typically contains the following fields - table columns from left to right: 
     mensis (month, year, date of marriage), 
-    Sponsus info - nrus domus (house number with sometimes short village name e.g 21 Turyl), 
+    Sponsus info - nrus domus (house number with sometimes short village name e.g 21 Temyr), 
     name (including names of parents and address e.g  Gregorius filiusBasilius Federczuk & Catarina uxor Joannis Lazaruk ), 
     religion, aetas (age), marriage status(coelebs, viduus),
     Sponsa info - same info/columns as for Sponsus;
     Testes info & Conditio - e.g +Nikitas Sofroniek +Ignatus Patyga 
     Notes (other notes usually below row). 
-    list of some villages related to this book: Wolkiwci (Волківці). 
-    Some common surnames:  Baziuk, Basiuk, Bijak, Juskiw, Szepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick,   
+    list of some villages related to this book: Demeszkowce (Демешкивцы), Niemszyn (Нимшин), Temerowce (Темировцы),Siedliska (Селиська), Bludniki (Блюдники), Медыня (Medynia). 
+    Some common surnames:  Merecki (Мерецкий), Homeniuk (Гуменюк), Wasylchuk (Васильчук), Hulik (Гулик), Lesyow (Лесив), Mikityn (Микитюк), Rega (Рега), Dubilewski (Дубилевский),   
 
 Follow these instructions:
 
@@ -297,7 +249,7 @@ Follow these instructions:
   - Handle Latin-specific characters (e.g., æ, œ) and common abbreviations (e.g., \"Joannes\" for \"Johannes\").
 
 2. **Structured Output**:
-  - Format the output for each record with the following fields (on new line):  
+  - Format the output for each marriage record with the following fields (on new line):  
     year, page, (common page info)
         then for each row (every marriage record): 
         full groom name with fathers name in between triple star (dont put name of field, just put value, start with child name) : 
@@ -310,6 +262,40 @@ Follow these instructions:
         bride_name, bride_age, bride_dob (derived year of birth of bride), bride_parents (including village and house number of found in parents info), religion, marriage_status,
         testes, notes (any extra info), rawinfo.
 last column rawinfo must include full text related to a row in original format as close to source row as possible with related notes
+- Birth records fields:
+        full child name with fathers name in between triple star (dont put name of field, just put value, start with child name) : ***Name Fathers Name Surname DOB*** e.g.  ***Maria Onuphreus Martyniuk 14/09/1889***
+        extracted "**field**: value" on new line: dateofbirth,  dateofbaptism,  house_number, village_name, child_name,  parents, patrini, notes (any extra info), obstetrician, rawinfo.
+
+- Death records fields:
+    full deceased's name with relative (uxor/vidua/etc), followed by their age and date of death in between triple star (don't put name of field, just put value, start with deceased's name): e.g. ***Joannes Kowalczuk, aet. 70, 10/10/1890***
+    extracted "field: value" on new line: date_of_death, date_of_burial, house_number, village_name, deceased_name, religion, sex, age, cause_of_death, burial_details, notes (any extra info), raw_info.
+    raw_info must include the full text related to a row in original format as close to the source row as possible.
+
+После каждой записи по персоне на латыни дополнительно добавь компактную запись транскрипции с латыни из метрических книг деревни Темировцы на русский при этом подбери наиболее подходящую и близкую фамилию западно украиского района (Гулик, Лесив, Васильчук, Дубилевский, Рега, и др. 
+Формат компактной записи на выходе:
+
+если запись о смерти (пример):
+Василий Юрьевич Федоришин (род 1806 - умер 01/05/1836) в 30 лет, сын Юрия Федоришина, Темировцы дом 70 (другие факты с записи кратко)
+
+если запись о рождении (пример):
+Павел Федорович Шилюк (род 12/09/1842) 
+Родители:
+Федор Шилюк сын Василия и Марии Гулик, с Темировцы дом 66 
+и Пелагея дочь Петра Федоришина и Ирины Шевчук, с Блюдники дом 70 
+Кумы:  Василь Шевчук и Ольга жена Федора Микитюк, с Темировцы дом 35 (если известно)
+ 
+если запись о браке (пример):
+брак 28/07/1837
+Павел Федорович Шилюк (род 10/11/1843) Темировцы дом 4 
+Анна Алесеевна Гулик (род 12/09/1842) Темировцы дом 70 
+Родители жениха: 
+Федор Шилюк сын Василия и Марии Гулик 
+и Пелагея дочь Петра Федоришина и Ирины Шевчук
+Родители невесты: 
+Алексей сын Павла Гулик и Ольги Лазарюк
+и Софья дочь Василия Софроник и Марии Кулик
+Свидетели: Василь Шевчук и Ольга жена Федора Микитюк, с Блюдники дом 35 (если известно)
+
 
 3. **Historical Context**:
   - Expect 18th-century Latin or Ukrainian handwriting with potential flourishes, ligatures, or faded ink.
@@ -609,6 +595,9 @@ def download_image(drive_service, file_id, file_name):
 
 
 def transcribe_image(genai_client, image_bytes, file_name):
+    import signal
+    import time
+    
     logging.info(f"Sending image '{file_name}' to Vertex AI for transcription...")
     
     # Create image part using base64 encoding
@@ -656,58 +645,105 @@ def transcribe_image(genai_client, image_bytes, file_name):
         ),
     )
     
-    try:
-        # Generate content
-        response = genai_client.models.generate_content(
-            model=OCR_MODEL_ID,
-            contents=[content],
-            config=generate_content_config
-        )
-        
-        text = response.text
-        
-        # Ensure text is not None
-        if text is None:
-            text = "[No response text received from Vertex AI]"
-        
-        # Log the full AI response to the AI responses log
-        ai_logger.info(f"=== AI Response for {file_name} ===")
-        ai_logger.info(f"Model: {OCR_MODEL_ID}")
-        ai_logger.info(f"Request timestamp: {datetime.now().isoformat()}")
-        ai_logger.info(f"Image size: {len(image_bytes)} bytes")
-        ai_logger.info(f"Instruction length: {len(INSTRUCTION)} characters")
-        ai_logger.info(f"Response length: {len(text) if text else 0} characters")
-        
-        # Log response metadata if available
-        if hasattr(response, 'usage_metadata'):
-            ai_logger.info(f"Usage metadata: {response.usage_metadata}")
-        if hasattr(response, 'candidates') and response.candidates:
-            ai_logger.info(f"Number of candidates: {len(response.candidates)}")
-            if hasattr(response.candidates[0], 'finish_reason'):
-                ai_logger.info(f"Finish reason: {response.candidates[0].finish_reason}")
-        
-        ai_logger.info(f"Full response:\n{text}")
-        ai_logger.info(f"=== End AI Response for {file_name} ===\n")
-        
-        # Log the first and last few lines of the response for troubleshooting
-        if text:
-            lines = text.split('\n')
-            if len(lines) > 6:
-                first_lines = '\n'.join(lines[:3])
-                last_lines = '\n'.join(lines[-3:])
-                logging.info(f"First 3 lines of transcription for '{file_name}':\n{first_lines}\n...\nLast 3 lines:\n{last_lines}")
+    # Timeout handler
+    def timeout_handler(signum, frame):
+        raise TimeoutError(f"Vertex AI API call timed out after 30 minutes for {file_name}")
+    
+    max_retries = 1
+    retry_delay = 30  # seconds
+    timeout_seconds = 10 * 60  # 10 minutes
+    
+    for attempt in range(max_retries):
+        try:
+            logging.info(f"Attempt {attempt + 1}/{max_retries} for image '{file_name}'")
+            
+            # Set up timeout (30 minutes)
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(timeout_seconds)
+            
+            start_time = time.time()
+            
+            # Generate content
+            response = genai_client.models.generate_content(
+                model=OCR_MODEL_ID,
+                contents=[content],
+                config=generate_content_config
+            )
+            
+            # Cancel the timeout
+            signal.alarm(0)
+            
+            elapsed_time = time.time() - start_time
+            logging.info(f"Vertex AI response received in {elapsed_time:.1f} seconds for '{file_name}'")
+            
+            text = response.text
+            
+            # Ensure text is not None
+            if text is None:
+                text = "[No response text received from Vertex AI]"
+            
+            # Log the full AI response to the AI responses log
+            ai_logger.info(f"=== AI Response for {file_name} ===")
+            ai_logger.info(f"Model: {OCR_MODEL_ID}")
+            ai_logger.info(f"Request timestamp: {datetime.now().isoformat()}")
+            ai_logger.info(f"Image size: {len(image_bytes)} bytes")
+            ai_logger.info(f"Instruction length: {len(INSTRUCTION)} characters")
+            ai_logger.info(f"Response length: {len(text) if text else 0} characters")
+            ai_logger.info(f"Processing time: {elapsed_time:.1f} seconds")
+            
+            # Log response metadata if available
+            if hasattr(response, 'usage_metadata'):
+                ai_logger.info(f"Usage metadata: {response.usage_metadata}")
+            if hasattr(response, 'candidates') and response.candidates:
+                ai_logger.info(f"Number of candidates: {len(response.candidates)}")
+                if hasattr(response.candidates[0], 'finish_reason'):
+                    ai_logger.info(f"Finish reason: {response.candidates[0].finish_reason}")
+            
+            ai_logger.info(f"Full response:\n{text}")
+            ai_logger.info(f"=== End AI Response for {file_name} ===\n")
+            
+            # Log the first and last few lines of the response for troubleshooting
+            if text:
+                lines = text.split('\n')
+                if len(lines) > 6:
+                    first_lines = '\n'.join(lines[:3])
+                    last_lines = '\n'.join(lines[-3:])
+                    logging.info(f"First 3 lines of transcription for '{file_name}':\n{first_lines}\n...\nLast 3 lines:\n{last_lines}")
+                else:
+                    logging.info(f"Full transcription for '{file_name}':\n{text}")
+            
+            return text
+            
+        except (TimeoutError, ConnectionError, OSError) as e:
+            # Cancel any pending timeout
+            signal.alarm(0)
+            
+            error_msg = f"Attempt {attempt + 1}/{max_retries} failed for {file_name}: {str(e)}"
+            logging.warning(error_msg)
+            ai_logger.warning(error_msg)
+            
+            if attempt < max_retries - 1:
+                logging.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
             else:
-                logging.info(f"Full transcription for '{file_name}':\n{text}")
-        
-        return text
-        
-    except Exception as e:
-        error_msg = f"Error in Vertex AI transcription for {file_name}: {str(e)}"
-        ai_logger.error(f"=== AI Error for {file_name} ===")
-        ai_logger.error(error_msg)
-        ai_logger.error(f"=== End AI Error for {file_name} ===\n")
-        logging.error(error_msg)
-        raise
+                error_msg = f"All {max_retries} attempts failed for {file_name}: {str(e)}"
+                ai_logger.error(f"=== AI Error for {file_name} ===")
+                ai_logger.error(error_msg)
+                ai_logger.error(f"=== End AI Error for {file_name} ===\n")
+                logging.error(error_msg)
+                raise
+                
+        except Exception as e:
+            # Cancel any pending timeout
+            signal.alarm(0)
+            
+            error_msg = f"Unexpected error in Vertex AI transcription for {file_name}: {str(e)}"
+            ai_logger.error(f"=== AI Error for {file_name} ===")
+            ai_logger.error(error_msg)
+            ai_logger.error(f"=== End AI Error for {file_name} ===\n")
+            logging.error(error_msg)
+            raise
 
 
 def create_doc(docs_service, drive_service, title):
