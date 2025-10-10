@@ -42,13 +42,14 @@ from google import genai
 from google.genai import types
 
 # ------------------------- CONFIGURATION -------------------------
-PROJECT_ID = "ru-ocr-genea"
+#PROJECT_ID = "ru-ocr-genea"
+PROJECT_ID = "ukr-transcribe-genea"
 #DRIVE_FOLDER_ID = "1Hqd3Kgys9yyDg_iXlXDQm1GNBLVABVVX"
 #FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
 #DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
 #FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "1r6HuLNHrgywpe2oaHz64RzfYcEufrdtv"
-FOLDER_NAME = "1837-1850 Demeshkivtsi Nymshin 004932904 Item 5"
+DRIVE_FOLDER_ID = "1wtD1MxriKowHUn9Ll_SnIyzHLPvHwPMo"
+FOLDER_NAME = "1837-1866 Kurypow Курипов Остров Пукасивцы FamSearch 004933159"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-2.5-pro"
@@ -57,7 +58,7 @@ TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
 IMAGE_START_NUMBER = 1  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
-IMAGE_COUNT = 120  # Number of images to process starting from IMAGE_START_NUMBER
+IMAGE_COUNT = 200  # Number of images to process starting from IMAGE_START_NUMBER
 
 # RETRY MODE - Set to True to retry specific failed images
 RETRY_MODE = False
@@ -238,8 +239,8 @@ INSTRUCTION = """Extract and transcribe all text from this handwritten 18th-cent
     Sponsa info - same info/columns as for Sponsus;
     Testes info & Conditio - e.g +Nikitas Sofroniek +Ignatus Patyga 
     Notes (other notes usually below row). 
-    list of some villages related to this book: Demeszkowce (Демешкивцы), Niemszyn (Нимшин), Temerowce (Темировцы),Siedliska (Селиська), Bludniki (Блюдники), Медыня (Medynia). 
-    Some common surnames:  Merecki (Мерецкий), Homeniuk (Гуменюк), Wasylchuk (Васильчук), Hulik (Гулик), Lesyow (Лесив), Mikityn (Микитюк), Rega (Рега), Dubilewski (Дубилевский),   
+    list of some villages related to this book: Kurypow (Курипов), Pukasovtsy (Пукасовцы), Demeszkowce (Демешкивцы), Niemszyn (Нимшин), Temerowce (Темировцы),Siedliska (Селиська), Bludniki (Блюдники), Медыня (Medynia). 
+    Some common surnames:  Podlisny (Подлесный), Merecki (Мерецкий), Homeniuk (Гуменюк), Wasylchuk (Васильчук), Hulik (Гулик), Lesyow (Лесив), Mikityn (Микитюк), Rega (Рега), Dubilewski (Дубилевский),   
 
 Follow these instructions:
 
@@ -271,7 +272,7 @@ last column rawinfo must include full text related to a row in original format a
     extracted "field: value" on new line: date_of_death, date_of_burial, house_number, village_name, deceased_name, religion, sex, age, cause_of_death, burial_details, notes (any extra info), raw_info.
     raw_info must include the full text related to a row in original format as close to the source row as possible.
 
-После каждой записи по персоне на латыни дополнительно добавь компактную запись транскрипции с латыни из метрических книг деревни Темировцы на русский при этом подбери наиболее подходящую и близкую фамилию западно украиского района (Гулик, Лесив, Васильчук, Дубилевский, Рега, и др. 
+После каждой записи по персоне на латыни дополнительно добавь компактную запись транскрипции с латыни из метрических книг деревни Темировцы на русский и украинский при этом подбери наиболее подходящую и близкую фамилию западно украиского района 
 Формат компактной записи на выходе:
 
 если запись о смерти (пример):
@@ -283,6 +284,7 @@ last column rawinfo must include full text related to a row in original format a
 Федор Шилюк сын Василия и Марии Гулик, с Темировцы дом 66 
 и Пелагея дочь Петра Федоришина и Ирины Шевчук, с Блюдники дом 70 
 Кумы:  Василь Шевчук и Ольга жена Федора Микитюк, с Темировцы дом 35 (если известно)
+(другие факты с записи кратко)
  
 если запись о браке (пример):
 брак 28/07/1837
@@ -295,6 +297,7 @@ last column rawinfo must include full text related to a row in original format a
 Алексей сын Павла Гулик и Ольги Лазарюк
 и Софья дочь Василия Софроник и Марии Кулик
 Свидетели: Василь Шевчук и Ольга жена Федора Микитюк, с Блюдники дом 35 (если известно)
+(другие факты с записи кратко)
 
 
 3. **Historical Context**:
@@ -423,8 +426,13 @@ def list_images(drive_service):
     numbered_images = []
     timestamp_images = []
     
-    # Regex pattern for timestamp format: image - YYYY-MM-DDTHHMMSS.mmm.jpg
-    timestamp_pattern = re.compile(r'^image - (\d{4}-\d{2}-\d{2}T\d{6}\.\d{3})\.jpg$')
+    # Helper: case-insensitive check for JPEG extension
+    def has_jpeg_extension(filename: str) -> bool:
+        lower = filename.lower()
+        return lower.endswith('.jpg') or lower.endswith('.jpeg')
+
+    # Regex pattern for timestamp format: image - YYYY-MM-DDTHHMMSS.mmm.jpg/jpeg
+    timestamp_pattern = re.compile(r'^image - (\d{4}-\d{2}-\d{2}T\d{6}\.\d{3})\.(?:jpg|jpeg)$', re.IGNORECASE)
     
     for img in all_images:
         filename = img['name']
@@ -437,8 +445,8 @@ def list_images(drive_service):
             timestamp_images.append(img)
             continue
         
-        # Check if filename matches the pattern image (N).jpg
-        if filename.startswith('image (') and filename.endswith(').jpg'):
+        # Check if filename matches the pattern image (N).jpg/jpeg
+        if filename.startswith('image (') and (filename.lower().endswith(').jpg') or filename.lower().endswith(').jpeg')):
             try:
                 # Extract the number from filename (e.g., "image (7).jpg" -> 7)
                 start_idx = filename.find('(') + 1
@@ -448,22 +456,38 @@ def list_images(drive_service):
             except (ValueError, IndexError):
                 continue
         
-        # Check if filename matches the pattern imageXXXXX.jpg
-        elif filename.startswith('image') and filename.endswith('.jpg') and not '(' in filename and not ' - ' in filename:
+        # Check if filename matches the pattern imageXXXXX.jpg/jpeg
+        elif filename.startswith('image') and has_jpeg_extension(filename) and '(' not in filename and ' - ' not in filename and '_' not in filename:
             try:
                 # Extract the number from filename (e.g., "image00101.jpg" -> 101)
-                number_str = filename[5:-4]  # Remove "image" prefix and ".jpg" suffix
+                ext_len = 5 if filename.lower().endswith('.jpeg') else 4
+                number_str = filename[5:-ext_len]  # Remove "image" prefix and extension suffix
                 number = int(number_str)
             except ValueError:
                 continue
         
-        # Check if filename matches the pattern XXXXX.jpg (like 52.jpg, 102.jpg)
-        elif filename.endswith('.jpg') and not filename.startswith('image'):
+        # Check if filename matches the pattern XXXXX.jpg/jpeg (like 52.jpg, 102.jpg)
+        elif has_jpeg_extension(filename) and not filename.startswith('image') and '_' not in filename:
             try:
                 # Extract the number from filename (e.g., "52.jpg" -> 52, "102.jpg" -> 102)
-                number_str = filename[:-4]  # Remove ".jpg" suffix
+                ext_len = 5 if filename.lower().endswith('.jpeg') else 4
+                number_str = filename[:-ext_len]  # Remove extension suffix
                 number = int(number_str)
             except ValueError:
+                continue
+
+        # Check if filename matches the pattern PREFIX_XXXXX.jpg/jpeg (e.g., 004933159_00216.jpeg)
+        elif has_jpeg_extension(filename) and '_' in filename:
+            try:
+                ext_len = 5 if filename.lower().endswith('.jpeg') else 4
+                base_no_ext = filename[:-ext_len]
+                # Take numeric part after the last underscore
+                underscore_idx = base_no_ext.rfind('_')
+                if underscore_idx != -1:
+                    suffix = base_no_ext[underscore_idx + 1:]
+                    if suffix.isdigit():
+                        number = int(suffix)
+            except Exception:
                 continue
         
         # If we found a valid number, check if it's in the desired range
@@ -488,17 +512,26 @@ def list_images(drive_service):
         # Sort numbered images numerically by their extracted number
         def extract_number_for_sorting(img):
             filename = img['name']
-            if filename.startswith('image (') and filename.endswith(').jpg'):
+            lower = filename.lower()
+            if filename.startswith('image (') and (lower.endswith(').jpg') or lower.endswith(').jpeg')):
                 # Extract number from "image (N).jpg" format
                 start_idx = filename.find('(') + 1
                 end_idx = filename.find(')')
                 number_str = filename[start_idx:end_idx]
-            elif filename.startswith('image') and filename.endswith('.jpg') and not '(' in filename and not ' - ' in filename:
+            elif filename.startswith('image') and has_jpeg_extension(filename) and '(' not in filename and ' - ' not in filename and '_' not in filename:
                 # Extract number from "imageXXXXX.jpg" format
-                number_str = filename[5:-4]  # Remove "image" prefix and ".jpg" suffix
+                ext_len = 5 if lower.endswith('.jpeg') else 4
+                number_str = filename[5:-ext_len]  # Remove "image" prefix and extension suffix
+            elif has_jpeg_extension(filename) and '_' in filename:
+                # Extract number from "PREFIX_XXXXX.jpg/jpeg" format
+                ext_len = 5 if lower.endswith('.jpeg') else 4
+                base_no_ext = filename[:-ext_len]
+                underscore_idx = base_no_ext.rfind('_')
+                number_str = base_no_ext[underscore_idx + 1:]
             else:
                 # Extract number from "XXXXX.jpg" format
-                number_str = filename[:-4]  # Remove ".jpg" suffix
+                ext_len = 5 if lower.endswith('.jpeg') else 4
+                number_str = filename[:-ext_len]  # Remove extension suffix
             return int(number_str)
         
         numbered_images.sort(key=extract_number_for_sorting)
@@ -555,14 +588,22 @@ def list_images(drive_service):
                     return (1, datetime.min)
             else:
                 # Numbered image - sort by number
-                if filename.startswith('image (') and filename.endswith(').jpg'):
+                lower = filename.lower()
+                if filename.startswith('image (') and (lower.endswith(').jpg') or lower.endswith(').jpeg')):
                     start_idx = filename.find('(') + 1
                     end_idx = filename.find(')')
                     number_str = filename[start_idx:end_idx]
-                elif filename.startswith('image') and filename.endswith('.jpg') and not '(' in filename and not ' - ' in filename:
-                    number_str = filename[5:-4]
+                elif filename.startswith('image') and has_jpeg_extension(filename) and '(' not in filename and ' - ' not in filename and '_' not in filename:
+                    ext_len = 5 if lower.endswith('.jpeg') else 4
+                    number_str = filename[5:-ext_len]
+                elif has_jpeg_extension(filename) and '_' in filename:
+                    ext_len = 5 if lower.endswith('.jpeg') else 4
+                    base_no_ext = filename[:-ext_len]
+                    underscore_idx = base_no_ext.rfind('_')
+                    number_str = base_no_ext[underscore_idx + 1:]
                 else:
-                    number_str = filename[:-4]
+                    ext_len = 5 if lower.endswith('.jpeg') else 4
+                    number_str = filename[:-ext_len]
                 try:
                     return (0, int(number_str))  # 0 to sort numbered images first
                 except ValueError:
@@ -570,6 +611,16 @@ def list_images(drive_service):
         
         filtered_images.sort(key=mixed_sorting_key)
     
+    # If no images were selected by number/timestamp filters, fall back to position-based selection
+    if not filtered_images and all_images and not RETRY_MODE:
+        # all_images are already sorted by name from the Drive API
+        start_pos = max(1, IMAGE_START_NUMBER) - 1
+        end_pos = min(len(all_images), start_pos + IMAGE_COUNT)
+        fallback_selected = all_images[start_pos:end_pos]
+        if fallback_selected:
+            logging.info(f"No numeric/timestamp matches; falling back to position selection: items {IMAGE_START_NUMBER} to {IMAGE_START_NUMBER + len(fallback_selected) - 1}")
+            filtered_images = fallback_selected
+
     logging.info(f"Selected {len(filtered_images)} total images for processing")
     
     # Log the selected filenames for verification
@@ -858,11 +909,14 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                 
                 logging.info(f"Added transcription for '{item['name']}' to document")
                 
-                # Process requests in batches if we're not in test mode
-                if not TEST_MODE and len(all_requests) >= BATCH_SIZE:
-                    logging.info(f"Processing batch of {len(all_requests)} requests...")
-                    docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': all_requests}).execute()
-                    all_requests = []
+                # Process requests in batches (always enforce chunking to avoid API limits)
+                if len(all_requests) >= BATCH_SIZE:
+                    logging.info(f"Processing batch of up to {BATCH_SIZE} requests (current queue: {len(all_requests)})...")
+                    # Send only BATCH_SIZE requests to stay under 500 requests per batchUpdate
+                    batch = all_requests[:BATCH_SIZE]
+                    docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': batch}).execute()
+                    # Drop the sent chunk and keep the rest queued
+                    all_requests = all_requests[BATCH_SIZE:]
                     logging.info("Batch processed successfully")
                 
             except Exception as e:
@@ -877,11 +931,13 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                 })
                 idx += len(error_text)
         
-        # Process any remaining requests
-        if all_requests:
-            logging.info(f"Processing final batch of {len(all_requests)} requests...")
-            docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': all_requests}).execute()
-            logging.info("Final batch processed successfully")
+        # Process any remaining requests in safe chunks
+        while all_requests:
+            chunk = all_requests[:BATCH_SIZE]
+            logging.info(f"Processing remaining batch of {len(chunk)} requests (left: {len(all_requests)})...")
+            docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': chunk}).execute()
+            all_requests = all_requests[BATCH_SIZE:]
+        logging.info("All batches processed successfully")
         
         logging.info("Google Doc updated successfully")
         
