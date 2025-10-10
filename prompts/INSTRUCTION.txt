@@ -1,0 +1,82 @@
+Extract and transcribe all text from this handwritten 18-20th-century birth, death, or marriage record from eastern Ukraine, written in Latin or Ukrainian.
+
+First, provide a structured summary in Russian and Ukrainian for each record. Then, provide the detailed Latin transcription.
+
+1. Russian/Ukrainian Summary 
+
+For each record, generate a summary in Russian and Ukrainian. 
+Use the most appropriate modern Western Ukrainian surname equivalent. 
+The address should always be the first line.
+Include info on fathers mothers (and its fathers and mothers if available on separate line)
+Also include info on godfather and godmothers and on separate line.
+
+Birth Record Example in russian:
+Темировцы, дом 66
+Павел Федорович Шилюк (род 12/09/1842)
+Родители: Федор Шилюк (сын Василия и Марии Гулик) из Темировцы, дом 66 и Пелагея (дочь Петра Федоришина и Ирины Шевчук) из Блюдники, дом 70.
+Кумы: Василь Шевчук и Ольга, жена Федора Микитюк, из Темировцы, дом 35.
+(Кратко другие факты из записи).
+
+Marriage Record Example in russian:
+Темировцы, дом 4
+Брак 28/07/1837
+Жених: Павел Федорович Шилюк (род 10/11/1843), Темировцы, дом 4.
+Невеста: Анна Алексеевна Гулик (род 12/09/1842), Темировцы, дом 70.
+Родители жениха: Федор Шилюк (сын Василия и Марии Гулик) и Пелагея (дочь Петра Федоришина и Ирины Шевчук).
+Родители невесты: Алексей Гулик (сын Павла и Ольги Лазарюк) и Софья (дочь Василия Софроник и Марии Кулик).
+Свидетели: Василь Шевчук и Ольга, жена Федора Микитюк, из Блюдники, дом 35.
+(Кратко другие факты из записи).
+
+Death Record Example in russian:
+Темиривцы, дом 70
+Василий Юрьевич Федоришин (1806 - 01/05/1836), умер в 30 лет, сын Юрия Федоришина.
+(Кратко другие факты из записи).
+
+2. Original Latin Transcription - comes after russian and ukranina record transcription
+
+Transcription Accuracy:
+
+Transcribe the text exactly as it appears, preserving original spelling, abbreviations, and orthography.
+If handwriting is unclear, provide the most likely transcription and note uncertainty in square brackets, e.g., [illegible] or [possibly Anna].
+
+Structured Input: Expect the below fields from table in image (may slightly differ from image to image)
+
+Births: dateofbirth, dateofbaptism, house_number, village_name, child_name, parents, patrini, obstetrician, notes.
+
+Marriages: dateofmarriage, house_number, village_name, groom_name, groom_age, groom_dob, groom_parents, bride_name, bride_age, bride_dob, bride_parents, religion, marriage_status, testes, notes.
+
+Deaths: date_of_death, date_of_burial, house_number, village_name, deceased_name, religion, sex, age, cause_of_death, burial_details, notes.
+
+Example output for birth record in Latin: 
+
+Temerowce, domus 45
+26 Martii 1851 | domus 45 | Ahaphia | Catholica | Puella | Legitimi | Obstetrix [illegible] nutka | 
+Parentes: Thomas Hulik et Irina filia Jacobi et Mariæ Michanciow | agricolae 
+Patrini: Romanus Wasylczuk et Parascevia uxor Petri Balaszczuk. | agricolae
+
+Example output for death record in Latin: 
+Temerowce, domus 3
+15 17 Augusti 1848 | domus 3 | Catharina Joannis Hulik subditi Temerovicensis uxor. S.S. Sacramentis provisa. | Catholica: 1 | Foemina: 1 | 41 annos | Ordinaria.
+
+Example output for marriage record in Latin: 
+
+Temerowce, domus 63 / 45
+3 | Martii 5 1932 | domus 63/45 | 
+Isidorus Hulyk, filius Pauli et Eudoxiae Wasylczuk, laboriosus | aetas 21 | vidus | 
+Maria Lesiw, filia Basilii et Catharinae Mykytyn, Temerowce, domus 45 | agricolarum | aetas 23 | coelebs |
+Testes: Gregorius Lesiw, Basilius Dubelowskyj, agricolae | 
+Adnotatio: Matrimonio benedixit Vladimirus Ławoczka, administrator.
+
+Historical Context Guidance:
+
+Expect 18-20th-century Latin or Ukrainian script with potential flourishes and faded ink.
+
+Dates may use Roman numerals (e.g., XVII) or Latin month names (e.g., Januarius).
+
+Names may be patronymic or Latinized (e.g., "Petri," "Mariae").
+
+Reference Information:
+
+Villages: Kurypow (Курипов), Pukasovtsy (Пукасовцы), Demeszkowce (Демешкивцы), Niemszyn (Нимшин), Temerowce (Темировцы), Siedliska (Селиська), Bludniki (Блюдники), Medynia (Медыня).
+
+Surnames: Podlisny (Подлесный), Merecki (Мерецкий), Homeniuk (Гуменюк), Wasylchuk (Васильчук), Hulik (Гулик), Lesyow (Лесив), Mikityn (Микитюк), Rega (Рега), Dubilewski (Дубилевский).

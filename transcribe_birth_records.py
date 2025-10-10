@@ -1,32 +1,23 @@
 #!/usr/bin/env python3
 """
-Script to extract and transcribe text from JPEG files in a Google Drive folder using Vertex AI Gemini 2.5 Pro Preview,
-and compile results into a Google Doc in the same folder.
+Genealogical Record Transcription Tool
 
-Features:
-- Fetches up to 1000 images from Google Drive folder
-- Supports selective image processing using IMAGE_START_NUMBER and IMAGE_COUNT
-- Comprehensive logging of all Vertex AI responses with timestamps
-- Handles pagination for large folders
-- Test mode processes only the first TEST_IMAGE_COUNT images
+Transcribes handwritten birth, death, and marriage records from Google Drive images 
+using Vertex AI Gemini 2.5 Pro and creates formatted Google Docs.
 
-Image Selection:
-- Set IMAGE_START_NUMBER to specify starting image (e.g., 101 for image00101.jpg or 101.jpg)
-- Set IMAGE_COUNT to specify how many consecutive images to process (e.g., 5 will process image00101.jpg through image00105.jpg or 101.jpg through 105.jpg)
-- Files must follow one of these patterns: 
-  * image (N).jpg where N is a number (e.g., image (7).jpg, image (10).jpg)
-  * imageXXXXX.jpg where XXXXX is a 5-digit number (e.g., image00101.jpg)
-  * XXXXX.jpg where XXXXX is a number (e.g., 52.jpg, 102.jpg)
-  * image - YYYY-MM-DDTHHMMSS.mmm.jpg (timestamp format, e.g., image - 2025-07-20T112914.366.jpg)
-- The script will fetch up to MAX_IMAGES from Google Drive, then filter based on these parameters
+Key Features:
+- Processes images from Google Drive folders with flexible naming patterns
+- Uses external prompt files for different record types (see prompts/ folder)
+- Comprehensive logging and error recovery
+- Batch processing with configurable start/count parameters
+- Test mode for development
 
-Test mode processes only the first TEST_IMAGE_COUNT images. Max images processed is capped by MAX_IMAGES.
+Configuration:
+- Set PROMPT_FILE environment variable to select prompt (default: INSTRUCTION.txt)
+- Configure IMAGE_START_NUMBER and IMAGE_COUNT for selective processing
+- Enable RETRY_MODE to reprocess failed images
 
-Retry Mode:
-- Set RETRY_MODE = True to process only specific failed images from previous runs
-- Add failed image filenames to RETRY_IMAGE_LIST (can be with or without "image - " prefix)
-- When retry mode is enabled, IMAGE_START_NUMBER and IMAGE_COUNT are ignored
-- Useful for reprocessing images that failed due to network timeouts or server errors
+For detailed setup instructions, prerequisites, and troubleshooting, see README.md
 """
 
 import io
@@ -40,6 +31,24 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google import genai
 from google.genai import types
+
+# ------------------------- PROMPTS -------------------------
+# Set which prompt file to load from the `prompts` folder (without path).
+# Use "INSTRUCTION.txt" by default.
+PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION.txt")
+
+def load_prompt_text() -> str:
+    prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
+    prompt_path = os.path.join(prompts_dir, PROMPT_FILE)
+    try:
+        with open(prompt_path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        logging.warning(f"Failed to load prompt '{PROMPT_FILE}' from {prompt_path}: {e}. Falling back to minimal prompt.")
+        return "Transcribe the content of this image as structured text."
+
+# Load prompt once at startup
+PROMPT_TEXT = load_prompt_text()
 
 # ------------------------- CONFIGURATION -------------------------
 #PROJECT_ID = "ru-ocr-genea"
@@ -57,8 +66,8 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 1  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
-IMAGE_COUNT = 200  # Number of images to process starting from IMAGE_START_NUMBER
+IMAGE_START_NUMBER = 6  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_COUNT = 1  # Number of images to process starting from IMAGE_START_NUMBER
 
 # RETRY MODE - Set to True to retry specific failed images
 RETRY_MODE = False
@@ -85,8 +94,10 @@ if not os.path.exists(LOGS_DIR):
 # Generate timestamp for log files
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-# Logging setup
-log_filename = f"transcription_{FOLDER_NAME.replace(' ', '_')}.log"
+# Logging setup - create shorter log filename to avoid filesystem limits
+safe_folder_name = "".join(c for c in FOLDER_NAME if c.isalnum() or c in (' ', '-', '_')).rstrip()
+safe_folder_name = safe_folder_name.replace(' ', '_')[:50]  # Limit to 50 chars
+log_filename = os.path.join(LOGS_DIR, f"transcription_{safe_folder_name}_{timestamp}.log")
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
@@ -108,206 +119,6 @@ ai_logger.propagate = False  # Prevent duplicate logging
 # Make ai_logger globally accessible
 globals()['ai_logger'] = ai_logger
 
-# LLM Instruction for transcription
-INSTRUCTION_BIRTH_RECORD = """Extract and transcribe all text from this handwritten 18th-century birth record from eastern Ukraine, written in Latin or Ukrainian. 
-    The record contains the following fields: year (usually top left corner), page (usually top right corner), dateOfBirth (source is in in format like  day of birth, day of baptism, month in latin and year,  
-    example of source: 14 14 septembris 1889 ), house number, short village name (e.g 21 Turyl), child's name, obstetrician's name, religion, 
-    parents names (e.g "Onuphreus filius Stachii Martyniuk et Josephae Humeniuk - Eudoxia filia Michaii Hanczaryk et Parascevy Husak", extract full exact info as is), 
-    godfather (patrini, e.g. Basilius Federczuk & Catarina uxor Joannis Lazaruk , agricola ), 
-    Notes (e.g include info if child is illigitimate and other notes). 
-    list of some villages related to this book: Werbiwka, Turylche, Pidpilipje, Zalesje, Slobodka, Pukljaki. 
-    Some common surnames: Lazaruk, Szewczuk, Babij, Kowalczuk, Baziuk, Juskiw, Szepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick,   
-
-Follow these instructions:
-
-1. **Transcription Accuracy**:
-  - Transcribe the text exactly as it appears, preserving Latin or Ukrainian spelling, abbreviations, and historical orthography.
-  - If handwriting is unclear, provide the most likely transcription and note uncertainty in square brackets, e.g., [illegible] or [possibly Anna].
-  - Handle Latin-specific characters (e.g., æ, œ) and common abbreviations (e.g., \"Joannes\" for \"Johannes\").
-
-2. **Structured Output**:
-  - Format the output for each record with the following fields (on new line):  
-    year, page, (common page info)
-        then for each row (every child birth record): 
-        full child name with fathers name in between triple star (dont put name of field, just put value, start with child name) : ***Name Fathers Name Surname DOB*** e.g.  ***Maria Onuphreus Martyniuk 14/09/1889***
-        extracted "**field**: value" on new line: dateofbirth,  dateofbaptism,  house_number, village_name, child_name,  parents, patrini, notes (any extra info), obstetrician, rawinfo.
-last column rawinfo must include full text related to a row in original format as close to source row as possible
-
-3. **Historical Context**:
-  - Expect 18th-century Latin handwriting with potential flourishes, ligatures, or faded ink.
-  - Dates may use Roman numerals (e.g., XVII for 17) or Latin month names (e.g., Januarius, Februarius).
-  - Names may include patronymics or Latinized forms (e.g., \"Petri\" for Peter, \"Mariae\" for Maria).
-
-4. **Error Handling**:
-  - If text is ambiguous, prioritize the most contextually appropriate interpretation based on typical birth record structure.
-  - Ignore irrelevant text (e.g., marginal notes, page numbers) unless it clearly relates to the specified fields."""
-
-# ------------------------------------------------------------------
-
-# LLM Instruction for transcription
-INSTRUCTION_BIRTH_2 = """Extract and transcribe all text from this handwritten 18th-century birth record from eastern Ukraine, written in Latin or Ukrainian. 
-    The record contains the following fields: year (usually top left corner), page (usually top right corner), dateOfBirth (source is in in format like  day of birth, day of baptism, month in latin and year,  
-    example of source: 14 14 septembris 1889 ), house number, short village name (e.g 21 Turyl), child's name, obstetrician's name, religion, 
-    parents names (e.g "Onuphreus filius Stachii Martyniuk et Josephae Humeniuk - Eudoxia filia Michaii Hanczaryk et Parascevy Husak", extract full exact info as is), 
-    godfather (patrini, e.g. Basilius Federczuk & Catarina uxor Joannis Lazaruk , agricola ), 
-    Notes (e.g include info if child is illigitimate and other notes). 
-    list of some villages related to this book: Wolkiwci (Волківці). 
-    Some common surnames:  Baziuk, Basiuk, Lazaruk, Szewczuk, Bijak, Juskiw, Szepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick,   
-
-Follow these instructions:
-
-1. **Transcription Accuracy**:
-  - Transcribe the text exactly as it appears, preserving Latin or Ukrainian spelling, abbreviations, and historical orthography.
-  - If handwriting is unclear, provide the most likely transcription and note uncertainty in square brackets, e.g., [illegible] or [possibly Anna].
-  - Handle Latin-specific characters (e.g., æ, œ) and common abbreviations (e.g., \"Joannes\" for \"Johannes\").
-
-2. **Structured Output**:
-  - Format the output for each record with the following fields (on new line):  
-    year, page, (common page info)
-        then for each row (every child birth record): 
-        full child name with fathers name in between triple star (dont put name of field, just put value, start with child name) : ***Name Fathers Name Surname DOB*** e.g.  ***Maria Onuphreus Martyniuk 14/09/1889***
-        extracted "**field**: value" on new line: dateofbirth,  dateofbaptism,  house_number, village_name, child_name,  parents, patrini, notes (any extra info), obstetrician, rawinfo.
-last column rawinfo must include full text related to a row in original format as close to source row as possible
-
-3. **Historical Context**:
-  - Expect 18th-century Latin handwriting with potential flourishes, ligatures, or faded ink.
-  - Dates may use Roman numerals (e.g., XVII for 17) or Latin month names (e.g., Januarius, Februarius).
-  - Names may include patronymics or Latinized forms (e.g., \"Petri\" for Peter, \"Mariae\" for Maria).
-
-4. **Error Handling**:
-  - If text is ambiguous, prioritize the most contextually appropriate interpretation based on typical birth record structure.
-  - Ignore irrelevant text (e.g., marginal notes, page numbers) unless it clearly relates to the specified fields."""
-
-
-
-# LLM Instruction for transcription
-INSTRUCTION_DEATH_RECORD = """Extract and transcribe all text from this handwritten 18th or 19th-century death record from eastern Ukraine, written in Latin or Ukrainian.
-
-The record contains the following fields: year (usually top left corner), page (usually top right corner), date of death, date of burial, house number, short village name (e.g 21 Turyl), full name of the deceased, religion, sex, age, reason/cause of death, Notes, and raw info.
-
-Specifically, look for:
-
-Year, Page: (Usually top left and top right corners, respectively).
-Date of death, Date of burial: (Source might be in a format like "obiit 14 septembris 1889", "sepultus 16 septembris 1889").
-House Number: (e.g., No 21, Domus 45).
-Village Name: (e.g., Turyl, Werbiwka).
-Full name: (Of the deceased, including any given marital status, profession, or parentage if indicated, e.g., "Joannes Kowalczuk filius Mathiae", "Maria Nowak vidua Josephi Nowak", "Anna Szewczuk uxor Petri").
-Religion: (e.g., Graeco Catholica, Romano Catholica).
-Sex: (e.g., masculi/masculinus for male, feminae/femininus for female).
-Age: (Often in years, months, or days, e.g., aetatis suae 60 annorum, 2 menses, infans).
-Reason/Cause of Death: (e.g., senectute - old age, morbus - illness, dysenteria - dysentery, pestis - plague, ignota - unknown).
-Burial Details: (e.g., name of the officiating priest, witnesses present at burial, if explicitly stated and distinct from other notes).
-Notes: (Any other relevant information such as marital status if not included in the name, specific profession, or unusual circumstances surrounding the death).
-List of some villages related to this book/region: Werbiwka, Turylche, Pidpilipje, Zalesje, Slobodka, Pukljaki.
-Some common surnames: Lazaruk, Szewczuk, Babij, Kowalczuk, Baziuk, Juskiw, Szepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick.
-
-Follow these instructions:
-
-Transcription Accuracy:
-
-Transcribe the text exactly as it appears, preserving Latin or Ukrainian spelling, abbreviations, and historical orthography.
-If handwriting is unclear, provide the most likely transcription and note uncertainty in square brackets, e.g., [illegible] or [possibly Anna].
-Handle Latin-specific characters (e.g., æ, œ) and common abbreviations (e.g., "obiit" for "died", "sepultus" for "buried", "aet." for "aetatis").
-Structured Output:
-
-Format the output for each record with the following fields (on new line):
-year, page, (common page info)
-Then for each row (every death record):
-full deceased's name, followed by their age and date of death in between triple star (don't put name of field, just put value, start with deceased's name): e.g. ***Joannes Kowalczuk, aet. 70, 10/10/1890***
-extracted "field: value" on new line: date_of_death, date_of_burial, house_number, village_name, deceased_name, religion, sex, age, cause_of_death, burial_details, notes (any extra info), raw_info.
-raw_info must include the full text related to a row in original format as close to the source row as possible.
-Historical Context:
-
-Expect 18th-century Latin/Ukrainian handwriting with potential flourishes, ligatures, or faded ink.
-Dates may use Roman numerals (e.g., XVII for 17) or Latin month names (e.g., Januarius, Februarius).
-Names may include patronymics or Latinized forms (e.g., "Petri" for Peter, "Mariae" for Maria). Pay attention to titles like filius (son), filia (daughter), uxor (wife), vidua (widow), caelebs (bachelor), virgo (spinster).
-Error Handling:
-
-If text is ambiguous, prioritize the most contextually appropriate interpretation based on typical death record structure.
-Ignore irrelevant text (e.g., marginal notes, page numbers) unless it clearly relates to the specified fields."""
-
-# ------------------------------------------------------------------
-#    list of some villages related to this book: Werbiwka, Turylche, Pidpilipje, Zalesje, Slobodka, Pukljaki. 
-#    Some common surnames: Lazaruk, Shewczuk, Babij, Kowalczuk, Basiuk, Juskiw, Sczepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick,   
-
-INSTRUCTION = """Extract and transcribe all text from this handwritten 18th-century birth, death orarriage records from eastern Ukraine, written in Latin or Ukrainian from village Temerowce (or other). 
-    Marriage record typically contains the following fields - table columns from left to right: 
-    mensis (month, year, date of marriage), 
-    Sponsus info - nrus domus (house number with sometimes short village name e.g 21 Temyr), 
-    name (including names of parents and address e.g  Gregorius filiusBasilius Federczuk & Catarina uxor Joannis Lazaruk ), 
-    religion, aetas (age), marriage status(coelebs, viduus),
-    Sponsa info - same info/columns as for Sponsus;
-    Testes info & Conditio - e.g +Nikitas Sofroniek +Ignatus Patyga 
-    Notes (other notes usually below row). 
-    list of some villages related to this book: Kurypow (Курипов), Pukasovtsy (Пукасовцы), Demeszkowce (Демешкивцы), Niemszyn (Нимшин), Temerowce (Темировцы),Siedliska (Селиська), Bludniki (Блюдники), Медыня (Medynia). 
-    Some common surnames:  Podlisny (Подлесный), Merecki (Мерецкий), Homeniuk (Гуменюк), Wasylchuk (Васильчук), Hulik (Гулик), Lesyow (Лесив), Mikityn (Микитюк), Rega (Рега), Dubilewski (Дубилевский),   
-
-Follow these instructions:
-
-1. **Transcription Accuracy**:
-  - Transcribe the text exactly as it appears, preserving Latin or Ukrainian spelling, abbreviations, and historical orthography.
-  - If handwriting is unclear, provide the most likely transcription and note uncertainty in square brackets, e.g., [illegible] or [possibly Anna].
-  - Handle Latin-specific characters (e.g., æ, œ) and common abbreviations (e.g., \"Joannes\" for \"Johannes\").
-
-2. **Structured Output**:
-  - Format the output for each marriage record with the following fields (on new line):  
-    year, page, (common page info)
-        then for each row (every marriage record): 
-        full groom name with fathers name in between triple star (dont put name of field, just put value, start with child name) : 
-        ***Name Fathers Name Surname DOB*** e.g.  ***Gregorii Ignatus Lazaruk 14/09/1889***
-        full bride name with fathers name in between triple star (dont put name of field, just put value, start with child name) : 
-        ***Name Fathers Name Surname DOB*** e.g.  ***Maria Onuphreus Martyniuk 14/09/1889***
-        then extracted "field: value" on new line: 
-        dateofmarriage (format: DD/MM/YYYY), 
-        house_number, village_name, groom_name, groom_age, groom_dob (derived year of birth of groom), groom_parents, religion, marriage_status,
-        bride_name, bride_age, bride_dob (derived year of birth of bride), bride_parents (including village and house number of found in parents info), religion, marriage_status,
-        testes, notes (any extra info), rawinfo.
-last column rawinfo must include full text related to a row in original format as close to source row as possible with related notes
-- Birth records fields:
-        full child name with fathers name in between triple star (dont put name of field, just put value, start with child name) : ***Name Fathers Name Surname DOB*** e.g.  ***Maria Onuphreus Martyniuk 14/09/1889***
-        extracted "**field**: value" on new line: dateofbirth,  dateofbaptism,  house_number, village_name, child_name,  parents, patrini, notes (any extra info), obstetrician, rawinfo.
-
-- Death records fields:
-    full deceased's name with relative (uxor/vidua/etc), followed by their age and date of death in between triple star (don't put name of field, just put value, start with deceased's name): e.g. ***Joannes Kowalczuk, aet. 70, 10/10/1890***
-    extracted "field: value" on new line: date_of_death, date_of_burial, house_number, village_name, deceased_name, religion, sex, age, cause_of_death, burial_details, notes (any extra info), raw_info.
-    raw_info must include the full text related to a row in original format as close to the source row as possible.
-
-После каждой записи по персоне на латыни дополнительно добавь компактную запись транскрипции с латыни из метрических книг деревни Темировцы на русский и украинский при этом подбери наиболее подходящую и близкую фамилию западно украиского района 
-Формат компактной записи на выходе:
-
-если запись о смерти (пример):
-Василий Юрьевич Федоришин (род 1806 - умер 01/05/1836) в 30 лет, сын Юрия Федоришина, Темировцы дом 70 (другие факты с записи кратко)
-
-если запись о рождении (пример):
-Павел Федорович Шилюк (род 12/09/1842) 
-Родители:
-Федор Шилюк сын Василия и Марии Гулик, с Темировцы дом 66 
-и Пелагея дочь Петра Федоришина и Ирины Шевчук, с Блюдники дом 70 
-Кумы:  Василь Шевчук и Ольга жена Федора Микитюк, с Темировцы дом 35 (если известно)
-(другие факты с записи кратко)
- 
-если запись о браке (пример):
-брак 28/07/1837
-Павел Федорович Шилюк (род 10/11/1843) Темировцы дом 4 
-Анна Алесеевна Гулик (род 12/09/1842) Темировцы дом 70 
-Родители жениха: 
-Федор Шилюк сын Василия и Марии Гулик 
-и Пелагея дочь Петра Федоришина и Ирины Шевчук
-Родители невесты: 
-Алексей сын Павла Гулик и Ольги Лазарюк
-и Софья дочь Василия Софроник и Марии Кулик
-Свидетели: Василь Шевчук и Ольга жена Федора Микитюк, с Блюдники дом 35 (если известно)
-(другие факты с записи кратко)
-
-
-3. **Historical Context**:
-  - Expect 18th-century Latin or Ukrainian handwriting with potential flourishes, ligatures, or faded ink.
-  - Dates may use Roman numerals (e.g., XVII for 17) or Latin month names (e.g., Januarius, Februarius).
-  - Names may include patronymics or Latinized forms (e.g., \"Petri\" for Peter, \"Mariae\" for Maria).
-
-4. **Error Handling**:
-  - If text is ambiguous, prioritize the most contextually appropriate interpretation based on typical birth record structure.
-  - Ignore irrelevant text (e.g., marginal notes, page numbers) unless it clearly relates to the specified fields."""
 
 def authenticate():
     """
@@ -657,11 +468,11 @@ def transcribe_image(genai_client, image_bytes, file_name):
         mime_type="image/jpeg"
     )
     
-    # Create content with instruction and image
+            # Create content with instruction and image
     content = types.Content(
         role="user",
         parts=[
-            types.Part.from_text(text=INSTRUCTION),
+                    types.Part.from_text(text=PROMPT_TEXT),
             image_part
         ]
     )
@@ -690,7 +501,7 @@ def transcribe_image(genai_client, image_bytes, file_name):
         #         threshold="OFF"
         #     )
         # ],
-        system_instruction=[types.Part.from_text(text=INSTRUCTION)],
+        system_instruction=[types.Part.from_text(text=PROMPT_TEXT)],
         thinking_config=types.ThinkingConfig(
             thinking_budget=-1,
         ),
@@ -738,7 +549,7 @@ def transcribe_image(genai_client, image_bytes, file_name):
             ai_logger.info(f"Model: {OCR_MODEL_ID}")
             ai_logger.info(f"Request timestamp: {datetime.now().isoformat()}")
             ai_logger.info(f"Image size: {len(image_bytes)} bytes")
-            ai_logger.info(f"Instruction length: {len(INSTRUCTION)} characters")
+            ai_logger.info(f"Instruction length: {len(PROMPT_TEXT)} characters")
             ai_logger.info(f"Response length: {len(text) if text else 0} characters")
             ai_logger.info(f"Processing time: {elapsed_time:.1f} seconds")
             
@@ -818,10 +629,73 @@ def create_doc(docs_service, drive_service, title):
         raise
 
 
+def create_overview_section(pages):
+    """
+    Create overview section content for the document.
+    Returns a list of requests to add the overview section.
+    """
+    # Get folder link from the first page
+    folder_link = pages[0]['webViewLink'] if pages else ""
+    # Extract folder ID from the link for a cleaner folder link
+    if 'folders/' in folder_link:
+        folder_id = folder_link.split('folders/')[1].split('/')[0]
+        folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
+    else:
+        folder_url = folder_link
+    
+    # Count successful and failed transcriptions
+    successful_pages = [p for p in pages if p['text'] and not p['text'].startswith('[Error')]
+    failed_pages = [p for p in pages if not p['text'] or p['text'].startswith('[Error')]
+    
+    # Get file range
+    if pages:
+        start_file = pages[0]['name']
+        end_file = pages[-1]['name']
+        file_count = len(pages)
+    else:
+        start_file = "N/A"
+        end_file = "N/A"
+        file_count = 0
+    
+    # Create overview content
+    overview_content = f"""OVERVIEW
+
+Name: {FOLDER_NAME}
+Folder Link: {folder_url}
+Model: {OCR_MODEL_ID}
+Prompt File: {PROMPT_FILE}
+
+Files Processed:
+Count: {file_count}
+Start: {start_file}
+End: {end_file}
+
+Images with Errors ({len(failed_pages)}):
+"""
+    
+    # Add failed images list
+    if failed_pages:
+        for page in failed_pages:
+            overview_content += f"- {page['name']}\n"
+    else:
+        overview_content += "None\n"
+    
+    overview_content += f"""
+Prompt Used:
+{PROMPT_TEXT}
+
+{'='*50}
+
+"""
+    
+    return overview_content
+
+
 def write_to_doc(docs_service, doc_id, pages, start_idx=0):
     """
     Write transcribed content to a Google Doc with minimal formatting.
     Formatting includes:
+    - Overview section with metadata
     - Filename as Heading 1
     - Source link
     - Raw Vertex AI output as normal text
@@ -838,6 +712,28 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
         idx = 1
         all_requests = []
         BATCH_SIZE = 450  # Using 450 to be safe, as some operations might generate multiple requests
+        
+        # Add overview section at the beginning
+        overview_content = create_overview_section(pages)
+        all_requests.extend([
+            {
+                'insertText': {
+                    'location': {'index': idx},
+                    'text': overview_content
+                }
+            },
+            {
+                'updateParagraphStyle': {
+                    'range': {'startIndex': idx, 'endIndex': idx + len(overview_content)},
+                    'paragraphStyle': {
+                        'namedStyleType': 'NORMAL_TEXT',
+                        'alignment': 'START'
+                    },
+                    'fields': 'namedStyleType,alignment'
+                }
+            }
+        ])
+        idx += len(overview_content)
         
         for i, item in enumerate(pages[start_idx:], start=start_idx + 1):
             try:

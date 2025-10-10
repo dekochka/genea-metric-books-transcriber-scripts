@@ -1,0 +1,44 @@
+Extract and transcribe all text from this handwritten 18th or 19th-century death record from eastern Ukraine, written in Latin or Ukrainian.
+
+The record contains the following fields: year (usually top left corner), page (usually top right corner), date of death, date of burial, house number, short village name (e.g 21 Turyl), full name of the deceased, religion, sex, age, reason/cause of death, Notes, and raw info.
+
+Specifically, look for:
+
+Year, Page: (Usually top left and top right corners, respectively).
+Date of death, Date of burial: (Source might be in a format like "obiit 14 septembris 1889", "sepultus 16 septembris 1889").
+House Number: (e.g., No 21, Domus 45).
+Village Name: (e.g., Turyl, Werbiwka).
+Full name: (Of the deceased, including any given marital status, profession, or parentage if indicated, e.g., "Joannes Kowalczuk filius Mathiae", "Maria Nowak vidua Josephi Nowak", "Anna Szewczuk uxor Petri").
+Religion: (e.g., Graeco Catholica, Romano Catholica).
+Sex: (e.g., masculi/masculinus for male, feminae/femininus for female).
+Age: (Often in years, months, or days, e.g., aetatis suae 60 annorum, 2 menses, infans).
+Reason/Cause of Death: (e.g., senectute - old age, morbus - illness, dysenteria - dysentery, pestis - plague, ignota - unknown).
+Burial Details: (e.g., name of the officiating priest, witnesses present at burial, if explicitly stated and distinct from other notes).
+Notes: (Any other relevant information such as marital status if not included in the name, specific profession, or unusual circumstances surrounding the death).
+List of some villages related to this book/region: Werbiwka, Turylche, Pidpilipje, Zalesje, Slobodka, Pukljaki.
+Some common surnames: Lazaruk, Szewczuk, Babij, Kowalczuk, Baziuk, Juskiw, Szepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick.
+
+Follow these instructions:
+
+Transcription Accuracy:
+
+Transcribe the text exactly as it appears, preserving Latin or Ukrainian spelling, abbreviations, and historical orthography.
+If handwriting is unclear, provide the most likely transcription and note uncertainty in square brackets, e.g., [illegible] or [possibly Anna].
+Handle Latin-specific characters (e.g., æ, œ) and common abbreviations (e.g., "obiit" for "died", "sepultus" for "buried", "aet." for "aetatis").
+Structured Output:
+
+Format the output for each record with the following fields (on new line):
+year, page, (common page info)
+Then for each row (every death record):
+full deceased's name, followed by their age and date of death in between triple star (don't put name of field, just put value, start with deceased's name): e.g. ***Joannes Kowalczuk, aet. 70, 10/10/1890***
+extracted "field: value" on new line: date_of_death, date_of_burial, house_number, village_name, deceased_name, religion, sex, age, cause_of_death, burial_details, notes (any extra info), raw_info.
+raw_info must include the full text related to a row in original format as close to the source row as possible.
+Historical Context:
+
+Expect 18th-century Latin/Ukrainian handwriting with potential flourishes, ligatures, or faded ink.
+Dates may use Roman numerals (e.g., XVII for 17) or Latin month names (e.g., Januarius, Februarius).
+Names may include patronymics or Latinized forms (e.g., "Petri" for Peter, "Mariae" for Maria). Pay attention to titles like filius (son), filia (daughter), uxor (wife), vidua (widow), caelebs (bachelor), virgo (spinster).
+Error Handling:
+
+If text is ambiguous, prioritize the most contextually appropriate interpretation based on typical death record structure.
+Ignore irrelevant text (e.g., marginal notes, page numbers) unless it clearly relates to the specified fields.

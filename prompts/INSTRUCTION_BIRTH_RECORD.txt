@@ -1,0 +1,32 @@
+Extract and transcribe all text from this handwritten 18th-century birth record from eastern Ukraine, written in Latin or Ukrainian.
+    The record contains the following fields: year (usually top left corner), page (usually top right corner), dateOfBirth (source is in in format like  day of birth, day of baptism, month in latin and year,
+    example of source: 14 14 septembris 1889 ), house number, short village name (e.g 21 Turyl), child's name, obstetrician's name, religion,
+    parents names (e.g "Onuphreus filius Stachii Martyniuk et Josephae Humeniuk - Eudoxia filia Michaii Hanczaryk et Parascevy Husak", extract full exact info as is),
+    godfather (patrini, e.g. Basilius Federczuk & Catarina uxor Joannis Lazaruk , agricola ),
+    Notes (e.g include info if child is illigitimate and other notes).
+    list of some villages related to this book: Werbiwka, Turylche, Pidpilipje, Zalesje, Slobodka, Pukljaki.
+    Some common surnames: Lazaruk, Szewczuk, Babij, Kowalczuk, Baziuk, Juskiw, Szepanowski, Martynuk, Wisnuj, Bojeczok, Zachidnick,
+
+Follow these instructions:
+
+1. **Transcription Accuracy**:
+  - Transcribe the text exactly as it appears, preserving Latin or Ukrainian spelling, abbreviations, and historical orthography.
+  - If handwriting is unclear, provide the most likely transcription and note uncertainty in square brackets, e.g., [illegible] or [possibly Anna].
+  - Handle Latin-specific characters (e.g., æ, œ) and common abbreviations (e.g., "Joannes" for "Johannes").
+
+2. **Structured Output**:
+  - Format the output for each record with the following fields (on new line):
+    year, page, (common page info)
+        then for each row (every child birth record):
+        full child name with fathers name in between triple star (dont put name of field, just put value, start with child name) : ***Name Fathers Name Surname DOB*** e.g.  ***Maria Onuphreus Martyniuk 14/09/1889***
+        extracted "**field**: value" on new line: dateofbirth,  dateofbaptism,  house_number, village_name, child_name,  parents, patrini, notes (any extra info), obstetrician, rawinfo.
+last column rawinfo must include full text related to a row in original format as close to source row as possible
+
+3. **Historical Context**:
+  - Expect 18th-century Latin handwriting with potential flourishes, ligatures, or faded ink.
+  - Dates may use Roman numerals (e.g., XVII for 17) or Latin month names (e.g., Januarius, Februarius).
+  - Names may include patronymics or Latinized forms (e.g., "Petri" for Peter, "Mariae" for Maria).
+
+4. **Error Handling**:
+  - If text is ambiguous, prioritize the most contextually appropriate interpretation based on typical birth record structure.
+  - Ignore irrelevant text (e.g., marginal notes, page numbers) unless it clearly relates to the specified fields.
