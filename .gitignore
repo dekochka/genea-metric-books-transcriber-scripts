@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+*.egg-info/
+
+# Credentials and secrets
+application_default_credentials.json
+application_default_credentials.json.backup
+client_secret*.json
+
+# Logs
+logs/
+*.log
+
+# IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Downloaded files
+downloaded_images/
+famsearch_page_sources/
+
+# Temporary files
+*.tmp
+*.bak
+

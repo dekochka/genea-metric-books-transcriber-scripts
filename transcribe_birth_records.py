@@ -57,8 +57,8 @@ PROJECT_ID = "ukr-transcribe-genea"
 #FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
 #DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
 #FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "1wtD1MxriKowHUn9Ll_SnIyzHLPvHwPMo"
-FOLDER_NAME = "1837-1866 Kurypow Курипов Остров Пукасивцы FamSearch 004933159"
+DRIVE_FOLDER_ID = "1oD3IgPb24mMzhrzDKTlf13_5-Q_2BoP8"
+FOLDER_NAME = "ДАЙФОТемировцы-Родня"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-2.5-pro"
@@ -66,8 +66,8 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 6  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
-IMAGE_COUNT = 1  # Number of images to process starting from IMAGE_START_NUMBER
+IMAGE_START_NUMBER = 1  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_COUNT = 120  # Number of images to process starting from IMAGE_START_NUMBER
 
 # RETRY MODE - Set to True to retry specific failed images
 RETRY_MODE = False
@@ -163,6 +163,8 @@ def list_images(drive_service):
     - image (N).jpg where N is a number (e.g., image (7).jpg, image (10).jpg)
     - imageXXXXX.jpg where XXXXX is a 5-digit number (e.g., image00101.jpg)
     - XXXXX.jpg where XXXXX is a number (e.g., 52.jpg, 102.jpg)
+    - XXXXXX_YYYYY.jpg where the number after underscore is used (e.g., 004933159_00216.jpeg)
+    - IMG_YYYYMMDD_XXXX.jpg where XXXX is the image number (e.g., IMG_20250814_0036.jpg)
     - image - YYYY-MM-DDTHHMMSS.mmm.jpg (timestamp format, e.g., image - 2025-07-20T112914.366.jpg)
     Returns list of image metadata including id, name, and webViewLink.
     """
@@ -245,16 +247,28 @@ def list_images(drive_service):
     # Regex pattern for timestamp format: image - YYYY-MM-DDTHHMMSS.mmm.jpg/jpeg
     timestamp_pattern = re.compile(r'^image - (\d{4}-\d{2}-\d{2}T\d{6}\.\d{3})\.(?:jpg|jpeg)$', re.IGNORECASE)
     
+    # Regex pattern for IMG_YYYYMMDD_XXXX.jpg format (e.g., IMG_20250814_0036.jpg)
+    img_date_pattern = re.compile(r'^IMG_\d{8}_(\d+)\.(?:jpg|jpeg)$', re.IGNORECASE)
+    
     for img in all_images:
         filename = img['name']
         number = None
         timestamp_match = None
+        img_date_match = None
         
         # Check for timestamp pattern first
         timestamp_match = timestamp_pattern.match(filename)
         if timestamp_match:
             timestamp_images.append(img)
             continue
+        
+        # Check for IMG_YYYYMMDD_XXXX.jpg pattern (e.g., IMG_20250814_0036.jpg)
+        img_date_match = img_date_pattern.match(filename)
+        if img_date_match:
+            try:
+                number = int(img_date_match.group(1))
+            except ValueError:
+                continue
         
         # Check if filename matches the pattern image (N).jpg/jpeg
         if filename.startswith('image (') and (filename.lower().endswith(').jpg') or filename.lower().endswith(').jpeg')):
@@ -503,7 +517,7 @@ def transcribe_image(genai_client, image_bytes, file_name):
         # ],
         system_instruction=[types.Part.from_text(text=PROMPT_TEXT)],
         thinking_config=types.ThinkingConfig(
-            thinking_budget=-1,
+            thinking_budget=5000,
         ),
     )
     
