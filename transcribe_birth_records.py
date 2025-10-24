@@ -57,8 +57,8 @@ PROJECT_ID = "ukr-transcribe-genea"
 #FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
 #DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
 #FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "1oD3IgPb24mMzhrzDKTlf13_5-Q_2BoP8"
-FOLDER_NAME = "ДАЙФОТемировцы-Родня"
+DRIVE_FOLDER_ID = "13Ipd-d5cl2IjBO8_QTeN4XuoO0F1OWCd"
+FOLDER_NAME = "1872-1885 Селище из ДАЙФО 631-12-32"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-2.5-pro"
@@ -66,8 +66,8 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 1  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
-IMAGE_COUNT = 120  # Number of images to process starting from IMAGE_START_NUMBER
+IMAGE_START_NUMBER = 401  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_COUNT = 100  # Number of images to process starting from IMAGE_START_NUMBER
 
 # RETRY MODE - Set to True to retry specific failed images
 RETRY_MODE = False
