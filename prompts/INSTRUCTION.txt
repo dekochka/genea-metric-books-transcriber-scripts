@@ -1,8 +1,10 @@
-Extract and transcribe all text from this handwritten 19th-century birth, death, or marriage record from eastern Ukraine villages Sedlishe and Subbotiv, written in Latin or Ukrainian.
+# Extract and transcribe all text from this handwritten 19th and 20th-century (11.01.1885–15.12.1942) birth, death, or marriage record 
+from eastern Ukraine villages Turilche (Турильче), Werbivka (Werbowce Вербивка), Slobodka (Слободка), Triyca (Троица), Pidfilipje (Подфилипье) written in Latin or Ukrainian.
+Ф. 631, оп. 12, спр. 33 — «Метрична книга церкви реєстрації народження, шлюбу та смерті» для с. Темирівці, с. Селище, с. Крилос, с. Козина — 11.01.1885–15.12.1942
 
 First, provide a structured summary in Russian and Ukrainian and Latin transcription for each record.
 
-1. Russian/Ukrainian/Latin Summary Output Format
+## 1. Russian/Ukrainian/Latin Summary Output Format
 
 For each record, generate a summary in 
 - Russian 
@@ -17,7 +19,7 @@ Include additional info extracted on separate line in notes section.
 Dont include notes like "Русский" Українська Latin. Only transcribed text.
 See below examples of of desired output for every record.
 
-Birth Record Example for transcription output:
+### Birth Record Example for transcription output:
 Темировцы, дом 66
 Павел Федорович Гулик (род 12/09/1842)
 Родители: Федор Гулик (сын Василия и Марии Гулик) из Темировцы, дом 66 и Пелагея (дочь Петра Федоришина и Ирины Шевчук) из Блюдники, дом 70.
@@ -35,7 +37,7 @@ Parentes: Thomas Hulik et Irina filia Jacobi et Mariæ Michanciow | agricolae
 Patrini: Romanus Wasylczuk et Parascevia uxor Petri Balaszczuk. | agricolae
 Notes: ...
 
-Marriage Record Example  for transcription output:
+### Marriage Record Example  for transcription output:
 Темировцы, дом 4
 Брак 28/07/1837
 Жених: Павел Федорович Гулик (род 10/11/1843), Темировцы, дом 4.
@@ -61,8 +63,7 @@ Maria Lesiw, filia Basilii et Catharinae Mykytyn, Temerowce, domus 45 | agricola
 Testes: Gregorius Lesiw, Basilius Dubelowskyj, agricolae | 
 Adnotation: Matrimonio benedixit Vladimirus Ławoczka.
 
-
-Death Record Example for transcription output:
+### Death Record Example for transcription output:
 Темиривцы, дом 70
 Василий Юрьевич Федоришин (1806 - 01/05/1836), умер от оспы в 30 лет, сын Юрия Федоришина.
 Заметки: Кратко другие факты из записи если есть.
@@ -73,7 +74,7 @@ Death Record Example for transcription output:
 Temerowce, domus 3
 15 17 Augusti 1848 | domus 3 | Catharina Joannis Hulik subditi Temerovicensis uxor. S.S. Sacramentis provisa. | Catholica: 1 | Foemina: 1 | 41 annos | Ordinaria.
 
-2. Original Latin Transcription Guide
+##2. Original Latin Transcription Guide
 
 Transcription Accuracy:
 
@@ -90,22 +91,20 @@ Deaths: date_of_death, date_of_burial, house_number, village_name, deceased_name
 Historical Context Guidance:
 
 Expect 19th-century Latin or Ukrainian script with potential flourishes and faded ink.
-
+House Number column (Nrus Domus) usually includes short name of village e.g. 63 Werb - means Werbivka, house 63. 68 Tur - Turilcze, house 68. 
 Dates may use Roman numerals (e.g., XVII) or Latin month names (e.g., Januarius).
-
 Names may be patronymic or Latinized (e.g., "Petri," "Mariae").
 
-Reference Information:
+#Reference Information:
 
-Villages: 
-Селище (S)
-Суботив ()
-Темерівці (Temerivtsi, Temerowce)
-Блюдники(Bludniki)
-Medynya Медыня
-Селиська (Selys'ka)
-Kurypow (Курипов), Pukasovtsy (Пукасовцы), 
+##Villages: 
+Turilche (Турильче), 
+Werbivka (Werbowce Вербивка), 
+Slobodka (Слободка), 
+Triyca (Троица), 
+Pidfilipje (Подфилипье), 
 
-Surnames:  
-Hulik (Гулик), Wasylczuk (Васильчук), Lesiow (Лесив), Mikityn (Микитин), Rega (Рега), Dubilewski (Дубилевский)
-Podlisny (Подлесный), Merecki (Мерецкий), Homeniuk (Гуменюк).
+##Common Surnames in these villages:  
+Lazaruk (Лазарюк), Baziuk (Базюк), Goch (Гох), Shewchishyn (Шевчишин), 
+Furgach (Фургач), Choma (Хома), Shevchuk (Шевчук), Szepanovski (Щепановски),
+Juskiw (Юзькив), Fedorchuk (Федорчук), Wiznuj (Визны), Bojechok (Божечко), Martunyuk (Мартынюк) .
