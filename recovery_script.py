@@ -211,6 +211,11 @@ def create_doc(docs_service, drive_service, title, folder_id=None):
                 logging.info(f"Created new Google Doc '{title}' in folder with ID: {doc_id}")
             except Exception as e:
                 logging.warning(f"Created document but could not move to folder: {str(e)}")
+                # Check if it's a permission error
+                if 'insufficientFilePermissions' in str(e) or '403' in str(e):
+                    logging.warning(f"Insufficient permissions to add document to folder")
+                    logging.info(f"Returning None to trigger local save fallback")
+                    return None
         else:
             logging.info(f"Created new Google Doc '{title}' with ID: {doc_id}")
         
@@ -219,11 +224,55 @@ def create_doc(docs_service, drive_service, title, folder_id=None):
         logging.error(f"Error creating Google Doc: {str(e)}")
         raise
 
+def save_transcription_locally(pages, doc_name, folder_name):
+    """
+    Save transcription to a local text file when Google Doc creation fails.
+    """
+    try:
+        # Create output directory if it doesn't exist
+        output_dir = "logs/local_transcriptions"
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        
+        # Generate filename
+        safe_doc_name = "".join(c for c in doc_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe_doc_name = safe_doc_name.replace(' ', '_')
+        output_file = os.path.join(output_dir, f"{safe_doc_name}.txt")
+        
+        # Write to file
+        with open(output_file, 'w', encoding='utf-8') as f:
+            # Write header
+            f.write("="*80 + "\n")
+            f.write(f"TRANSCRIPTION RECOVERY\n")
+            f.write(f"Folder: {folder_name}\n")
+            f.write(f"Total Pages: {len(pages)}\n")
+            f.write(f"Generated: {datetime.now().isoformat()}\n")
+            f.write("="*80 + "\n\n")
+            
+            # Write each page
+            for page in pages:
+                f.write(f"\n{'='*80}\n")
+                f.write(f"FILE: {page['name']}\n")
+                f.write(f"SOURCE: {page['webViewLink']}\n")
+                f.write(f"{'='*80}\n\n")
+                f.write(page['text'] if page['text'] else "[No transcription available]")
+                f.write("\n\n")
+        
+        logging.info(f"Transcription saved locally to: {output_file}")
+        return output_file
+    except Exception as e:
+        logging.error(f"Error saving transcription locally: {str(e)}")
+        raise
+
+
 def write_to_doc(docs_service, doc_id, pages, start_idx=0):
     """
     Write transcribed content to a Google Doc with minimal formatting.
-    Uses small per-item batchUpdate calls to avoid precondition/range errors.
+    Uses small per-item batchUpdate calls with rate limit handling and exponential backoff.
     """
+    import time
+    from googleapiclient.errors import HttpError
+    
     logging.info(f"Preparing document content with {len(pages)} pages...")
 
     try:
@@ -231,87 +280,128 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
         docs_service.documents().get(documentId=doc_id).execute()
 
         idx = 1  # Start at the beginning of a new/empty doc
+        
+        # Rate limit tracking
+        requests_in_current_minute = 0
+        minute_start_time = time.time()
+        MAX_REQUESTS_PER_MINUTE = 55  # Stay under the 60 limit with buffer
 
         for i, item in enumerate(pages[start_idx:], start=start_idx + 1):
-            try:
-                requests_for_item = []
+            # Check if we need to wait for rate limit reset
+            elapsed = time.time() - minute_start_time
+            if requests_in_current_minute >= MAX_REQUESTS_PER_MINUTE:
+                if elapsed < 60:
+                    wait_time = 60 - elapsed + 1  # Add 1 second buffer
+                    logging.info(f"Rate limit approaching ({requests_in_current_minute} requests), waiting {wait_time:.1f}s...")
+                    time.sleep(wait_time)
+                # Reset counter
+                requests_in_current_minute = 0
+                minute_start_time = time.time()
+            
+            max_retries = 5
+            retry_delay = 2  # Start with 2 seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    requests_for_item = []
 
-                # 1) Add filename as Heading 1
-                requests_for_item.append({
-                    'insertText': {
-                        'location': {'index': idx},
-                        'text': f"{item['name']}\n"
-                    }
-                })
-                requests_for_item.append({
-                    'updateParagraphStyle': {
-                        'range': {'startIndex': idx, 'endIndex': idx + len(item['name']) + 1},
-                        'paragraphStyle': {
-                            'namedStyleType': 'HEADING_1',
-                            'alignment': 'START'
-                        },
-                        'fields': 'namedStyleType,alignment'
-                    }
-                })
-                idx += len(item['name']) + 1
-
-                # 2) Add source link line
-                link_text = f"Source: view:{item['name']}"
-                requests_for_item.append({
-                    'insertText': {
-                        'location': {'index': idx},
-                        'text': link_text + "\n"
-                    }
-                })
-                requests_for_item.append({
-                    'updateTextStyle': {
-                        'range': {'startIndex': idx, 'endIndex': idx + len(link_text)},
-                        'textStyle': {
-                            'link': {'url': item['webViewLink']},
-                            'foregroundColor': {'color': {'rgbColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}}},
-                            'underline': True
-                        },
-                        'fields': 'link,foregroundColor,underline'
-                    }
-                })
-                idx += len(link_text) + 1
-
-                # 3) Add raw transcription
-                if item['text']:
-                    text_to_insert = item['text'] + "\n\n"
+                    # 1) Add filename as Heading 1
                     requests_for_item.append({
                         'insertText': {
                             'location': {'index': idx},
-                            'text': text_to_insert
+                            'text': f"{item['name']}\n"
                         }
                     })
                     requests_for_item.append({
                         'updateParagraphStyle': {
-                            'range': {'startIndex': idx, 'endIndex': idx + len(text_to_insert)},
+                            'range': {'startIndex': idx, 'endIndex': idx + len(item['name']) + 1},
                             'paragraphStyle': {
-                                'namedStyleType': 'NORMAL_TEXT',
+                                'namedStyleType': 'HEADING_1',
                                 'alignment': 'START'
                             },
                             'fields': 'namedStyleType,alignment'
                         }
                     })
-                    idx += len(text_to_insert)
+                    idx += len(item['name']) + 1
 
-                # Execute this small batch for the item
-                docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_for_item}).execute()
-                logging.info(f"Added transcription for '{item['name']}' to document")
+                    # 2) Add source link line
+                    link_text = f"Source: view:{item['name']}"
+                    requests_for_item.append({
+                        'insertText': {
+                            'location': {'index': idx},
+                            'text': link_text + "\n"
+                        }
+                    })
+                    requests_for_item.append({
+                        'updateTextStyle': {
+                            'range': {'startIndex': idx, 'endIndex': idx + len(link_text)},
+                            'textStyle': {
+                                'link': {'url': item['webViewLink']},
+                                'foregroundColor': {'color': {'rgbColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}}},
+                                'underline': True
+                            },
+                            'fields': 'link,foregroundColor,underline'
+                        }
+                    })
+                    idx += len(link_text) + 1
 
-            except Exception as e:
-                logging.error(f"Error processing page {i} ('{item['name']}'): {str(e)}")
-                # Try to record the error message text so we don't lose place
-                error_text = f"\n[Error processing this page: {str(e)}]\n"
-                try:
-                    docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': [
-                        {'insertText': {'location': {'index': idx}, 'text': error_text}}
-                    ]}).execute()
-                    idx += len(error_text)
-                except Exception as nested:
-                    logging.error(f"Failed to write error marker to document: {nested}")
+                    # 3) Add raw transcription
+                    if item['text']:
+                        text_to_insert = item['text'] + "\n\n"
+                        requests_for_item.append({
+                            'insertText': {
+                                'location': {'index': idx},
+                                'text': text_to_insert
+                            }
+                        })
+                        requests_for_item.append({
+                            'updateParagraphStyle': {
+                                'range': {'startIndex': idx, 'endIndex': idx + len(text_to_insert)},
+                                'paragraphStyle': {
+                                    'namedStyleType': 'NORMAL_TEXT',
+                                    'alignment': 'START'
+                                },
+                                'fields': 'namedStyleType,alignment'
+                            }
+                        })
+                        idx += len(text_to_insert)
+
+                    # Execute this small batch for the item
+                    docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_for_item}).execute()
+                    requests_in_current_minute += 1
+                    logging.info(f"Added transcription for '{item['name']}' to document ({i}/{len(pages)})")
+                    break  # Success, exit retry loop
+
+                except HttpError as e:
+                    if e.resp.status == 429:  # Rate limit error
+                        if attempt < max_retries - 1:
+                            logging.warning(f"Rate limit hit for page {i}, attempt {attempt + 1}/{max_retries}. Waiting {retry_delay}s...")
+                            time.sleep(retry_delay)
+                            retry_delay *= 2  # Exponential backoff
+                            # Reset rate limit tracking
+                            requests_in_current_minute = 0
+                            minute_start_time = time.time()
+                        else:
+                            logging.error(f"Max retries exceeded for page {i} ('{item['name']}'): {str(e)}")
+                            raise
+                    else:
+                        # Non-rate-limit error, don't retry
+                        logging.error(f"Error processing page {i} ('{item['name']}'): {str(e)}")
+                        raise
+                        
+                except Exception as e:
+                    logging.error(f"Error processing page {i} ('{item['name']}'): {str(e)}")
+                    # Try to record the error message text so we don't lose place
+                    error_text = f"\n[Error processing this page: {str(e)}]\n"
+                    try:
+                        docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': [
+                            {'insertText': {'location': {'index': idx}, 'text': error_text}}
+                        ]}).execute()
+                        requests_in_current_minute += 1
+                        idx += len(error_text)
+                    except Exception as nested:
+                        logging.error(f"Failed to write error marker to document: {nested}")
+                    break  # Don't retry non-rate-limit errors
 
         logging.info("Google Doc updated successfully")
 
@@ -369,13 +459,22 @@ def main():
         logging.info(f"Creating Google Doc: {doc_title}")
         doc_id = create_doc(docs_service, drive_service, doc_title, folder_id)
         
-        # Write content to the document
-        write_to_doc(docs_service, doc_id, pages)
-        
-        logging.info(f"=== Recovery Completed Successfully ===")
-        logging.info(f"Document created with {len(pages)} images")
-        logging.info(f"Document ID: {doc_id}")
-        logging.info(f"Document URL: https://docs.google.com/document/d/{doc_id}/edit")
+        if doc_id is None:
+            # Permission error - save locally instead
+            logging.warning("Cannot create Google Doc due to insufficient permissions")
+            logging.info("Saving transcription to local file instead...")
+            local_file = save_transcription_locally(pages, doc_title, folder_name)
+            logging.info(f"=== Recovery Completed (Local Save) ===")
+            logging.info(f"✓ Transcription saved locally: {local_file}")
+            logging.info(f"✓ Processed {len(pages)} images successfully")
+        else:
+            # Write content to the document
+            write_to_doc(docs_service, doc_id, pages)
+            
+            logging.info(f"=== Recovery Completed Successfully ===")
+            logging.info(f"Document created with {len(pages)} images")
+            logging.info(f"Document ID: {doc_id}")
+            logging.info(f"Document URL: https://docs.google.com/document/d/{doc_id}/edit")
         
     except Exception as e:
         logging.error(f"Recovery failed: {str(e)}")
