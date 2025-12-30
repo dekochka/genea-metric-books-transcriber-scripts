@@ -57,17 +57,17 @@ PROJECT_ID = "ukr-transcribe-genea"
 #FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
 #DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
 #FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "13Ipd-d5cl2IjBO8_QTeN4XuoO0F1OWCd"
-FOLDER_NAME = "1872-1885 Селище из ДАЙФО 631-12-32"
+DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
+FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти (487-1-729-смерті) - в Тексте"
 
 REGION = "global"  # Changed to global as per sample
-OCR_MODEL_ID = "gemini-2.5-pro"
+OCR_MODEL_ID = "gemini-3-pro-preview"
 ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 401  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
-IMAGE_COUNT = 100  # Number of images to process starting from IMAGE_START_NUMBER
+IMAGE_START_NUMBER = 200  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_COUNT = 400  # Number of images to process starting from IMAGE_START_NUMBER
 
 # RETRY MODE - Set to True to retry specific failed images
 RETRY_MODE = False
@@ -640,6 +640,12 @@ def create_doc(docs_service, drive_service, title):
         return doc_id
     except Exception as e:
         logging.error(f"Error creating Google Doc: {str(e)}")
+        # Check if it's a permission error
+        if 'insufficientFilePermissions' in str(e) or '403' in str(e):
+            logging.warning(f"Insufficient permissions to add document to folder '{FOLDER_NAME}'")
+            logging.warning(f"Document was created but could not be moved to the target folder")
+            logging.info(f"Returning None to trigger local save fallback")
+            return None
         raise
 
 
@@ -703,6 +709,46 @@ Prompt Used:
 """
     
     return overview_content
+
+
+def save_transcription_locally(pages, doc_name):
+    """
+    Save transcription to a local text file when Google Doc creation fails.
+    """
+    try:
+        # Create output directory if it doesn't exist
+        output_dir = os.path.join(LOGS_DIR, "local_transcriptions")
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        
+        # Generate filename
+        safe_doc_name = "".join(c for c in doc_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        safe_doc_name = safe_doc_name.replace(' ', '_')
+        output_file = os.path.join(output_dir, f"{safe_doc_name}.txt")
+        
+        # Create overview content
+        overview_content = create_overview_section(pages)
+        
+        # Write to file
+        with open(output_file, 'w', encoding='utf-8') as f:
+            # Write overview
+            f.write(overview_content)
+            f.write("\n" + "="*80 + "\n\n")
+            
+            # Write each page
+            for page in pages:
+                f.write(f"\n{'='*80}\n")
+                f.write(f"FILE: {page['name']}\n")
+                f.write(f"SOURCE: {page['webViewLink']}\n")
+                f.write(f"{'='*80}\n\n")
+                f.write(page['text'] if page['text'] else "[No transcription available]")
+                f.write("\n\n")
+        
+        logging.info(f"Transcription saved locally to: {output_file}")
+        return output_file
+    except Exception as e:
+        logging.error(f"Error saving transcription locally: {str(e)}")
+        raise
 
 
 def write_to_doc(docs_service, doc_id, pages, start_idx=0):
@@ -923,9 +969,21 @@ def main():
             first_image = transcribed_pages[0]['name']
             last_image = transcribed_pages[-1]['name']
             doc_name = f"transcription_{first_image[:-4]}-{last_image[:-4]}"
+            
+            # Try to create Google Doc
             doc_id = create_doc(docs_service, drive_service, doc_name)
-            write_to_doc(docs_service, doc_id, transcribed_pages)
-            logging.info(f"Created document '{doc_name}' with {len(transcribed_pages)} images")
+            
+            if doc_id is None:
+                # Permission error - save locally instead
+                logging.warning("Cannot create Google Doc due to insufficient permissions")
+                logging.info("Saving transcription to local file instead...")
+                local_file = save_transcription_locally(transcribed_pages, doc_name)
+                logging.info(f"✓ Transcription saved locally: {local_file}")
+                logging.info(f"✓ Processed {len(transcribed_pages)} images successfully")
+            else:
+                # Successfully created doc - write to it
+                write_to_doc(docs_service, doc_id, transcribed_pages)
+                logging.info(f"Created document '{doc_name}' with {len(transcribed_pages)} images")
         
         # Log session completion
         ai_logger.info(f"=== Transcription Session Completed ===")
