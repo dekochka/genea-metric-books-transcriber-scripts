@@ -2,6 +2,147 @@
 
 This toolkit transcribes images from a Google Drive folder using Vertex AI Gemini 2.5 and writes results into a Google Doc with headings, source links, and raw AI output. A recovery script can rebuild the Google Doc from AI logs if the main run fails late.
 
+## Overview
+
+A specialized tool for transcribing handwritten genealogical records (birth, death, and marriage certificates) from 19th and 20th century Eastern European archives. The script automates the process of extracting structured data from historical documents using Google's latest Vertex AI vision models.
+
+### Key Features
+
+- **Flexible Image Processing**: Supports multiple filename patterns (numbered, timestamped, prefixed)
+- **Configurable Prompts**: Uses external prompt files for different record types (births, deaths, marriages)
+- **Batch Processing**: Process specific ranges of images with configurable start/count parameters
+- **Smart Error Recovery**: Local file fallback when Google Docs API fails
+- **Comprehensive Logging**: Separate logs for script progress and AI responses
+- **Retry Mechanism**: Reprocess specific failed images without re-running entire batch
+- **Test Mode**: Quick validation of authentication and API access
+- **Rate Limiting**: Built-in protection against API quota exhaustion
+- **Structured Output**: Creates well-formatted Google Docs with metadata, headings, and source links
+
+### Architecture
+
+```mermaid
+graph TB
+    subgraph IS["Input Sources"]
+        GD["📁 Google Drive Folder<br/>Historical Document Images"]
+        PROMPTS["📋 Prompt Files<br/>Record Type Instructions"]
+    end
+    
+    subgraph TE["Transcription Engine"]
+        SCRIPT["⚙️ transcribe_birth_records.py<br/>Main Automation Script"]
+        AUTH["🔐 Authentication<br/>OAuth2/ADC"]
+        CONFIG["⚙️ Configuration<br/>Folder, Model, Range"]
+        REFRESH["🔄 refresh_credentials.py<br/>OAuth2 Setup (Prerequisite)"]
+    end
+    
+    subgraph AI["AI Processing"]
+        VERTEX["🤖 Vertex AI Gemini<br/>OCR & Transcription"]
+    end
+    
+    subgraph OR["Output & Recovery"]
+        GDOC["📄 Google Docs<br/>Formatted Transcriptions with Links to Image Sources"]
+        LOCAL["💾 Local Files<br/>Fallback Storage"]
+        LOGS["📊 Log Files<br/>AI Responses & Progress"]
+        RECOVERY["🔄 recovery_script.py<br/>Rebuild from Logs"]
+    end
+    
+    REFRESH -->|0. Generate Credentials| AUTH
+    GD -->|1. List & Download| SCRIPT
+    PROMPTS -->|2. Load Instructions| SCRIPT
+    AUTH -->|3. Credentials| SCRIPT
+    CONFIG -->|4. Parameters| SCRIPT
+    SCRIPT -->|5. Send Images| VERTEX
+    VERTEX -->|6. Transcribed Text| SCRIPT
+    SCRIPT -->|7. Create & Write| GDOC
+    GDOC -->|8. Save to| GD
+    SCRIPT -->|9. Fallback Save| LOCAL
+    SCRIPT -->|10. Record Responses| LOGS
+    LOGS -->|11. Rebuild Doc| RECOVERY
+    RECOVERY -->|12. Create New| GDOC
+    
+    subgraph Legend[" "]
+        direction LR
+        L1["📦 Input/Output Resources"]
+        L2["⚙️ Configuration & Credentials"]
+        L3["🔧 Engine & Processing"]
+    end
+    
+    classDef resourceStyle fill:#B0E0E6,stroke:#4682B4,stroke-width:2px,color:#000
+    classDef configStyle fill:#D3D3D3,stroke:#696969,stroke-width:2px,color:#000
+    classDef processingStyle fill:#FFFACD,stroke:#DAA520,stroke-width:2px,color:#000
+    classDef legendStyle fill:#F0F8FF,stroke:#87CEEB,stroke-width:1px,color:#000
+    
+    class GD,GDOC,LOCAL,LOGS resourceStyle
+    class PROMPTS,AUTH,CONFIG,REFRESH configStyle
+    class SCRIPT,VERTEX,RECOVERY processingStyle
+    class L1 resourceStyle
+    class L2 configStyle
+    class L3 processingStyle
+    
+    style IS fill:#F8F9FA,stroke:#CED4DA,stroke-width:2px
+    style TE fill:#F8F9FA,stroke:#CED4DA,stroke-width:2px
+    style AI fill:#F8F9FA,stroke:#CED4DA,stroke-width:2px
+    style OR fill:#F8F9FA,stroke:#CED4DA,stroke-width:2px
+    style Legend fill:#FFFFFF,stroke:#DEE2E6,stroke-width:1px
+```
+
+### Main Workflow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Script
+    participant Drive as Google Drive
+    participant Vertex as Vertex AI Gemini
+    participant Docs as Google Docs
+    participant Logs as Log Files
+    
+    User->>Script: Configure & Run
+    Script->>Script: Load Prompt File
+    Script->>Drive: Authenticate & List Images
+    Drive-->>Script: Image List (filtered by range)
+    
+    loop For Each Image
+        Script->>Drive: Download Image
+        Drive-->>Script: Image Bytes
+        Script->>Vertex: Send Image + Prompt
+        Note over Vertex: OCR & Transcription<br/>(with thinking budget)
+        Vertex-->>Script: Transcribed Text
+        Script->>Logs: Record AI Response
+    end
+    
+    alt Google Docs Available
+        Script->>Docs: Create Document
+        Script->>Docs: Write Transcriptions (batched)
+        Docs-->>User: Formatted Document Link
+    else Permission Error
+        Script->>Logs: Save to Local File
+        Logs-->>User: Local Text File
+    end
+    
+    Script->>Logs: Session Summary
+    
+    opt Recovery Needed
+        User->>Script: Run recovery_script.py
+        Script->>Logs: Parse AI Response Log
+        Script->>Docs: Rebuild Document
+        Docs-->>User: Recovered Document
+    end
+```
+
+### Component Details
+
+| Component | Purpose | Technology |
+|-----------|---------|------------|
+| **Image Sources** | Historical document scans | Google Drive folders |
+| **OAuth2 Setup** | Generate authentication credentials | refresh_credentials.py |
+| **Transcription Engine** | Main automation script | Python 3.10+ |
+| **AI Model** | OCR & structured extraction | Vertex AI Gemini 2.5/3 Pro |
+| **Output Storage** | Formatted transcriptions | Google Docs API |
+| **Fallback Storage** | Local file save on API errors | Text files in logs/ |
+| **Logging System** | Progress tracking & recovery | Separate log files |
+| **Prompt System** | Record-type specific instructions | External .txt files |
+| **Recovery Tool** | Rebuild docs from logs | recovery_script.py |
+
 ## Prerequisites
 
 1. Python 3.10+
