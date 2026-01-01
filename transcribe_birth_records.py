@@ -66,8 +66,8 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 1  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
-IMAGE_COUNT = 300  # Number of images to process starting from IMAGE_START_NUMBER
+IMAGE_START_NUMBER = 10  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_COUNT = 2  # Number of images to process starting from IMAGE_START_NUMBER
 
 # RETRY MODE - Set to True to retry specific failed images
 RETRY_MODE = False
@@ -801,9 +801,10 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
         # Write overview immediately and re-fetch index to ensure accuracy
         docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': overview_requests}).execute()
         doc = docs_service.documents().get(documentId=doc_id).execute()
-        idx = doc['body']['content'][-1]['endIndex']
+        # Google Docs always ends with a trailing newline; insert before it (endIndex - 1)
+        idx = doc['body']['content'][-1]['endIndex'] - 1
         consecutive_failures = 0  # Reset counter on success
-        logging.info(f"Overview section added. Document index: {idx}")
+        logging.info(f"Overview section added. Document end index: {doc['body']['content'][-1]['endIndex']}, insertion index: {idx}")
         
         for i, item in enumerate(pages[start_idx:], start=start_idx + 1):
             try:
@@ -877,18 +878,21 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                 
                 # Process requests in batches (always enforce chunking to avoid API limits)
                 if len(all_requests) >= BATCH_SIZE:
-                    logging.info(f"Processing batch of up to {BATCH_SIZE} requests (current queue: {len(all_requests)})...")
-                    # Send only BATCH_SIZE requests to stay under 500 requests per batchUpdate
-                    batch = all_requests[:BATCH_SIZE]
-                    docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': batch}).execute()
-                    # Drop the sent chunk and keep the rest queued
-                    all_requests = all_requests[BATCH_SIZE:]
+                    logging.info(f"Processing batches (current queue: {len(all_requests)})...")
+                    # Write all pending requests in chunks to avoid stale indices
+                    # (Keeping requests across batch boundaries causes index drift)
+                    while all_requests:
+                        chunk = all_requests[:BATCH_SIZE]
+                        docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': chunk}).execute()
+                        all_requests = all_requests[BATCH_SIZE:]
+                        logging.info(f"Batch of {len(chunk)} requests processed ({len(all_requests)} remaining in queue)...")
                     
                     # Re-fetch document to get current end index (prevents "Precondition check failed" errors)
                     doc = docs_service.documents().get(documentId=doc_id).execute()
-                    idx = doc['body']['content'][-1]['endIndex']
+                    # Google Docs always ends with a trailing newline; insert before it (endIndex - 1)
+                    idx = doc['body']['content'][-1]['endIndex'] - 1
                     consecutive_failures = 0  # Reset counter on success
-                    logging.info(f"Batch processed successfully. Document index updated to {idx}")
+                    logging.info(f"All batches processed successfully. Document index updated to {idx}")
                 
             except Exception as e:
                 consecutive_failures += 1
@@ -913,7 +917,8 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                             all_requests = all_requests[BATCH_SIZE:]
                         # Re-fetch document to get current end index
                         doc = docs_service.documents().get(documentId=doc_id).execute()
-                        idx = doc['body']['content'][-1]['endIndex']
+                        # Google Docs always ends with a trailing newline; insert before it (endIndex - 1)
+                        idx = doc['body']['content'][-1]['endIndex'] - 1
                         consecutive_failures = 0  # Reset if flush succeeds
                         logging.info(f"Pending requests flushed successfully. Document index updated to {idx}")
                     except Exception as flush_error:
@@ -932,11 +937,14 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                     }]}).execute()
                     # Re-fetch document after adding error message
                     doc = docs_service.documents().get(documentId=doc_id).execute()
-                    idx = doc['body']['content'][-1]['endIndex']
+                    # Google Docs always ends with a trailing newline; insert before it (endIndex - 1)
+                    idx = doc['body']['content'][-1]['endIndex'] - 1
                 except Exception as error_write_error:
                     logging.error(f"Could not write error message to document: {error_write_error}")
         
-        # Process any remaining requests in safe chunks
+        # Process any remaining requests in safe chunks (should be minimal after loop batching)
+        if all_requests:
+            logging.info(f"Processing final {len(all_requests)} remaining requests...")
         while all_requests:
             chunk = all_requests[:BATCH_SIZE]
             logging.info(f"Processing remaining batch of {len(chunk)} requests (left: {len(all_requests)})...")
@@ -947,7 +955,8 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
             # Re-fetch document to keep index synchronized
             if all_requests:  # Only if there are more batches to process
                 doc = docs_service.documents().get(documentId=doc_id).execute()
-                idx = doc['body']['content'][-1]['endIndex']
+                # Google Docs always ends with a trailing newline; insert before it (endIndex - 1)
+                idx = doc['body']['content'][-1]['endIndex'] - 1
                 logging.info(f"Remaining batch processed. Document index updated to {idx}")
         logging.info("All batches processed successfully")
         
