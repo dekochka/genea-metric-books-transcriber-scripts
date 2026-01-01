@@ -50,13 +50,20 @@ def init_services(creds):
     logging.info("Google Drive and Docs APIs initialized.")
     return drive, docs
 
-def parse_ai_log(log_file_path):
+def parse_ai_log(log_file_path, image_links=None):
     """
     Parse the AI response log file and extract image names, view links, and transcriptions.
     Uses line-by-line parsing for better performance on large files.
+    
+    Args:
+        log_file_path: Path to the AI response log file
+        image_links: Optional dict mapping image names to webViewLinks from Drive folder
+    
     Returns a list of dictionaries with 'name', 'webViewLink', and 'text' keys.
     """
     logging.info(f"Parsing AI log file: {log_file_path}")
+    if image_links:
+        logging.info(f"Using {len(image_links)} webViewLinks from Drive folder")
     
     pages = []
     folder_name = "Unknown Folder"
@@ -69,6 +76,7 @@ def parse_ai_log(log_file_path):
         
         # State tracking for line-by-line parsing
         current_image = None
+        current_web_view_link = None
         in_response = False
         in_error = False
         response_lines = []
@@ -89,6 +97,7 @@ def parse_ai_log(log_file_path):
                 start_idx = line.find("=== AI Response for ") + 20
                 end_idx = line.rfind(" ===")
                 current_image = line[start_idx:end_idx].strip()
+                current_web_view_link = None  # Reset for new image
                 in_response = False
                 in_error = False
                 response_lines = []
@@ -99,10 +108,18 @@ def parse_ai_log(log_file_path):
                 start_idx = line.find("=== AI Error for ") + 17
                 end_idx = line.rfind(" ===")
                 current_image = line[start_idx:end_idx].strip()
+                current_web_view_link = None  # Reset for new image
                 in_response = False
                 in_error = True
                 error_message = None
                 
+            # Extract Source URL (Google Drive link)
+            elif "- Source URL:" in line or "INFO - Source URL:" in line:
+                # Extract the URL after "Source URL:"
+                if "Source URL:" in line:
+                    url_start = line.find("Source URL:") + len("Source URL:")
+                    current_web_view_link = line[url_start:].strip()
+            
             # Start of actual response content
             elif "- Full response:" in line and current_image:
                 in_response = True
@@ -112,7 +129,17 @@ def parse_ai_log(log_file_path):
             elif "=== End AI Response for " in line and current_image:
                 if in_response and response_lines:
                     response_text = '\n'.join(response_lines).strip()
-                    web_view_link = f"https://drive.google.com/file/d/placeholder_id_for_{current_image.replace(' ', '_')}/view"
+                    # Priority order for webViewLink:
+                    # 1. From Drive folder (if image_links provided)
+                    # 2. From log file (current_web_view_link)
+                    # 3. Placeholder
+                    if image_links and current_image in image_links:
+                        web_view_link = image_links[current_image]
+                    elif current_web_view_link:
+                        web_view_link = current_web_view_link
+                    else:
+                        web_view_link = f"https://drive.google.com/file/d/placeholder_id_for_{current_image.replace(' ', '_')}/view"
+                        logging.warning(f"No Source URL found for {current_image}, using placeholder")
                     
                     pages.append({
                         'name': current_image,
@@ -123,13 +150,24 @@ def parse_ai_log(log_file_path):
                     logging.info(f"Extracted transcription for: {current_image}")
                 
                 current_image = None
+                current_web_view_link = None
                 in_response = False
                 response_lines = []
                 
             # End of AI error
             elif "=== End AI Error for " in line and current_image:
                 if in_error and error_message:
-                    web_view_link = f"https://drive.google.com/file/d/placeholder_id_for_{current_image.replace(' ', '_')}/view"
+                    # Priority order for webViewLink:
+                    # 1. From Drive folder (if image_links provided)
+                    # 2. From log file (current_web_view_link)
+                    # 3. Placeholder
+                    if image_links and current_image in image_links:
+                        web_view_link = image_links[current_image]
+                    elif current_web_view_link:
+                        web_view_link = current_web_view_link
+                    else:
+                        web_view_link = f"https://drive.google.com/file/d/placeholder_id_for_{current_image.replace(' ', '_')}/view"
+                        logging.warning(f"No Source URL found for {current_image}, using placeholder")
                     
                     pages.append({
                         'name': current_image,
@@ -140,6 +178,7 @@ def parse_ai_log(log_file_path):
                     logging.info(f"Extracted error entry for: {current_image}")
                 
                 current_image = None
+                current_web_view_link = None
                 in_error = False
                 error_message = None
                 
@@ -192,6 +231,42 @@ def get_drive_folder_id(drive_service, folder_name):
     except Exception as e:
         logging.error(f"Error searching for folder: {str(e)}")
         return None
+
+def fetch_images_from_folder(drive_service, folder_id):
+    """
+    Fetch all images from a Google Drive folder and return a dictionary
+    mapping filename to webViewLink.
+    """
+    logging.info(f"Fetching images from folder ID: {folder_id}")
+    
+    try:
+        image_links = {}
+        page_token = None
+        
+        while True:
+            query = f"'{folder_id}' in parents and (mimeType contains 'image/' or name contains '.jpg' or name contains '.jpeg' or name contains '.png') and trashed=false"
+            
+            results = drive_service.files().list(
+                q=query,
+                fields="nextPageToken,files(id,name,webViewLink)",
+                pageToken=page_token,
+                pageSize=100
+            ).execute()
+            
+            files = results.get('files', [])
+            for file in files:
+                image_links[file['name']] = file['webViewLink']
+            
+            page_token = results.get('nextPageToken')
+            if not page_token:
+                break
+        
+        logging.info(f"Found {len(image_links)} images in folder")
+        return image_links
+    
+    except Exception as e:
+        logging.error(f"Error fetching images from folder: {str(e)}")
+        return {}
 
 def create_doc(docs_service, drive_service, title, folder_id=None):
     """Create a new Google Doc and optionally move it to a specified folder."""
@@ -276,10 +351,10 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
     logging.info(f"Preparing document content with {len(pages)} pages...")
 
     try:
-        # Ensure we have the current doc (and its initial length)
-        docs_service.documents().get(documentId=doc_id).execute()
-
-        idx = 1  # Start at the beginning of a new/empty doc
+        # Get the current document state
+        doc = docs_service.documents().get(documentId=doc_id).execute()
+        # Google Docs always ends with a trailing newline; insert before it (endIndex - 1)
+        idx = doc['body']['content'][-1]['endIndex'] - 1
         
         # Rate limit tracking
         requests_in_current_minute = 0
@@ -369,6 +444,11 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                     # Execute this small batch for the item
                     docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': requests_for_item}).execute()
                     requests_in_current_minute += 1
+                    
+                    # Re-fetch document to get current end index (prevents index drift)
+                    doc = docs_service.documents().get(documentId=doc_id).execute()
+                    idx = doc['body']['content'][-1]['endIndex'] - 1
+                    
                     logging.info(f"Added transcription for '{item['name']}' to document ({i}/{len(pages)})")
                     break  # Success, exit retry loop
 
@@ -398,7 +478,10 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                             {'insertText': {'location': {'index': idx}, 'text': error_text}}
                         ]}).execute()
                         requests_in_current_minute += 1
-                        idx += len(error_text)
+                        
+                        # Re-fetch document to get current end index
+                        doc = docs_service.documents().get(documentId=doc_id).execute()
+                        idx = doc['body']['content'][-1]['endIndex'] - 1
                     except Exception as nested:
                         logging.error(f"Failed to write error marker to document: {nested}")
                     break  # Don't retry non-rate-limit errors
@@ -414,7 +497,8 @@ def main():
     parser = argparse.ArgumentParser(description='Recovery script to create Google Doc from AI response logs')
     parser.add_argument('log_file', help='Path to the AI response log file')
     parser.add_argument('--doc-title', help='Custom title for the Google Doc (default: derived from log file)')
-    parser.add_argument('--folder-id', help='Google Drive folder ID to place the document (optional)')
+    parser.add_argument('--folder-id', help='Google Drive folder ID where original images are located and where to upload the recovered doc')
+    parser.add_argument('--folder-name', help='Google Drive folder name (used to search for folder if folder-id not provided; also tries to auto-detect from log file)')
     
     args = parser.parse_args()
     
@@ -430,21 +514,49 @@ def main():
             logging.error(f"Log file not found: {args.log_file}")
             return
         
-        # Parse the AI response log
-        pages, folder_name = parse_ai_log(args.log_file)
+        # Initialize services first (needed to fetch images from Drive)
+        creds = authenticate()
+        drive_service, docs_service = init_services(creds)
+        
+        # Parse the AI response log first to get folder_name from log
+        pages, folder_name_from_log = parse_ai_log(args.log_file, image_links=None)
         
         if not pages:
             logging.error("No transcription data found in the log file")
             return
         
-        # Initialize services
-        creds = authenticate()
-        drive_service, docs_service = init_services(creds)
-        
-        # Determine folder ID if not provided
+        # Determine folder ID (priority: args.folder_id > args.folder_name > folder_name_from_log)
         folder_id = args.folder_id
-        if not folder_id:
+        folder_name = args.folder_name or folder_name_from_log
+        
+        if not folder_id and folder_name:
+            logging.info(f"Searching for folder by name: {folder_name}")
             folder_id = get_drive_folder_id(drive_service, folder_name)
+        
+        # Fetch images from the Drive folder to get webViewLinks
+        image_links = {}
+        if folder_id:
+            logging.info(f"Fetching images from Drive folder: {folder_id}")
+            image_links = fetch_images_from_folder(drive_service, folder_id)
+            if not image_links:
+                logging.warning("No images found in folder or error fetching images. Links may not work correctly.")
+            else:
+                # Re-parse the log with the image links to update webViewLinks
+                logging.info("Re-parsing log with Drive folder webViewLinks...")
+                pages, _ = parse_ai_log(args.log_file, image_links=image_links)
+        else:
+            logging.warning("No folder ID provided or found. Source links will use placeholders.")
+        
+        # Final check for pages (should not fail here, but just in case)
+        if not pages:
+            logging.error("No transcription data found after processing")
+            return
+        
+        # Count how many pages have real links vs placeholders
+        real_links = sum(1 for page in pages if 'placeholder_id_for' not in page['webViewLink'])
+        placeholder_links = len(pages) - real_links
+        logging.info(f"Successfully parsed {len(pages)} transcriptions")
+        logging.info(f"Link status: {real_links} real Google Drive links, {placeholder_links} placeholder links")
         
         # Create document title
         if args.doc_title:
