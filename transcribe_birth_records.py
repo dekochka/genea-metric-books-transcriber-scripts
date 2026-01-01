@@ -35,7 +35,7 @@ from google.genai import types
 # ------------------------- PROMPTS -------------------------
 # Set which prompt file to load from the `prompts` folder (without path).
 # Use "INSTRUCTION.txt" by default.
-PROMPT_FILE = os.environ.get("PROMPT_FILE", "VOVKIVTSY_Ф487О1Д26_браки.txt")
+PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION_BLUDNIKI.txt")
 
 def load_prompt_text() -> str:
     prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
@@ -57,8 +57,9 @@ PROJECT_ID = "ukr-transcribe-genea"
 #FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
 #DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
 #FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "10vwVBiJITeImpNpbpbILBKR6vnwOgt1z"
-FOLDER_NAME = "1850-1891 МК Вовкивцы Борщев браки Ф.487 О.1 Д.26"
+DRIVE_FOLDER_ID = "1rhICtjI-CIRBl9yehxUGT2GWlLk0483P"
+FOLDER_NAME = "1837-1866 Bludniki FamilySearch 004932767 Подгруппа 8 Ф.201 О.4А Д.350"
+ARCHIVE_INDEX = "ф201оп4Aспр350"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-3-flash-preview"
@@ -66,7 +67,7 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 10  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_START_NUMBER = 61  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
 IMAGE_COUNT = 2  # Number of images to process starting from IMAGE_START_NUMBER
 
 # RETRY MODE - Set to True to retry specific failed images
@@ -652,7 +653,8 @@ def create_doc(docs_service, drive_service, title):
 def create_overview_section(pages):
     """
     Create overview section content for the document.
-    Returns a list of requests to add the overview section.
+    Returns tuple of (overview_content, folder_link_info) where folder_link_info is
+    (link_start_index, link_end_index, folder_url) for creating a clickable link.
     """
     # Get folder link from the first page
     folder_link = pages[0]['webViewLink'] if pages else ""
@@ -661,7 +663,8 @@ def create_overview_section(pages):
         folder_id = folder_link.split('folders/')[1].split('/')[0]
         folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
     else:
-        folder_url = folder_link
+        # Use DRIVE_FOLDER_ID to construct folder URL if webViewLink doesn't have folder info
+        folder_url = f"https://drive.google.com/drive/folders/{DRIVE_FOLDER_ID}"
     
     # Count successful and failed transcriptions
     successful_pages = [p for p in pages if p['text'] and not p['text'].startswith('[Error')]
@@ -677,12 +680,23 @@ def create_overview_section(pages):
         end_file = "N/A"
         file_count = 0
     
-    # Create overview content
+    # Create overview content with folder name as link text
     overview_content = f"""OVERVIEW
 
 Name: {FOLDER_NAME}
-Folder Link: {folder_url}
-Model: {OCR_MODEL_ID}
+Folder Link: {FOLDER_NAME}
+"""
+    
+    # Calculate folder link position (after "Folder Link: ")
+    folder_link_start = overview_content.find("Folder Link: ") + len("Folder Link: ")
+    folder_link_end = folder_link_start + len(FOLDER_NAME)
+    folder_link_info = (folder_link_start, folder_link_end, folder_url)
+    
+    # Add archive index if available
+    if ARCHIVE_INDEX:
+        overview_content += f"Archive Index: {ARCHIVE_INDEX}\n"
+    
+    overview_content += f"""Model: {OCR_MODEL_ID}
 Prompt File: {PROMPT_FILE}
 
 Files Processed:
@@ -708,7 +722,53 @@ Prompt Used:
 
 """
     
-    return overview_content
+    return overview_content, folder_link_info
+
+
+def add_record_links_to_text(text, archive_index, page_number, web_view_link):
+    """
+    Find lines starting with ### (like "### Запись 1") and append clickable archive reference.
+    For example: "### Запись 1" becomes "### Запись 1 ф201оп4спр104стр22"
+    where the archive part is a hyperlink.
+    
+    Returns tuple of (modified_text, link_insertions) where link_insertions is a list of
+    (start_index, end_index, url) tuples for creating links in Google Docs.
+    """
+    if not text or not archive_index or not web_view_link:
+        return text, []
+    
+    import re
+    
+    lines = text.split('\n')
+    modified_lines = []
+    link_insertions = []
+    current_pos = 0
+    
+    # Pattern to match ### at start of line (with optional whitespace) followed by any text
+    # Matches lines like "### Запись 1", "### Record 1", "### Запис 1", etc.
+    pattern = re.compile(r'^(###\s+[^\n]+)', re.IGNORECASE)
+    
+    for line in lines:
+        match = pattern.match(line)
+        if match:
+            # Found a record header line
+            original_line = match.group(1)
+            archive_ref = f"{archive_index}стр{page_number}"
+            modified_line = f"{original_line} {archive_ref}"
+            modified_lines.append(modified_line)
+            
+            # Calculate position for link insertion (the archive_ref part)
+            link_start = current_pos + len(original_line) + 1  # +1 for the space
+            link_end = link_start + len(archive_ref)
+            link_insertions.append((link_start, link_end, web_view_link))
+            
+            current_pos += len(modified_line) + 1  # +1 for newline
+        else:
+            modified_lines.append(line)
+            current_pos += len(line) + 1  # +1 for newline
+    
+    modified_text = '\n'.join(modified_lines)
+    return modified_text, link_insertions
 
 
 def save_transcription_locally(pages, doc_name):
@@ -726,8 +786,8 @@ def save_transcription_locally(pages, doc_name):
         safe_doc_name = safe_doc_name.replace(' ', '_')
         output_file = os.path.join(output_dir, f"{safe_doc_name}.txt")
         
-        # Create overview content
-        overview_content = create_overview_section(pages)
+        # Create overview content (for local files, we just need the text, not link info)
+        overview_content, _ = create_overview_section(pages)
         
         # Write to file
         with open(output_file, 'w', encoding='utf-8') as f:
@@ -756,14 +816,16 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
     Write transcribed content to a Google Doc with minimal formatting.
     Formatting includes:
     - Overview section with metadata
-    - Filename as Heading 1
-    - Source link
-    - Raw Vertex AI output as normal text
+    - Archive reference + page number as Heading 1 (e.g., "ф201оп4спр104стр22")
+    - Source image link
+    - Raw Vertex AI output with clickable links on record headers
     
     Handles batching of requests to stay within Google Docs API limits (500 requests per batch).
     Implements circuit breaker pattern to stop after consecutive failures.
     """
     logging.info(f"Preparing document content for folder '{FOLDER_NAME}'...")
+    if ARCHIVE_INDEX:
+        logging.info(f"Using archive index: {ARCHIVE_INDEX}")
     
     try:
         # Get the current document to check its structure
@@ -779,7 +841,9 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
         consecutive_failures = 0
         
         # Add overview section at the beginning
-        overview_content = create_overview_section(pages)
+        overview_content, folder_link_info = create_overview_section(pages)
+        folder_link_start_offset, folder_link_end_offset, folder_url = folder_link_info
+        
         overview_requests = [
             {
                 'insertText': {
@@ -796,6 +860,17 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                     },
                     'fields': 'namedStyleType,alignment'
                 }
+            },
+            {
+                'updateTextStyle': {
+                    'range': {'startIndex': idx + folder_link_start_offset, 'endIndex': idx + folder_link_end_offset},
+                    'textStyle': {
+                        'link': {'url': folder_url},
+                        'foregroundColor': {'color': {'rgbColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}}},
+                        'underline': True
+                    },
+                    'fields': 'link,foregroundColor,underline'
+                }
             }
         ]
         # Write overview immediately and re-fetch index to ensure accuracy
@@ -808,17 +883,24 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
         
         for i, item in enumerate(pages[start_idx:], start=start_idx + 1):
             try:
-                # Add filename as Heading 1
+                # Determine page header: use archive index + page number if available, otherwise image name
+                page_number = i
+                if ARCHIVE_INDEX:
+                    page_header = f"{ARCHIVE_INDEX}стр{page_number}"
+                else:
+                    page_header = item['name']
+                
+                # Add page header as Heading 1
                 all_requests.extend([
                     {
                         'insertText': {
                             'location': {'index': idx},
-                            'text': f"{item['name']}\n"
+                            'text': f"{page_header}\n"
                         }
                     },
                     {
                         'updateParagraphStyle': {
-                            'range': {'startIndex': idx, 'endIndex': idx + len(item['name']) + 1},
+                            'range': {'startIndex': idx, 'endIndex': idx + len(page_header) + 1},
                             'paragraphStyle': {
                                 'namedStyleType': 'HEADING_1',
                                 'alignment': 'START'
@@ -827,10 +909,10 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                         }
                     }
                 ])
-                idx += len(item['name']) + 1
+                idx += len(page_header) + 1
                 
-                # Add source link
-                link_text = f"Source: view:{item['name']}"
+                # Add source image link in new format: "Src Img Url: IMG_NAME_URL"
+                link_text = f"Src Img Url: {item['name']}"
                 all_requests.extend([
                     {
                         'insertText': {
@@ -840,7 +922,7 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                     },
                     {
                         'updateTextStyle': {
-                            'range': {'startIndex': idx, 'endIndex': idx + len(link_text)},
+                            'range': {'startIndex': idx + len("Src Img Url: "), 'endIndex': idx + len(link_text)},
                             'textStyle': {
                                 'link': {'url': item['webViewLink']},
                                 'foregroundColor': {'color': {'rgbColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}}},
@@ -852,29 +934,56 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                 ])
                 idx += len(link_text) + 1
                 
-                # Add raw Vertex AI output as normal text
+                # Process transcribed text to add links to ### record headers
                 if item['text']:
-                    all_requests.extend([
-                        {
-                            'insertText': {
-                                'location': {'index': idx},
-                                'text': item['text'] + "\n\n"
-                            }
-                        },
-                        {
-                            'updateParagraphStyle': {
-                                'range': {'startIndex': idx, 'endIndex': idx + len(item['text']) + 2},
-                                'paragraphStyle': {
-                                    'namedStyleType': 'NORMAL_TEXT',
-                                    'alignment': 'START'
-                                },
-                                'fields': 'namedStyleType,alignment'
-                            }
+                    modified_text, link_insertions = add_record_links_to_text(
+                        item['text'], 
+                        ARCHIVE_INDEX, 
+                        page_number, 
+                        item['webViewLink']
+                    )
+                    text_to_insert = modified_text + "\n\n"
+                    text_start_idx = idx
+                    
+                    # Insert text
+                    all_requests.append({
+                        'insertText': {
+                            'location': {'index': idx},
+                            'text': text_to_insert
                         }
-                    ])
-                    idx += len(item['text']) + 2
+                    })
+                    
+                    # Add paragraph style
+                    all_requests.append({
+                        'updateParagraphStyle': {
+                            'range': {'startIndex': idx, 'endIndex': idx + len(text_to_insert)},
+                            'paragraphStyle': {
+                                'namedStyleType': 'NORMAL_TEXT',
+                                'alignment': 'START'
+                            },
+                            'fields': 'namedStyleType,alignment'
+                        }
+                    })
+                    
+                    # Add links to record headers (### lines with archive references)
+                    for link_start_offset, link_end_offset, url in link_insertions:
+                        link_start = text_start_idx + link_start_offset
+                        link_end = text_start_idx + link_end_offset
+                        all_requests.append({
+                            'updateTextStyle': {
+                                'range': {'startIndex': link_start, 'endIndex': link_end},
+                                'textStyle': {
+                                    'link': {'url': url},
+                                    'foregroundColor': {'color': {'rgbColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}}},
+                                    'underline': True
+                                },
+                                'fields': 'link,foregroundColor,underline'
+                            }
+                        })
+                    
+                    idx += len(text_to_insert)
                 
-                logging.info(f"Added transcription for '{item['name']}' to document")
+                logging.info(f"Added transcription for '{item['name']}' to document (header: {page_header})")
                 
                 # Process requests in batches (always enforce chunking to avoid API limits)
                 if len(all_requests) >= BATCH_SIZE:
@@ -975,6 +1084,7 @@ def main():
         ai_logger.info(f"Session timestamp: {datetime.now().isoformat()}")
         ai_logger.info(f"Project ID: {PROJECT_ID}")
         ai_logger.info(f"Folder: {FOLDER_NAME}")
+        ai_logger.info(f"Archive Index: {ARCHIVE_INDEX if ARCHIVE_INDEX else 'None'}")
         ai_logger.info(f"Model: {OCR_MODEL_ID}")
         ai_logger.info(f"Test mode: {TEST_MODE}")
         ai_logger.info(f"Retry mode: {RETRY_MODE}")
