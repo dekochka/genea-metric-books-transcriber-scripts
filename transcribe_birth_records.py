@@ -35,7 +35,7 @@ from google.genai import types
 # ------------------------- PROMPTS -------------------------
 # Set which prompt file to load from the `prompts` folder (without path).
 # Use "INSTRUCTION.txt" by default.
-PROMPT_FILE = os.environ.get("PROMPT_FILE", "VOVKIVTSY.txt")
+PROMPT_FILE = os.environ.get("PROMPT_FILE", "VOVKIVTSY_Ф487О1Д26_браки.txt")
 
 def load_prompt_text() -> str:
     prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
@@ -57,8 +57,8 @@ PROJECT_ID = "ukr-transcribe-genea"
 #FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
 #DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
 #FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "1-IkGrRBc6Fr-OsabPWmnuZt2qbYS0C5S"
-FOLDER_NAME = "1848-1896 МК Вовкивцы Борщев рождения Ф.487 О.1 Д.25"
+DRIVE_FOLDER_ID = "10vwVBiJITeImpNpbpbILBKR6vnwOgt1z"
+FOLDER_NAME = "1850-1891 МК Вовкивцы Борщев браки Ф.487 О.1 Д.26"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-3-flash-preview"
@@ -761,6 +761,7 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
     - Raw Vertex AI output as normal text
     
     Handles batching of requests to stay within Google Docs API limits (500 requests per batch).
+    Implements circuit breaker pattern to stop after consecutive failures.
     """
     logging.info(f"Preparing document content for folder '{FOLDER_NAME}'...")
     
@@ -773,9 +774,13 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
         all_requests = []
         BATCH_SIZE = 450  # Using 450 to be safe, as some operations might generate multiple requests
         
+        # Circuit breaker to prevent cascading failures
+        MAX_CONSECUTIVE_FAILURES = 5
+        consecutive_failures = 0
+        
         # Add overview section at the beginning
         overview_content = create_overview_section(pages)
-        all_requests.extend([
+        overview_requests = [
             {
                 'insertText': {
                     'location': {'index': idx},
@@ -792,8 +797,13 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                     'fields': 'namedStyleType,alignment'
                 }
             }
-        ])
-        idx += len(overview_content)
+        ]
+        # Write overview immediately and re-fetch index to ensure accuracy
+        docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': overview_requests}).execute()
+        doc = docs_service.documents().get(documentId=doc_id).execute()
+        idx = doc['body']['content'][-1]['endIndex']
+        consecutive_failures = 0  # Reset counter on success
+        logging.info(f"Overview section added. Document index: {idx}")
         
         for i, item in enumerate(pages[start_idx:], start=start_idx + 1):
             try:
@@ -873,19 +883,58 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                     docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': batch}).execute()
                     # Drop the sent chunk and keep the rest queued
                     all_requests = all_requests[BATCH_SIZE:]
-                    logging.info("Batch processed successfully")
+                    
+                    # Re-fetch document to get current end index (prevents "Precondition check failed" errors)
+                    doc = docs_service.documents().get(documentId=doc_id).execute()
+                    idx = doc['body']['content'][-1]['endIndex']
+                    consecutive_failures = 0  # Reset counter on success
+                    logging.info(f"Batch processed successfully. Document index updated to {idx}")
                 
             except Exception as e:
+                consecutive_failures += 1
                 logging.error(f"Error processing page {i} ('{item['name']}'): {str(e)}")
+                logging.warning(f"Consecutive failures: {consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}")
+                
+                # Circuit breaker: stop if too many consecutive failures
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    logging.error(f"Circuit breaker triggered: {consecutive_failures} consecutive failures")
+                    logging.error(f"Stopping document write to prevent cascading errors")
+                    logging.error(f"Successfully wrote {i - consecutive_failures} out of {len(pages)} pages")
+                    logging.error(f"Use recovery_script.py with the AI response log to recover remaining pages")
+                    raise Exception(f"Exceeded maximum consecutive failures ({MAX_CONSECUTIVE_FAILURES}). Document write stopped.")
+                
+                # Process any pending requests before handling error
+                if all_requests:
+                    try:
+                        logging.info(f"Flushing {len(all_requests)} pending requests before error handling...")
+                        while all_requests:
+                            chunk = all_requests[:BATCH_SIZE]
+                            docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': chunk}).execute()
+                            all_requests = all_requests[BATCH_SIZE:]
+                        # Re-fetch document to get current end index
+                        doc = docs_service.documents().get(documentId=doc_id).execute()
+                        idx = doc['body']['content'][-1]['endIndex']
+                        consecutive_failures = 0  # Reset if flush succeeds
+                        logging.info(f"Pending requests flushed successfully. Document index updated to {idx}")
+                    except Exception as flush_error:
+                        logging.error(f"Error flushing pending requests: {flush_error}")
+                        # Clear the queue to prevent further cascading errors
+                        all_requests = []
+                
                 # Add error message to document
                 error_text = f"\n[Error processing this page: {str(e)}]\n"
-                all_requests.append({
-                    'insertText': {
-                        'location': {'index': idx},
-                        'text': error_text
-                    }
-                })
-                idx += len(error_text)
+                try:
+                    docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': [{
+                        'insertText': {
+                            'location': {'index': idx},
+                            'text': error_text
+                        }
+                    }]}).execute()
+                    # Re-fetch document after adding error message
+                    doc = docs_service.documents().get(documentId=doc_id).execute()
+                    idx = doc['body']['content'][-1]['endIndex']
+                except Exception as error_write_error:
+                    logging.error(f"Could not write error message to document: {error_write_error}")
         
         # Process any remaining requests in safe chunks
         while all_requests:
@@ -893,6 +942,13 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
             logging.info(f"Processing remaining batch of {len(chunk)} requests (left: {len(all_requests)})...")
             docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': chunk}).execute()
             all_requests = all_requests[BATCH_SIZE:]
+            consecutive_failures = 0  # Reset counter on success
+            
+            # Re-fetch document to keep index synchronized
+            if all_requests:  # Only if there are more batches to process
+                doc = docs_service.documents().get(documentId=doc_id).execute()
+                idx = doc['body']['content'][-1]['endIndex']
+                logging.info(f"Remaining batch processed. Document index updated to {idx}")
         logging.info("All batches processed successfully")
         
         logging.info("Google Doc updated successfully")
