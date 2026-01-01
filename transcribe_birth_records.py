@@ -35,7 +35,7 @@ from google.genai import types
 # ------------------------- PROMPTS -------------------------
 # Set which prompt file to load from the `prompts` folder (without path).
 # Use "INSTRUCTION.txt" by default.
-PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION.txt")
+PROMPT_FILE = os.environ.get("PROMPT_FILE", "VOVKIVTSY.txt")
 
 def load_prompt_text() -> str:
     prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
@@ -57,17 +57,17 @@ PROJECT_ID = "ukr-transcribe-genea"
 #FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
 #DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
 #FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
-FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти (487-1-729-смерті) - в Тексте"
+DRIVE_FOLDER_ID = "1-IkGrRBc6Fr-OsabPWmnuZt2qbYS0C5S"
+FOLDER_NAME = "1848-1896 МК Вовкивцы Борщев рождения Ф.487 О.1 Д.25"
 
 REGION = "global"  # Changed to global as per sample
-OCR_MODEL_ID = "gemini-3-pro-preview"
+OCR_MODEL_ID = "gemini-3-flash-preview"
 ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 200  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
-IMAGE_COUNT = 400  # Number of images to process starting from IMAGE_START_NUMBER
+IMAGE_START_NUMBER = 1  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_COUNT = 300  # Number of images to process starting from IMAGE_START_NUMBER
 
 # RETRY MODE - Set to True to retry specific failed images
 RETRY_MODE = False
