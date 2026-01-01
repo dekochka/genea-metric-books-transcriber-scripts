@@ -1,13 +1,9 @@
 # Extract and transcribe all text from this handwritten 19th and 20th-century (1888-1924) birth, death, or marriage record 
 from eastern Ukraine villages Turilche (Турильче), Werbivka (Werbowce Вербивка), Slobodka (Слободка), Triyca (Троица), Pidfilipje (Подфилипье) written in Latin or Ukrainian.
-Source: Державный Архива Тернопольской Области - Ф. 487, оп. 1, спр. 33 
-Метрическая книга о рождени по с Турильче Борщевского района за 1875-1888 
-Источник https://www.familysearch.org/ark:/61903/3:1:3Q9M-CS95-RS28-4?view=index&cat=1494141&i=671&lang=ru&groupId=M9MK-ZMJ
+Source: Державный Архива Тернопольской Области - Ф. 487, оп. 1, спр. 545 
+села Турилче Вербивки Метрич Книга  
 
-Микрофильм № 007809296 › Подгруппа 9
-
-First, add information from page top header e.g. year, page name, other handwrited marks on the top of the page. 
-Second, provide a structured summary in Russian and Ukrainian and Latin transcription for each record.
+First, provide a structured summary in Russian and Ukrainian and Latin transcription for each record.
 
 ## 1. Russian/Ukrainian/Latin Summary Output Format
 
@@ -83,7 +79,7 @@ Wierzbówka, domus 3
 
 Transcription Accuracy:
 
-In Latin variant Transcribe the text exactly as it appears, preserving original spelling, abbreviations, and orthography.
+Transcribe the text exactly as it appears, preserving original spelling, abbreviations, and orthography.
 If handwriting is unclear, provide the most likely transcription and note uncertainty in square brackets, e.g., [illegible] or [possibly Anna].
 Village name may appear on header of the document, also sometime included to Nrus Docume column under house number. 
 See list of Villages in Reference section below which may be used in images.
@@ -108,7 +104,6 @@ Turilche (Турильче),
 Slobodka (Слободка), 
 Triyca (Троица), 
 Pidfilipje (Подфилипье), 
-Залучье
 
 ## Common Surnames in these villages:  
 Lazaruk (Лазарюк), Baziuk (Базюк), Goch (Гох), Shewchishyn (Шевчишин), 

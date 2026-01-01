@@ -1,13 +1,8 @@
-# Extract and transcribe all text from this handwritten 19th and 20th-century (1888-1924) birth, death, or marriage record 
+# Extract and transcribe all text from this handwritten 19th and 20th-century (11.01.1885–15.12.1942) birth, death, or marriage record 
 from eastern Ukraine villages Turilche (Турильче), Werbivka (Werbowce Вербивка), Slobodka (Слободка), Triyca (Троица), Pidfilipje (Подфилипье) written in Latin or Ukrainian.
-Source: Державный Архива Тернопольской Области - Ф. 487, оп. 1, спр. 33 
-Метрическая книга о рождени по с Турильче Борщевского района за 1875-1888 
-Источник https://www.familysearch.org/ark:/61903/3:1:3Q9M-CS95-RS28-4?view=index&cat=1494141&i=671&lang=ru&groupId=M9MK-ZMJ
+Ф. 631, оп. 12, спр. 33 — «Метрична книга церкви реєстрації народження, шлюбу та смерті» для с. Темирівці, с. Селище, с. Крилос, с. Козина — 11.01.1885–15.12.1942
 
-Микрофильм № 007809296 › Подгруппа 9
-
-First, add information from page top header e.g. year, page name, other handwrited marks on the top of the page. 
-Second, provide a structured summary in Russian and Ukrainian and Latin transcription for each record.
+First, provide a structured summary in Russian and Ukrainian and Latin transcription for each record.
 
 ## 1. Russian/Ukrainian/Latin Summary Output Format
 
@@ -27,16 +22,16 @@ See below examples of of desired output for every record.
 ### Birth Record Example for transcription output:
 Темировцы, дом 66
 Павел Федорович Гулик (род 12/09/1842)
-Родители: Федор Гулик (сын Василия и Марии Гулик) из Вербівка, дом 66 и Пелагея (дочь Петра Федоришина и Ирины Шевчук) из Турильче, дом 70.
-Кумы: Василь Шевчук и Ольга, жена Федора Микитюк, из Вербівка, дом 35.
+Родители: Федор Гулик (сын Василия и Марии Гулик) из Темировцы, дом 66 и Пелагея (дочь Петра Федоришина и Ирины Шевчук) из Блюдники, дом 70.
+Кумы: Василь Шевчук и Ольга, жена Федора Микитюк, из Темировцы, дом 35.
 Заметка: ...
 
 Темерівці, будинок 66
 Павло Федорович Гулик (нар. 12/09/1842)
-Батьки: Федір Гулик (син Василя та Марії Гулик) з Вербивцi, будинок 66 та Пелагея (дочка Петра Федоришина та Ірини Шевчук) з Блюдників, будинок 70.
-Куми: Василь Шевчук та Ольга, дружина Федора Микитюка, з Вербивцi, будинок 35.
+Батьки: Федір Гулик (син Василя та Марії Гулик) з Темерівців, будинок 66 та Пелагея (дочка Петра Федоришина та Ірини Шевчук) з Блюдників, будинок 70.
+Куми: Василь Шевчук та Ольга, дружина Федора Микитюка, з Темерівців, будинок 35.
 
-Wierzbówka, domus 45
+Temerowce, domus 45
 26 Martii 1851 | domus 45 | Ahaphia | Catholica | Puella | Legitimi | Obstetrix [illegible] nutka | 
 Parentes: Thomas Hulik et Irina filia Jacobi et Mariæ Michanciow | agricolae 
 Patrini: Romanus Wasylczuk et Parascevia uxor Petri Balaszczuk. | agricolae
@@ -45,23 +40,23 @@ Notes: ...
 ### Marriage Record Example  for transcription output:
 Темировцы, дом 4
 Брак 28/07/1837
-Жених: Павел Федорович Гулик (род 10/11/1843), Вербівка, дом 4.
-Невеста: Анна Алексеевна Гулик (род 12/09/1842), Вербівка, дом 70.
+Жених: Павел Федорович Гулик (род 10/11/1843), Темировцы, дом 4.
+Невеста: Анна Алексеевна Гулик (род 12/09/1842), Темировцы, дом 70.
 Родители жениха: Федор Гулик (сын Василия и Марии Гулик) и Пелагея (дочь Петра Федоришина и Ирины Шевчук).
 Родители невесты: Алексей Гулик (сын Павла и Ольги Лазарюк) и Софья (дочь Василия Софроник и Марии Кулик).
-Свидетели: Василь Шевчук и Ольга, жена Федора Микитюк, из Турильче, дом 35.
+Свидетели: Василь Шевчук и Ольга, жена Федора Микитюк, из Блюдники, дом 35.
 Заметки: Кратко другие факты из записи.
 
 Темерівці, будинок 4
 Шлюб 28/07/1837
-Наречений: Павло Федорович Гулик (нар. 10/11/1843), Вербівка, будинок 4.
-Наречена: Анна Олексіївна Гулик (нар. 12/09/1842), Вербівка, будинок 70.
+Наречений: Павло Федорович Гулик (нар. 10/11/1843), Темерівці, будинок 4.
+Наречена: Анна Олексіївна Гулик (нар. 12/09/1842), Темерівці, будинок 70.
 Батьки нареченого: Федір Гулик (син Василя та Марії Гулик) та Пелагея (дочка Петра Федоришина та Ірини Шевчук).
 Батьки нареченої: Олексій Гулик (син Павла та Ольги Лазарюк) та Софія (дочка Василя Софроника та Марії Кулик).
-Свідки: Василь Шевчук та Ольга, дружина Федора Микитюка, з Турильче, будинок 35.
+Свідки: Василь Шевчук та Ольга, дружина Федора Микитюка, з Блюдників, будинок 35.
 Заметки:(Стисло інші факти із запису).
 
-Wierzbówka, domus 63 / 45
+Temerowce, domus 63 / 45
 3 | Martii 5 1932 | domus 63/45 | 
 Isidorus Hulyk, filius Pauli et Eudoxiae Wasylczuk, laboriosus | aetas 21 | vidus | 
 Maria Lesiw, filia Basilii et Catharinae Mykytyn, Temerowce, domus 45 | agricolarum | aetas 23 | coelebs |
@@ -69,21 +64,21 @@ Testes: Gregorius Lesiw, Basilius Dubelowskyj, agricolae |
 Adnotation: Matrimonio benedixit Vladimirus Ławoczka.
 
 ### Death Record Example for transcription output:
-Вербивцi, дом 70
+Темиривцы, дом 70
 Василий Юрьевич Федоришин (1806 - 01/05/1836), умер от оспы в 30 лет, сын Юрия Федоришина.
 Заметки: Кратко другие факты из записи если есть.
 
-Вербивцi, будинок 70
+Темерівці, будинок 70
 Василь Юрійович Федоришин (1806 - 01/05/1836), помер від віспи у 30 років, син Юрія Федоришина.
 
-Wierzbówka, domus 3
-15 17 Augusti 1848 | domus 3 | Catharina Joannis Hulik subditi Wierzbówka uxor. S.S. Sacramentis provisa. | Catholica: 1 | Foemina: 1 | 41 annos | Ordinaria.
+Temerowce, domus 3
+15 17 Augusti 1848 | domus 3 | Catharina Joannis Hulik subditi Temerovicensis uxor. S.S. Sacramentis provisa. | Catholica: 1 | Foemina: 1 | 41 annos | Ordinaria.
 
 ##2. Original Latin Transcription Guide
 
 Transcription Accuracy:
 
-In Latin variant Transcribe the text exactly as it appears, preserving original spelling, abbreviations, and orthography.
+Transcribe the text exactly as it appears, preserving original spelling, abbreviations, and orthography.
 If handwriting is unclear, provide the most likely transcription and note uncertainty in square brackets, e.g., [illegible] or [possibly Anna].
 Village name may appear on header of the document, also sometime included to Nrus Docume column under house number. 
 See list of Villages in Reference section below which may be used in images.
@@ -100,20 +95,16 @@ House Number column (Nrus Domus) usually includes short name of village e.g. 63 
 Dates may use Roman numerals (e.g., XVII) or Latin month names (e.g., Januarius).
 Names may be patronymic or Latinized (e.g., "Petri," "Mariae").
 
-# Reference Information:
+#Reference Information:
 
-## Villages: 
+##Villages: 
 Turilche (Турильче), 
-Вербивцi Werbivka (Werbowce Wierzbówka Вербивка), 
+Werbivka (Werbowce Вербивка), 
 Slobodka (Слободка), 
 Triyca (Троица), 
 Pidfilipje (Подфилипье), 
-Залучье
 
-## Common Surnames in these villages:  
+##Common Surnames in these villages:  
 Lazaruk (Лазарюк), Baziuk (Базюк), Goch (Гох), Shewchishyn (Шевчишин), 
-Furgach (Фургач), Choma (Хома), Shevchuk (Шевчук), Szepanovski (Щепановски), Яцишин, Кузик, 
-Juskiw (Юзькив Юськив), Fedorchuk (Федорчук), Wiznuj (Визны), Bojechok (Божечко), Martunyuk (Мартынюк), Huculek (Гуцуляк)
-Кульбабчук (Kulbabchuk), Чепесюк (Czepesiuk), Бабий (Бабій) , Дзюба, Dubczak, Zachidniek Zachidniak (Західняк), Hryzluk,
-Pobyjbaba (Побийбаба), Humeniuk (Гуменюк), Wengier, Roztulka, Iwachiw, Kozmiw, Demkiw, Bilaniuk, Chlewinski, 
-Kazimirczuk, Szkrobak (Шкробак), Smolak,  Bajdiuk, Caruk (Царук), Hanczaryk, Телько,    .
+Furgach (Фургач), Choma (Хома), Shevchuk (Шевчук), Szepanovski (Щепановски),
+Juskiw (Юзькив), Fedorchuk (Федорчук), Wiznuj (Визны), Bojechok (Божечко), Martunyuk (Мартынюк) .

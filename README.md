@@ -1,6 +1,6 @@
-# Genea Google Cloud Gemini Transcriber
+# Genea Metric Books Transcriber Scripts
 
-This toolkit transcribes images from a Google Drive folder using Vertex AI Gemini 2.5 and writes results into a Google Doc with headings, source links, and raw AI output. A recovery script can rebuild the Google Doc from AI logs if the main run fails late.
+This toolkit transcribes images of handwritten records from metric books stored in a Google Drive folder using Vertex AI Gemini Models and writes results into a Google Doc with page headings, source links, and persons genealogical records in multiple languages. A recovery script can rebuild the Google Doc from AI logs if the main run fails late.
 
 ## Overview
 
@@ -17,6 +17,47 @@ A specialized tool for transcribing handwritten genealogical records (birth, dea
 - **Test Mode**: Quick validation of authentication and API access
 - **Rate Limiting**: Built-in protection against API quota exhaustion
 - **Structured Output**: Creates well-formatted Google Docs with metadata, headings, and source links
+
+### Example: Input → Output
+
+**Input Image** (19th century Latin metric book record):
+
+![Sample Birth Record](data_samples/latin_turilche_birth_sample_1_record_input.jpg)
+
+**Output Transcription** (Multilingual structured format):
+
+```
+Год 1894
+Державний Архів Тернопільської Області - Ф. 487, оп. 1, спр. 545
+Страница 22
+
+---
+
+### Запись 1: Николай Чепесюк
+Турильче (?), дом 24
+Николай Чепесюк (род. 18/03/1894)
+Родители: Гавриил Чепесюк (сын Максимилиана Чепесюка и Анны Чомулы) и Мария 
+  (дочь Ивана Павлюка и Ирины Романюк).
+Кумы: Терентий Павлюк и Мария, жена Николая Павлюка.
+Заметка: Крестил священник Иосиф Балко. Повитуха Параскева Демкив.
+
+Турильче (?), будинок 24
+Микола Чепесюк (нар. 18/03/1894)
+Батьки: Гаврило Чепесюк (син Максиміліана Чепесюка та Анни Чомули) та Марія 
+  (дочка Івана Павлюка та Ірини Романюк).
+Куми: Терентій Павлюк та Марія, дружина Миколи Павлюка.
+Замітка: Хрестив священик Йосип Балко. Баба-повитуха Параскева Демків.
+
+Turilcze, domus 24
+18 18 Martii 1894 | domus 24 | Nicolaus | Catholicus | Puer | Legitimi |
+Parentes: Gabriel filius Maximiliani Czepesiuk et Annae Ciomula; 
+  Maria filia Joannis Pawluk et Irenae Romanjuk. agricolae.
+Patrini: Terentius Pawluk et Maria uxor Nicolai Pawluk. agricolae.
+Notes: Obstetrix non approbata Parasceva Demkiw. 
+  Baptisavit confirmavitque Josephus Balko parochus.
+```
+
+The AI model extracts and transcribes the same record in **Russian, Ukrainian, and Latin**, preserving names, dates, relationships, and historical context from the original handwritten document.
 
 ### Architecture
 
