@@ -67,8 +67,8 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 61  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
-IMAGE_COUNT = 2  # Number of images to process starting from IMAGE_START_NUMBER
+IMAGE_START_NUMBER = 89  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_COUNT = 1  # Number of images to process starting from IMAGE_START_NUMBER
 
 # RETRY MODE - Set to True to retry specific failed images
 RETRY_MODE = False
@@ -653,8 +653,10 @@ def create_doc(docs_service, drive_service, title):
 def create_overview_section(pages):
     """
     Create overview section content for the document.
-    Returns tuple of (overview_content, folder_link_info) where folder_link_info is
-    (link_start_index, link_end_index, folder_url) for creating a clickable link.
+    Returns tuple of (overview_content, formatting_info) where formatting_info is a dict with:
+    - folder_link_info: (link_start_index, link_end_index, folder_url)
+    - bold_labels: list of (start_index, end_index) for "Files Processed:", "Images with Errors:", "Prompt Used:"
+    - prompt_text_range: (start_index, end_index) for the prompt text
     """
     # Get folder link from the first page
     folder_link = pages[0]['webViewLink'] if pages else ""
@@ -681,7 +683,7 @@ def create_overview_section(pages):
         file_count = 0
     
     # Create overview content with folder name as link text
-    overview_content = f"""OVERVIEW
+    overview_content = f"""TRANSCRIPTION RUN SUMMARY
 
 Name: {FOLDER_NAME}
 Folder Link: {FOLDER_NAME}
@@ -696,16 +698,28 @@ Folder Link: {FOLDER_NAME}
     if ARCHIVE_INDEX:
         overview_content += f"Archive Index: {ARCHIVE_INDEX}\n"
     
+    # Track positions for bold labels
+    files_processed_label = "Files Processed:"
+    images_errors_label = f"Images with Errors ({len(failed_pages)}):"
+    prompt_used_label = "Prompt Used:"
+    
     overview_content += f"""Model: {OCR_MODEL_ID}
 Prompt File: {PROMPT_FILE}
 
-Files Processed:
+{files_processed_label}
 Count: {file_count}
 Start: {start_file}
 End: {end_file}
 
-Images with Errors ({len(failed_pages)}):
+{images_errors_label}
 """
+    
+    # Calculate positions for bold labels
+    files_processed_start = overview_content.find(files_processed_label)
+    files_processed_end = files_processed_start + len(files_processed_label)
+    
+    images_errors_start = overview_content.find(images_errors_label)
+    images_errors_end = images_errors_start + len(images_errors_label)
     
     # Add failed images list
     if failed_pages:
@@ -714,15 +728,33 @@ Images with Errors ({len(failed_pages)}):
     else:
         overview_content += "None\n"
     
+    # Calculate prompt text position
+    prompt_used_start = overview_content.find(prompt_used_label)
+    prompt_used_end = prompt_used_start + len(prompt_used_label)
+    
     overview_content += f"""
-Prompt Used:
+{prompt_used_label}
 {PROMPT_TEXT}
 
 {'='*50}
 
 """
     
-    return overview_content, folder_link_info
+    # Calculate prompt text range (after the label and newline)
+    prompt_text_start = overview_content.find(prompt_used_label) + len(prompt_used_label) + 1  # +1 for newline
+    prompt_text_end = prompt_text_start + len(PROMPT_TEXT)
+    
+    formatting_info = {
+        'folder_link_info': folder_link_info,
+        'bold_labels': [
+            (files_processed_start, files_processed_end),
+            (images_errors_start, images_errors_end),
+            (prompt_used_start, prompt_used_end)
+        ],
+        'prompt_text_range': (prompt_text_start, prompt_text_end)
+    }
+    
+    return overview_content, formatting_info
 
 
 def add_record_links_to_text(text, archive_index, page_number, web_view_link):
@@ -786,11 +818,16 @@ def save_transcription_locally(pages, doc_name):
         safe_doc_name = safe_doc_name.replace(' ', '_')
         output_file = os.path.join(output_dir, f"{safe_doc_name}.txt")
         
-        # Create overview content (for local files, we just need the text, not link info)
+        # Create overview content (for local files, we just need the text, not formatting info)
         overview_content, _ = create_overview_section(pages)
         
         # Write to file
         with open(output_file, 'w', encoding='utf-8') as f:
+            # Write document header
+            run_date = datetime.now().strftime("%Y%m%d")
+            document_header = f"{FOLDER_NAME} {run_date}"
+            f.write(document_header + "\n\n")
+            
             # Write overview
             f.write(overview_content)
             f.write("\n" + "="*80 + "\n\n")
@@ -816,7 +853,7 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
     Write transcribed content to a Google Doc with minimal formatting.
     Formatting includes:
     - Overview section with metadata
-    - Archive reference + page number as Heading 1 (e.g., "ф201оп4спр104стр22")
+    - Archive reference + page number as Heading 2 (e.g., "ф201оп4спр104стр22")
     - Source image link
     - Raw Vertex AI output with clickable links on record headers
     
@@ -840,9 +877,43 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
         MAX_CONSECUTIVE_FAILURES = 5
         consecutive_failures = 0
         
-        # Add overview section at the beginning
-        overview_content, folder_link_info = create_overview_section(pages)
+        # Add document header (FOLDER_NAME + date) as Heading 1
+        run_date = datetime.now().strftime("%Y%m%d")
+        document_header = f"{FOLDER_NAME} {run_date}"
+        header_requests = [
+            {
+                'insertText': {
+                    'location': {'index': idx},
+                    'text': document_header + "\n\n"
+                }
+            },
+            {
+                'updateParagraphStyle': {
+                    'range': {'startIndex': idx, 'endIndex': idx + len(document_header) + 2},
+                    'paragraphStyle': {
+                        'namedStyleType': 'HEADING_1',
+                        'alignment': 'START'
+                    },
+                    'fields': 'namedStyleType,alignment'
+                }
+            }
+        ]
+        docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': header_requests}).execute()
+        doc = docs_service.documents().get(documentId=doc_id).execute()
+        idx = doc['body']['content'][-1]['endIndex'] - 1
+        logging.info(f"Document header added: {document_header}")
+        
+        # Add overview section
+        overview_content, formatting_info = create_overview_section(pages)
+        folder_link_info = formatting_info['folder_link_info']
+        bold_labels = formatting_info['bold_labels']
+        prompt_text_range = formatting_info['prompt_text_range']
         folder_link_start_offset, folder_link_end_offset, folder_url = folder_link_info
+        
+        # Calculate position of "TRANSCRIPTION RUN SUMMARY" heading
+        summary_heading = "TRANSCRIPTION RUN SUMMARY"
+        summary_heading_start = 0
+        summary_heading_end = len(summary_heading)
         
         overview_requests = [
             {
@@ -862,6 +933,25 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                 }
             },
             {
+                'updateParagraphStyle': {
+                    'range': {'startIndex': idx + summary_heading_start, 'endIndex': idx + summary_heading_end + 1},  # +1 for newline
+                    'paragraphStyle': {
+                        'namedStyleType': 'HEADING_2',
+                        'alignment': 'START'
+                    },
+                    'fields': 'namedStyleType,alignment'
+                }
+            },
+            {
+                'updateTextStyle': {
+                    'range': {'startIndex': idx + summary_heading_start, 'endIndex': idx + summary_heading_end},
+                    'textStyle': {
+                        'bold': False
+                    },
+                    'fields': 'bold'
+                }
+            },
+            {
                 'updateTextStyle': {
                     'range': {'startIndex': idx + folder_link_start_offset, 'endIndex': idx + folder_link_end_offset},
                     'textStyle': {
@@ -873,6 +963,38 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                 }
             }
         ]
+        
+        # Add bold formatting for labels
+        for label_start, label_end in bold_labels:
+            overview_requests.append({
+                'updateTextStyle': {
+                    'range': {'startIndex': idx + label_start, 'endIndex': idx + label_end},
+                    'textStyle': {
+                        'bold': True
+                    },
+                    'fields': 'bold'
+                }
+            })
+        
+        # Add formatting for prompt text (6pt Roboto Mono)
+        prompt_text_start, prompt_text_end = prompt_text_range
+        overview_requests.append({
+            'updateTextStyle': {
+                'range': {'startIndex': idx + prompt_text_start, 'endIndex': idx + prompt_text_end},
+                'textStyle': {
+                    'fontSize': {
+                        'magnitude': 6.0,
+                        'unit': 'PT'
+                    },
+                    'weightedFontFamily': {
+                        'fontFamily': 'Roboto Mono',
+                        'weight': 400  # Normal weight
+                    }
+                },
+                'fields': 'fontSize,weightedFontFamily'
+            }
+        })
+        
         # Write overview immediately and re-fetch index to ensure accuracy
         docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': overview_requests}).execute()
         doc = docs_service.documents().get(documentId=doc_id).execute()
@@ -890,7 +1012,7 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                 else:
                     page_header = item['name']
                 
-                # Add page header as Heading 1
+                # Add page header as Heading 2
                 all_requests.extend([
                     {
                         'insertText': {
@@ -902,7 +1024,7 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                         'updateParagraphStyle': {
                             'range': {'startIndex': idx, 'endIndex': idx + len(page_header) + 1},
                             'paragraphStyle': {
-                                'namedStyleType': 'HEADING_1',
+                                'namedStyleType': 'HEADING_2',
                                 'alignment': 'START'
                             },
                             'fields': 'namedStyleType,alignment'
@@ -1139,13 +1261,12 @@ def main():
                     'text': f"[Error during transcription: {str(e)}]"
                 })
         
-        # Create document with descriptive name based on image range
+        # Create document with filename as FOLDER_NAME + date (restored previous logic)
         if len(transcribed_pages) > 0:
-            first_image = transcribed_pages[0]['name']
-            last_image = transcribed_pages[-1]['name']
-            doc_name = f"transcription_{first_image[:-4]}-{last_image[:-4]}"
+            run_date = datetime.now().strftime("%Y%m%d")
+            doc_name = f"{FOLDER_NAME} {run_date}"
             
-            # Try to create Google Doc
+            # Try to create Google Doc with FOLDER_NAME + date (this sets both filename and tab title)
             doc_id = create_doc(docs_service, drive_service, doc_name)
             
             if doc_id is None:
