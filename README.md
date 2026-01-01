@@ -264,13 +264,14 @@ pip install -r requirements.txt
 
 ### 1. Prepare Prompt File
 
-Before configuring the script, create or select a prompt file in the `prompts/` folder. The prompt file defines the transcription instructions, village names, and common surnames for your specific metric book.
+Before configuring the script, create or select a prompt file in the [`prompts/`](prompts/) folder. The prompt file defines the transcription instructions, village names, and common surnames for your specific metric book.
 
 **Note:** Use one of the existing prompt samples as a template and adjust it for your use case:
-- `INSTRUCTION_TEMERIVTSY.txt` - Example for Temerivtsy villages
-- `INSTRUCTION_VERBIVKA_*.txt` - Example for Verbivka births
-- `VOVKIVTSY_*.txt` - Example for Vovkivtsy records
-- `INSTRUCTION.txt` - General template
+- [`INSTRUCTION_TEMERIVTSY.txt`](prompts/INSTRUCTION_TEMERIVTSY.txt) - Example for Temerivtsy villages
+- [`INSTRUCTION_VERBIVKA_Ф487О1Д545_рожд.txt`](prompts/INSTRUCTION_VERBIVKA_Ф487О1Д545_рожд.txt) - Example for Verbivka births
+- [`VOVKIVTSY_Ф487О1Д25_рожд.txt`](prompts/VOVKIVTSY_Ф487О1Д25_рожд.txt) - Example for Vovkivtsy birth records
+- [`VOVKIVTSY_Ф487О1Д26_браки.txt`](prompts/VOVKIVTSY_Ф487О1Д26_браки.txt) - Example for Vovkivtsy marriage records
+- [`INSTRUCTION.txt`](prompts/INSTRUCTION.txt) - General template
 
 Customize the prompt with:
 - Village names specific to your metric book
@@ -280,7 +281,7 @@ Customize the prompt with:
 
 ### 2. Configure Script Parameters
 
-Edit `transcribe_birth_records.py`:
+Edit [`transcribe_birth_records.py`](transcribe_birth_records.py):
 
 ```python
 # Prompt configuration - point to your custom prompt file
