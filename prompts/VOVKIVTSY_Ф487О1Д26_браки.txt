@@ -1,7 +1,7 @@
 # Extract and transcribe all text from this handwritten 19th and 20th-century (1888-1924) birth, death, or marriage record 
 from eastern Ukraine villages Turilche (Турильче), Werbivka (Werbowce Вербивка), Slobodka (Слободка), Triyca (Троица), Pidfilipje (Подфилипье) written in Latin or Ukrainian.
 Source: Державный Архив Тернопольской Области - Микрофильм 007769617 Подгруппа 7 (Волковцы 90 снимков)
-Ф.487 О.1 Д.26 ГОС АРХИВ ТЕРНОПОЛЬСКОЙ ОБЛАСТИ Парафиальное управление Борщевского повета с. Волковцы МЕТРИЧЕСКИЕ КНИГИ 1850 - 1892
+Ф.487 О.1 Д.26 ГОС АРХИВ ТЕРНОПОЛЬСКОЙ ОБЛАСТИ Парафиальное управление Борщевского повета с. Волковцы МЕТРИЧЕСКИЕ КНИГИ 1850 - 1892 Браки
 Image Source: https://www.familysearch.org/ark:/61903/3:1:3Q9M-CSM8-9SSF-6?view=explore&groupId=M9MN-G6K&lang=ru
 
 First, add information from page top header e.g. year, page name, other handwrited marks on the top of the page. 
