@@ -262,13 +262,37 @@ pip install -r requirements.txt
 
 ## Configuration
 
+### 1. Prepare Prompt File
+
+Before configuring the script, create or select a prompt file in the `prompts/` folder. The prompt file defines the transcription instructions, village names, and common surnames for your specific metric book.
+
+**Note:** Use one of the existing prompt samples as a template and adjust it for your use case:
+- `INSTRUCTION_TEMERIVTSY.txt` - Example for Temerivtsy villages
+- `INSTRUCTION_VERBIVKA_*.txt` - Example for Verbivka births
+- `VOVKIVTSY_*.txt` - Example for Vovkivtsy records
+- `INSTRUCTION.txt` - General template
+
+Customize the prompt with:
+- Village names specific to your metric book
+- Common surnames found in those villages
+- Date ranges and archive references
+- Record type (births, deaths, marriages)
+
+### 2. Configure Script Parameters
+
 Edit `transcribe_birth_records.py`:
 
 ```python
+# Prompt configuration - point to your custom prompt file
+PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION.txt")
+
+# Google Cloud and Drive settings
 PROJECT_ID = "ukr-transcribe-genea"  # or your project
 DRIVE_FOLDER_ID = "<your_drive_folder_id>"
 FOLDER_NAME = "<folder_name_for_logs>"
 REGION = "global"  # you can also try "us-central1"
+
+# Processing settings
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000
