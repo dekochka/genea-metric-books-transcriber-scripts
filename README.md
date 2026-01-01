@@ -291,6 +291,8 @@ PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION.txt")
 PROJECT_ID = "ukr-transcribe-genea"  # or your project
 DRIVE_FOLDER_ID = "<your_drive_folder_id>"
 FOLDER_NAME = "<folder_name_for_logs>"
+ARCHIVE_INDEX = "ф201оп4Aспр350"  # Condensed archive reference (e.g., "ф487оп1спр545")
+                                  # Used for document headers and record links (format: ф[FOND]оп[OPIS]спр[DELO])
 REGION = "global"  # you can also try "us-central1"
 
 # Processing settings
@@ -300,6 +302,13 @@ MAX_IMAGES = 1000
 IMAGE_START_NUMBER = 1
 IMAGE_COUNT = 120
 ```
+
+**Archive Index (`ARCHIVE_INDEX`):** Optional condensed archive reference used for:
+- Document page headers (format: `{ARCHIVE_INDEX}стр{page_number}`, e.g., "ф201оп4Aспр350стр22")
+- Clickable archive references appended to record headers (lines starting with `###`)
+- Overview section metadata
+
+If not set, the script falls back to using image filenames for headers. The format should be: `ф[FOND]оп[OPIS]спр[DELO]` (e.g., "ф487оп1спр545" for Fond 487, Opis 1, Delo 545).
 
 Filename patterns supported:
 - `image (N).jpg/jpeg` (e.g., `image (7).jpg`)
@@ -326,12 +335,13 @@ The script will:
 ## Output
 
 - One Google Doc per run with:
-  - Image filename as a heading
-  - Clickable source link (Drive web view URL)
-  - Raw transcription text
+  - Page header: Archive index + page number (e.g., "ф201оп4Aспр350стр22") if `ARCHIVE_INDEX` is set, otherwise image filename
+  - Clickable source image link (format: "Src Img Url: {image_name}")
+  - Raw transcription text with clickable archive references on record headers (lines starting with `###`)
+  - Overview section with folder link, archive index, and processing metadata
 - Logs:
   - `transcription_*.log` (script progress)
-  - `logs/*-ai-responses.log` (full AI responses per image)
+  - `logs/*-ai-responses.log` (full AI responses per image, including archive index in session config)
 
 ## Troubleshooting
 
