@@ -184,6 +184,57 @@ sequenceDiagram
 | **Prompt System** | Record-type specific instructions | External .txt files |
 | **Recovery Tool** | Rebuild docs from logs | recovery_script.py |
 
+### User Journeys
+
+**Journey 1: Prerequisites & Project Setup** (One-Time)
+
+```mermaid
+graph LR
+    J1_Start[["📋 Start"]]
+    J1_GCP["☁️ Google Cloud<br/>Project Setup<br/>Enable APIs"]
+    J1_Auth["🔐 Authentication<br/>OAuth Client<br/>Credentials"]
+    J1_Drive["📁 Google Drive<br/>Upload Images<br/>Share Folder"]
+    J1_Env["🐍 Python Env<br/>venv + pip<br/>requirements"]
+    J1_Done[["✅ Complete"]]
+    
+    J1_Start --> J1_GCP --> J1_Auth --> J1_Drive --> J1_Env --> J1_Done
+    
+    classDef setupStyle fill:#E3F2FD,stroke:#1976D2,stroke-width:2px,color:#000
+    classDef startStyle fill:#C8E6C9,stroke:#388E3C,stroke-width:2px,color:#000
+    classDef endStyle fill:#C8E6C9,stroke:#388E3C,stroke-width:2px,color:#000
+    
+    class J1_GCP,J1_Auth,J1_Drive,J1_Env setupStyle
+    class J1_Start startStyle
+    class J1_Done endStyle
+```
+
+**Journey 2: Transcription Setup & Execution** (Repeatable)
+
+```mermaid
+graph LR
+    J2_Start[["📝 Start"]]
+    J2_Prompt["📋 Prepare Prompt<br/>Book Type<br/>Villages/Surnames"]
+    J2_Config["⚙️ Configure<br/>Script Params<br/>Folder/Range"]
+    J2_Run["▶️ Run Script<br/>python<br/>transcribe...py"]
+    J2_Monitor["📊 Monitor<br/>Terminal<br/>Logs"]
+    J2_Verify["✅ Verify<br/>GDoc Output<br/>Check Logs"]
+    J2_Done[["🎉 Complete"]]
+    
+    J2_Start --> J2_Prompt --> J2_Config --> J2_Run --> J2_Monitor --> J2_Verify --> J2_Done
+    J2_Done -.->|"Next batch"| J2_Start
+    
+    classDef runStyle fill:#FFF3E0,stroke:#F57C00,stroke-width:2px,color:#000
+    classDef startStyle fill:#C8E6C9,stroke:#388E3C,stroke-width:2px,color:#000
+    classDef endStyle fill:#C8E6C9,stroke:#388E3C,stroke-width:2px,color:#000
+    
+    class J2_Prompt,J2_Config,J2_Run,J2_Monitor,J2_Verify runStyle
+    class J2_Start startStyle
+    class J2_Done endStyle
+```
+
+**Journey 1** (One-time setup): Complete all prerequisites before first use.  
+**Journey 2** (Repeatable): Execute for each new metric book or batch of records.
+
 ## Prerequisites
 
 1. Python 3.10+
