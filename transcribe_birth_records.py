@@ -67,7 +67,7 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 89  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_START_NUMBER = 63  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
 IMAGE_COUNT = 1  # Number of images to process starting from IMAGE_START_NUMBER
 
 # RETRY MODE - Set to True to retry specific failed images
@@ -589,7 +589,12 @@ def transcribe_image(genai_client, image_bytes, file_name):
                 else:
                     logging.info(f"Full transcription for '{file_name}':\n{text}")
             
-            return text
+            # Return text, timing, and usage metadata
+            usage_metadata = None
+            if hasattr(response, 'usage_metadata'):
+                usage_metadata = response.usage_metadata
+            
+            return text, elapsed_time, usage_metadata
             
         except (TimeoutError, ConnectionError, OSError) as e:
             # Cancel any pending timeout
@@ -609,7 +614,8 @@ def transcribe_image(genai_client, image_bytes, file_name):
                 ai_logger.error(error_msg)
                 ai_logger.error(f"=== End AI Error for {file_name} ===\n")
                 logging.error(error_msg)
-                raise
+                # Return error text with None for timing and metadata
+                return f"[Error during transcription: {str(e)}]", None, None
                 
         except Exception as e:
             # Cancel any pending timeout
@@ -620,7 +626,8 @@ def transcribe_image(genai_client, image_bytes, file_name):
             ai_logger.error(error_msg)
             ai_logger.error(f"=== End AI Error for {file_name} ===\n")
             logging.error(error_msg)
-            raise
+            # Return error text with None for timing and metadata
+            return f"[Error during transcription: {str(e)}]", None, None
 
 
 def create_doc(docs_service, drive_service, title):
@@ -650,13 +657,79 @@ def create_doc(docs_service, drive_service, title):
         raise
 
 
-def create_overview_section(pages):
+def calculate_metrics(usage_metadata_list, timing_list):
+    """
+    Calculate metrics from usage metadata and timing data.
+    Returns a dictionary with calculated metrics.
+    """
+    # Pricing rates (per 1M tokens) - estimated 2026 pricing for Gemini 3 Flash
+    INPUT_RATE = 0.15  # $0.15 per 1M input tokens
+    OUTPUT_RATE = 0.60  # $0.60 per 1M output tokens
+    CACHED_RATE = 0.03  # $0.03 per 1M cached tokens
+    
+    total_time = sum(t for t in timing_list if t is not None)
+    page_count = len([t for t in timing_list if t is not None])
+    avg_time_per_page = total_time / page_count if page_count > 0 else 0
+    
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_cached_tokens = 0
+    
+    for usage_metadata in usage_metadata_list:
+        if usage_metadata is None:
+            continue
+            
+        # Extract prompt tokens (input) - this includes both text and image tokens
+        if hasattr(usage_metadata, 'prompt_token_count') and usage_metadata.prompt_token_count:
+            total_input_tokens += usage_metadata.prompt_token_count
+        
+        # Extract cached tokens (billed at lower rate)
+        if hasattr(usage_metadata, 'cached_content_token_count') and usage_metadata.cached_content_token_count:
+            total_cached_tokens += usage_metadata.cached_content_token_count
+        
+        # Extract candidate tokens (output) - this is the visible response
+        if hasattr(usage_metadata, 'candidates_token_count') and usage_metadata.candidates_token_count:
+            total_output_tokens += usage_metadata.candidates_token_count
+        
+        # Extract thoughts tokens (billed as output) - reasoning tokens
+        if hasattr(usage_metadata, 'thoughts_token_count') and usage_metadata.thoughts_token_count:
+            total_output_tokens += usage_metadata.thoughts_token_count
+    
+    # Calculate costs
+    # Input tokens (excluding cached, which are billed separately)
+    input_tokens_billed = total_input_tokens - total_cached_tokens if total_cached_tokens > 0 else total_input_tokens
+    input_cost = (input_tokens_billed / 1_000_000) * INPUT_RATE
+    output_cost = (total_output_tokens / 1_000_000) * OUTPUT_RATE
+    cached_cost = (total_cached_tokens / 1_000_000) * CACHED_RATE
+    estimated_cost_per_run = input_cost + output_cost + cached_cost
+    estimated_cost_per_page = estimated_cost_per_run / page_count if page_count > 0 else 0
+    
+    return {
+        'total_time': total_time,
+        'avg_time_per_page': avg_time_per_page,
+        'total_input_tokens': total_input_tokens,
+        'total_output_tokens': total_output_tokens,
+        'total_cached_tokens': total_cached_tokens,
+        'estimated_cost_per_run': estimated_cost_per_run,
+        'estimated_cost_per_page': estimated_cost_per_page,
+        'page_count': page_count
+    }
+
+
+def create_overview_section(pages, metrics=None, start_time=None, end_time=None):
     """
     Create overview section content for the document.
     Returns tuple of (overview_content, formatting_info) where formatting_info is a dict with:
     - folder_link_info: (link_start_index, link_end_index, folder_url)
-    - bold_labels: list of (start_index, end_index) for "Files Processed:", "Images with Errors:", "Prompt Used:"
+    - bold_labels: list of (start_index, end_index) for "Files Processed:", "Images with Errors:", "Metrics:", "Prompt Used:"
     - prompt_text_range: (start_index, end_index) for the prompt text
+    - disclaimer_range: (start_index, end_index) for the disclaimer text (for yellow highlight)
+    
+    Args:
+        pages: List of page dictionaries with 'name', 'webViewLink', 'text'
+        metrics: Optional dictionary with calculated metrics (total_time, avg_time_per_page, etc.)
+        start_time: Optional datetime object for when transcription started
+        end_time: Optional datetime object for when transcription ended
     """
     # Get folder link from the first page
     folder_link = pages[0]['webViewLink'] if pages else ""
@@ -682,8 +755,17 @@ def create_overview_section(pages):
         end_file = "N/A"
         file_count = 0
     
-    # Create overview content with folder name as link text
+    # Disclaimer text in 3 languages
+    disclaimer_text = """Нейросеть допускает много неточностей в переводе имен и фамилий - использовать как приблизительный перевод рукописного текста и перепроверять с источником!
+
+Нейромережа допускає багато неточностей у перекладі імен та прізвищ - використовувати як приблизний переклад рукописного тексту та перевіряти з джерелом!
+
+The neural network makes many inaccuracies in translating names and surnames - use as an approximate translation of handwritten text and verify with the source!"""
+    
+    # Create overview content with disclaimer first, then folder name as link text
     overview_content = f"""TRANSCRIPTION RUN SUMMARY
+
+{disclaimer_text}
 
 Name: {FOLDER_NAME}
 Folder Link: {FOLDER_NAME}
@@ -698,9 +780,18 @@ Folder Link: {FOLDER_NAME}
     if ARCHIVE_INDEX:
         overview_content += f"Archive Index: {ARCHIVE_INDEX}\n"
     
+    # Add time start and time end
+    if start_time:
+        start_time_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+        overview_content += f"Time Start: {start_time_str}\n"
+    if end_time:
+        end_time_str = end_time.strftime("%Y-%m-%d %H:%M:%S")
+        overview_content += f"Time End: {end_time_str}\n"
+    
     # Track positions for bold labels
     files_processed_label = "Files Processed:"
     images_errors_label = f"Images with Errors ({len(failed_pages)}):"
+    metrics_label = "Metrics:"
     prompt_used_label = "Prompt Used:"
     
     overview_content += f"""Model: {OCR_MODEL_ID}
@@ -728,6 +819,32 @@ End: {end_file}
     else:
         overview_content += "None\n"
     
+    # Add metrics section
+    if metrics:
+        overview_content += f"""
+{metrics_label}
+Total Time: {metrics['total_time']:.1f} seconds
+Average Time per Page (secs): {metrics['avg_time_per_page']:.2f}
+Total Input Tokens Used: {metrics['total_input_tokens']:,}
+Total Output Tokens Used: {metrics['total_output_tokens']:,}
+Estimated Cost per Run: ${metrics['estimated_cost_per_run']:.6f}
+Estimated Cost Per Page: ${metrics['estimated_cost_per_page']:.6f}
+"""
+    else:
+        overview_content += f"""
+{metrics_label}
+Total Time: N/A
+Average Time per Page (secs): N/A
+Total Input Tokens Used: N/A
+Total Output Tokens Used: N/A
+Estimated Cost per Run: N/A
+Estimated Cost Per Page: N/A
+"""
+    
+    # Calculate metrics label position for bold formatting
+    metrics_start = overview_content.find(metrics_label)
+    metrics_end = metrics_start + len(metrics_label)
+    
     # Calculate prompt text position
     prompt_used_start = overview_content.find(prompt_used_label)
     prompt_used_end = prompt_used_start + len(prompt_used_label)
@@ -744,14 +861,20 @@ End: {end_file}
     prompt_text_start = overview_content.find(prompt_used_label) + len(prompt_used_label) + 1  # +1 for newline
     prompt_text_end = prompt_text_start + len(PROMPT_TEXT)
     
+    # Recalculate disclaimer range (positions may have shifted)
+    disclaimer_start = overview_content.find(disclaimer_text.split('\n')[0])
+    disclaimer_end = disclaimer_start + len(disclaimer_text)
+    
     formatting_info = {
         'folder_link_info': folder_link_info,
         'bold_labels': [
             (files_processed_start, files_processed_end),
             (images_errors_start, images_errors_end),
+            (metrics_start, metrics_end),
             (prompt_used_start, prompt_used_end)
         ],
-        'prompt_text_range': (prompt_text_start, prompt_text_end)
+        'prompt_text_range': (prompt_text_start, prompt_text_end),
+        'disclaimer_range': (disclaimer_start, disclaimer_end)
     }
     
     return overview_content, formatting_info
@@ -803,7 +926,7 @@ def add_record_links_to_text(text, archive_index, page_number, web_view_link):
     return modified_text, link_insertions
 
 
-def save_transcription_locally(pages, doc_name):
+def save_transcription_locally(pages, doc_name, metrics=None, start_time=None, end_time=None):
     """
     Save transcription to a local text file when Google Doc creation fails.
     """
@@ -819,7 +942,7 @@ def save_transcription_locally(pages, doc_name):
         output_file = os.path.join(output_dir, f"{safe_doc_name}.txt")
         
         # Create overview content (for local files, we just need the text, not formatting info)
-        overview_content, _ = create_overview_section(pages)
+        overview_content, _ = create_overview_section(pages, metrics, start_time, end_time)
         
         # Write to file
         with open(output_file, 'w', encoding='utf-8') as f:
@@ -848,7 +971,7 @@ def save_transcription_locally(pages, doc_name):
         raise
 
 
-def write_to_doc(docs_service, doc_id, pages, start_idx=0):
+def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_time=None, end_time=None):
     """
     Write transcribed content to a Google Doc with minimal formatting.
     Formatting includes:
@@ -904,10 +1027,11 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
         logging.info(f"Document header added: {document_header}")
         
         # Add overview section
-        overview_content, formatting_info = create_overview_section(pages)
+        overview_content, formatting_info = create_overview_section(pages, metrics, start_time, end_time)
         folder_link_info = formatting_info['folder_link_info']
         bold_labels = formatting_info['bold_labels']
         prompt_text_range = formatting_info['prompt_text_range']
+        disclaimer_range = formatting_info.get('disclaimer_range', (0, 0))
         folder_link_start_offset, folder_link_end_offset, folder_url = folder_link_info
         
         # Calculate position of "TRANSCRIPTION RUN SUMMARY" heading
@@ -973,6 +1097,27 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0):
                         'bold': True
                     },
                     'fields': 'bold'
+                }
+            })
+        
+        # Add yellow highlight for disclaimer
+        if disclaimer_range[1] > disclaimer_range[0]:
+            disclaimer_start, disclaimer_end = disclaimer_range
+            overview_requests.append({
+                'updateTextStyle': {
+                    'range': {'startIndex': idx + disclaimer_start, 'endIndex': idx + disclaimer_end},
+                    'textStyle': {
+                        'backgroundColor': {
+                            'color': {
+                                'rgbColor': {
+                                    'red': 1.0,
+                                    'green': 1.0,
+                                    'blue': 0.0
+                                }
+                            }
+                        }
+                    },
+                    'fields': 'backgroundColor'
                 }
             })
         
@@ -1236,11 +1381,15 @@ def main():
         
         # First, transcribe all images
         logging.info(f"Starting transcription of {len(images)} images...")
+        start_time = datetime.now()
         transcribed_pages = []
+        usage_metadata_list = []
+        timing_list = []
+        
         for img in images:
             try:
                 img_bytes = download_image(drive_service, img['id'], img['name'])
-                text = transcribe_image(genai_client, img_bytes, img['name'])
+                text, elapsed_time, usage_metadata = transcribe_image(genai_client, img_bytes, img['name'])
                 
                 # Ensure text is not None
                 if text is None:
@@ -1251,6 +1400,11 @@ def main():
                     'webViewLink': img['webViewLink'],
                     'text': text
                 })
+                
+                # Collect metrics
+                timing_list.append(elapsed_time)
+                usage_metadata_list.append(usage_metadata)
+                
                 logging.info(f"Successfully transcribed {img['name']}")
             except Exception as e:
                 logging.error(f"Error transcribing {img['name']}: {str(e)}")
@@ -1260,6 +1414,15 @@ def main():
                     'webViewLink': img['webViewLink'],
                     'text': f"[Error during transcription: {str(e)}]"
                 })
+                # Add None for metrics on error
+                timing_list.append(None)
+                usage_metadata_list.append(None)
+        
+        # Record end time
+        end_time = datetime.now()
+        
+        # Calculate metrics
+        metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
         
         # Create document with filename as FOLDER_NAME + date (restored previous logic)
         if len(transcribed_pages) > 0:
@@ -1273,12 +1436,12 @@ def main():
                 # Permission error - save locally instead
                 logging.warning("Cannot create Google Doc due to insufficient permissions")
                 logging.info("Saving transcription to local file instead...")
-                local_file = save_transcription_locally(transcribed_pages, doc_name)
+                local_file = save_transcription_locally(transcribed_pages, doc_name, metrics, start_time, end_time)
                 logging.info(f"✓ Transcription saved locally: {local_file}")
                 logging.info(f"✓ Processed {len(transcribed_pages)} images successfully")
             else:
                 # Successfully created doc - write to it
-                write_to_doc(docs_service, doc_id, transcribed_pages)
+                write_to_doc(docs_service, doc_id, transcribed_pages, metrics=metrics, start_time=start_time, end_time=end_time)
                 logging.info(f"Created document '{doc_name}' with {len(transcribed_pages)} images")
         
         # Log session completion
