@@ -25,6 +25,7 @@ import os
 import logging
 import base64
 import json
+import traceback
 from datetime import datetime
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -35,7 +36,7 @@ from google.genai import types
 # ------------------------- PROMPTS -------------------------
 # Set which prompt file to load from the `prompts` folder (without path).
 # Use "INSTRUCTION.txt" by default.
-PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION_BLUDNIKI.txt")
+PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION_HERBUTOW_f201o4As1089.md")
 
 def load_prompt_text() -> str:
     prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
@@ -57,9 +58,9 @@ PROJECT_ID = "ukr-transcribe-genea"
 #FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
 #DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
 #FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "1rhICtjI-CIRBl9yehxUGT2GWlLk0483P"
-FOLDER_NAME = "1837-1866 Bludniki FamilySearch 004932767 Подгруппа 8 Ф.201 О.4А Д.350"
-ARCHIVE_INDEX = "ф201оп4Aспр350"
+DRIVE_FOLDER_ID = "1Gt0DGJz4aBpHm-7AS5hTmqV_5iH_gxqP"
+FOLDER_NAME = "1851–1866 Herbutow Bursztyn Naraivka Ф.201 О.4А Д.1091"
+ARCHIVE_INDEX = "ф201оп4Aспр1091"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-3-flash-preview"
@@ -67,8 +68,8 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 63  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
-IMAGE_COUNT = 1  # Number of images to process starting from IMAGE_START_NUMBER
+IMAGE_START_NUMBER = 1  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_COUNT = 200  # Number of images to process starting from IMAGE_START_NUMBER
 
 # RETRY MODE - Set to True to retry specific failed images
 RETRY_MODE = False
@@ -458,24 +459,45 @@ def list_images(drive_service):
 
 
 def download_image(drive_service, file_id, file_name):
-    logging.info(f"Downloading image '{file_name}' from folder '{FOLDER_NAME}'")
-    request = drive_service.files().get_media(fileId=file_id)
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    fh.seek(0)
-    img_bytes = fh.read()
-    logging.info(f"Image '{file_name}' downloaded successfully ({len(img_bytes)} bytes)")
-    return img_bytes
+    import time
+    download_start = time.time()
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{file_name}' from folder '{FOLDER_NAME}'")
+    try:
+        request = drive_service.files().get_media(fileId=file_id)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        chunk_count = 0
+        while not done:
+            status, done = downloader.next_chunk()
+            chunk_count += 1
+            if status:
+                progress = int(status.progress() * 100)
+                logging.debug(f"[{datetime.now().strftime('%H:%M:%S')}] Download progress for '{file_name}': {progress}%")
+        fh.seek(0)
+        img_bytes = fh.read()
+        download_elapsed = time.time() - download_start
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{file_name}' downloaded successfully ({len(img_bytes)} bytes) in {download_elapsed:.1f}s ({chunk_count} chunks)")
+        
+        if download_elapsed > 30:
+            logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Download took {download_elapsed:.1f}s (>30s) for '{file_name}' - possible network issues")
+        
+        return img_bytes
+    except Exception as e:
+        download_elapsed = time.time() - download_start
+        error_type = type(e).__name__
+        logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error downloading '{file_name}' after {download_elapsed:.1f}s: {error_type}: {str(e)}")
+        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+        raise
 
 
 def transcribe_image(genai_client, image_bytes, file_name):
     import signal
     import time
     
-    logging.info(f"Sending image '{file_name}' to Vertex AI for transcription...")
+    function_start_time = time.time()
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription for image '{file_name}' (size: {len(image_bytes)} bytes)")
+    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting transcription for {file_name} ===")
     
     # Create image part using base64 encoding
     image_part = types.Part.from_bytes(
@@ -524,21 +546,30 @@ def transcribe_image(genai_client, image_bytes, file_name):
     
     # Timeout handler
     def timeout_handler(signum, frame):
-        raise TimeoutError(f"Vertex AI API call timed out after 30 minutes for {file_name}")
+        elapsed = time.time() - function_start_time
+        error_msg = f"Vertex AI API call timed out after {timeout_seconds/60:.1f} minutes (total elapsed: {elapsed:.1f}s) for {file_name}"
+        logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] {error_msg}")
+        ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] TIMEOUT: {error_msg}")
+        raise TimeoutError(error_msg)
     
     max_retries = 1
     retry_delay = 30  # seconds
     timeout_seconds = 10 * 60  # 10 minutes
     
     for attempt in range(max_retries):
+        attempt_start_time = time.time()
         try:
-            logging.info(f"Attempt {attempt + 1}/{max_retries} for image '{file_name}'")
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} for image '{file_name}'")
+            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} starting for {file_name}")
             
-            # Set up timeout (30 minutes)
+            # Set up timeout (10 minutes)
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(timeout_seconds)
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Timeout set to {timeout_seconds/60:.1f} minutes for '{file_name}'")
             
-            start_time = time.time()
+            api_call_start = time.time()
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Making API call to Vertex AI for '{file_name}'...")
+            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] API call initiated for {file_name}")
             
             # Generate content
             response = genai_client.models.generate_content(
@@ -550,8 +581,17 @@ def transcribe_image(genai_client, image_bytes, file_name):
             # Cancel the timeout
             signal.alarm(0)
             
-            elapsed_time = time.time() - start_time
-            logging.info(f"Vertex AI response received in {elapsed_time:.1f} seconds for '{file_name}'")
+            api_call_elapsed = time.time() - api_call_start
+            elapsed_time = time.time() - attempt_start_time
+            total_elapsed = time.time() - function_start_time
+            
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Vertex AI response received in {api_call_elapsed:.1f} seconds (attempt total: {elapsed_time:.1f}s, function total: {total_elapsed:.1f}s) for '{file_name}'")
+            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] API call completed in {api_call_elapsed:.1f}s for {file_name}")
+            
+            # Log warning if API call took unusually long
+            if api_call_elapsed > 60:
+                logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: API call took {api_call_elapsed:.1f} seconds (>60s) for '{file_name}' - possible throttling or network issues")
+                ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Long API call duration ({api_call_elapsed:.1f}s) for {file_name}")
             
             text = response.text
             
@@ -594,26 +634,45 @@ def transcribe_image(genai_client, image_bytes, file_name):
             if hasattr(response, 'usage_metadata'):
                 usage_metadata = response.usage_metadata
             
+            function_total_elapsed = time.time() - function_start_time
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Transcription function completed for '{file_name}' in {function_total_elapsed:.1f}s total")
+            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Transcription completed successfully for {file_name} (total: {function_total_elapsed:.1f}s)")
+            
             return text, elapsed_time, usage_metadata
             
         except (TimeoutError, ConnectionError, OSError) as e:
             # Cancel any pending timeout
             signal.alarm(0)
             
-            error_msg = f"Attempt {attempt + 1}/{max_retries} failed for {file_name}: {str(e)}"
+            attempt_elapsed = time.time() - attempt_start_time
+            total_elapsed = time.time() - function_start_time
+            error_type = type(e).__name__
+            
+            error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} failed for '{file_name}' after {attempt_elapsed:.1f}s (total elapsed: {total_elapsed:.1f}s): {error_type}: {str(e)}"
             logging.warning(error_msg)
-            ai_logger.warning(error_msg)
+            ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1} failed for {file_name}: {error_type}: {str(e)}")
+            ai_logger.warning(f"Attempt elapsed time: {attempt_elapsed:.1f}s, Total function time: {total_elapsed:.1f}s")
+            
+            # Log full traceback for debugging
+            logging.debug(f"Full traceback for {file_name}:\n{traceback.format_exc()}")
+            ai_logger.debug(f"Traceback for {file_name}:\n{traceback.format_exc()}")
             
             if attempt < max_retries - 1:
-                logging.info(f"Retrying in {retry_delay} seconds...")
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay} seconds... (exponential backoff)")
+                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Will retry in {retry_delay}s with exponential backoff")
                 time.sleep(retry_delay)
                 retry_delay *= 2  # Exponential backoff
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retry delay completed, starting next attempt...")
             else:
-                error_msg = f"All {max_retries} attempts failed for {file_name}: {str(e)}"
-                ai_logger.error(f"=== AI Error for {file_name} ===")
-                ai_logger.error(error_msg)
+                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] All {max_retries} attempts failed for '{file_name}' after {total_elapsed:.1f}s total: {error_type}: {str(e)}"
+                ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] === AI Error for {file_name} ===")
+                ai_logger.error(f"Error type: {error_type}")
+                ai_logger.error(f"Error message: {str(e)}")
+                ai_logger.error(f"Total elapsed time: {total_elapsed:.1f}s")
+                ai_logger.error(f"Full traceback:\n{traceback.format_exc()}")
                 ai_logger.error(f"=== End AI Error for {file_name} ===\n")
                 logging.error(error_msg)
+                logging.error(f"Full traceback:\n{traceback.format_exc()}")
                 # Return error text with None for timing and metadata
                 return f"[Error during transcription: {str(e)}]", None, None
                 
@@ -621,11 +680,19 @@ def transcribe_image(genai_client, image_bytes, file_name):
             # Cancel any pending timeout
             signal.alarm(0)
             
-            error_msg = f"Unexpected error in Vertex AI transcription for {file_name}: {str(e)}"
-            ai_logger.error(f"=== AI Error for {file_name} ===")
-            ai_logger.error(error_msg)
+            attempt_elapsed = time.time() - attempt_start_time
+            total_elapsed = time.time() - function_start_time
+            error_type = type(e).__name__
+            
+            error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Unexpected error in Vertex AI transcription for '{file_name}' after {attempt_elapsed:.1f}s (total elapsed: {total_elapsed:.1f}s): {error_type}: {str(e)}"
+            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] === AI Error for {file_name} ===")
+            ai_logger.error(f"Error type: {error_type}")
+            ai_logger.error(f"Error message: {str(e)}")
+            ai_logger.error(f"Attempt elapsed time: {attempt_elapsed:.1f}s, Total function time: {total_elapsed:.1f}s")
+            ai_logger.error(f"Full traceback:\n{traceback.format_exc()}")
             ai_logger.error(f"=== End AI Error for {file_name} ===\n")
             logging.error(error_msg)
+            logging.error(f"Full traceback:\n{traceback.format_exc()}")
             # Return error text with None for timing and metadata
             return f"[Error during transcription: {str(e)}]", None, None
 
@@ -1380,16 +1447,38 @@ def main():
             return
         
         # First, transcribe all images
-        logging.info(f"Starting transcription of {len(images)} images...")
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription of {len(images)} images...")
+        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting batch transcription of {len(images)} images ===")
         start_time = datetime.now()
         transcribed_pages = []
         usage_metadata_list = []
         timing_list = []
+        last_image_end_time = None
         
-        for img in images:
+        for idx, img in enumerate(images, 1):
+            image_start_time = datetime.now()
+            image_name = img['name']
+            
+            # Log gap detection
+            if last_image_end_time:
+                gap_seconds = (image_start_time - last_image_end_time).total_seconds()
+                if gap_seconds > 60:  # Log if gap is more than 1 minute
+                    logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Large time gap detected: {gap_seconds:.1f} seconds ({gap_seconds/60:.1f} minutes) between previous image and '{image_name}'")
+                    ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Time gap of {gap_seconds:.1f}s ({gap_seconds/60:.1f} min) before {image_name}")
+            
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Processing image {idx}/{len(images)}: '{image_name}'")
+            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing image {idx}/{len(images)}: {image_name} ===")
+            
             try:
+                download_start = datetime.now()
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{image_name}'...")
                 img_bytes = download_image(drive_service, img['id'], img['name'])
+                download_elapsed = (datetime.now() - download_start).total_seconds()
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' downloaded in {download_elapsed:.1f}s, starting transcription...")
+                
+                transcription_start = datetime.now()
                 text, elapsed_time, usage_metadata = transcribe_image(genai_client, img_bytes, img['name'])
+                transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
                 
                 # Ensure text is not None
                 if text is None:
@@ -1405,9 +1494,29 @@ def main():
                 timing_list.append(elapsed_time)
                 usage_metadata_list.append(usage_metadata)
                 
-                logging.info(f"Successfully transcribed {img['name']}")
+                image_end_time = datetime.now()
+                image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                last_image_end_time = image_end_time
+                
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {idx}/{len(images)}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
+                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
+                
+                # Log progress
+                progress_pct = (idx / len(images)) * 100
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {idx}/{len(images)} images ({progress_pct:.1f}%)")
+                
             except Exception as e:
-                logging.error(f"Error transcribing {img['name']}: {str(e)}")
+                image_end_time = datetime.now()
+                image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                last_image_end_time = image_end_time
+                error_type = type(e).__name__
+                
+                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {idx}/{len(images)} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
+                logging.error(error_msg)
+                logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
+                ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
+                
                 # Add error message as text
                 transcribed_pages.append({
                     'name': img['name'],
@@ -1420,6 +1529,14 @@ def main():
         
         # Record end time
         end_time = datetime.now()
+        batch_total_elapsed = (end_time - start_time).total_seconds()
+        
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Completed transcription batch: {len(transcribed_pages)} images processed in {batch_total_elapsed:.1f} seconds ({batch_total_elapsed/60:.1f} minutes)")
+        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch transcription completed ===")
+        ai_logger.info(f"Total images: {len(transcribed_pages)}")
+        ai_logger.info(f"Total time: {batch_total_elapsed:.1f}s ({batch_total_elapsed/60:.1f} min)")
+        ai_logger.info(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        ai_logger.info(f"End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         # Calculate metrics
         metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
