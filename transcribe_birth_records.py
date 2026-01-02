@@ -36,7 +36,7 @@ from google.genai import types
 # ------------------------- PROMPTS -------------------------
 # Set which prompt file to load from the `prompts` folder (without path).
 # Use "INSTRUCTION.txt" by default.
-PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION_HERBUTOW_f201o4As1089.md")
+PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION_KURIPOW_f201o4As2881.md")
 
 def load_prompt_text() -> str:
     prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
@@ -58,9 +58,9 @@ PROJECT_ID = "ukr-transcribe-genea"
 #FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
 #DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
 #FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "1Gt0DGJz4aBpHm-7AS5hTmqV_5iH_gxqP"
-FOLDER_NAME = "1851–1866 Herbutow Bursztyn Naraivka Ф.201 О.4А Д.1091"
-ARCHIVE_INDEX = "ф201оп4Aспр1091"
+DRIVE_FOLDER_ID = "1wtD1MxriKowHUn9Ll_SnIyzHLPvHwPMo"
+FOLDER_NAME = "1837-1866 Kurypow Курипов Остров Пукасивцы FamSearch 004933159 Ф.201 О.4А Д.2881"
+ARCHIVE_INDEX = "ф201о4Aд2881"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-3-flash-preview"
@@ -68,9 +68,10 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 1  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
+IMAGE_START_NUMBER = 215  # Starting image number - refers to the NUMBER IN THE FILENAME (e.g., 474 for 004932851_00474.jpeg)
+                          # NOT the position in sequence. Extract number from filename pattern (e.g., 101 for image00101.jpg or 101.jpg)
 IMAGE_COUNT = 200  # Number of images to process starting from IMAGE_START_NUMBER
-BATCH_SIZE_FOR_DOC = 3  # Number of images to transcribe before creating/writing to Google Doc (for resilience)
+BATCH_SIZE_FOR_DOC = 5  # Number of images to transcribe before creating/writing to Google Doc (for resilience)
 
 # RETRY MODE - Set to True to retry specific failed images
 RETRY_MODE = False
@@ -156,6 +157,86 @@ def init_services(creds):
     docs = build("docs", "v1", credentials=creds)
     logging.info("Google Drive and Docs APIs initialized.")
     return drive, docs, genai_client
+
+
+def extract_image_number(filename):
+    """
+    Extract the numeric identifier from an image filename.
+    Supports the same patterns as list_images().
+    Returns the extracted number, or None if no number can be extracted.
+    """
+    import re
+    
+    # Helper: case-insensitive check for JPEG extension
+    def has_jpeg_extension(fname: str) -> bool:
+        lower = fname.lower()
+        return lower.endswith('.jpg') or lower.endswith('.jpeg')
+    
+    # Regex pattern for timestamp format: image - YYYY-MM-DDTHHMMSS.mmm.jpg/jpeg
+    timestamp_pattern = re.compile(r'^image - (\d{4}-\d{2}-\d{2}T\d{6}\.\d{3})\.(?:jpg|jpeg)$', re.IGNORECASE)
+    
+    # Regex pattern for IMG_YYYYMMDD_XXXX.jpg format (e.g., IMG_20250814_0036.jpg)
+    img_date_pattern = re.compile(r'^IMG_\d{8}_(\d+)\.(?:jpg|jpeg)$', re.IGNORECASE)
+    
+    number = None
+    
+    # Check for timestamp pattern first
+    timestamp_match = timestamp_pattern.match(filename)
+    if timestamp_match:
+        # For timestamp images, we can't extract a meaningful number
+        return None
+    
+    # Check for IMG_YYYYMMDD_XXXX.jpg pattern
+    img_date_match = img_date_pattern.match(filename)
+    if img_date_match:
+        try:
+            return int(img_date_match.group(1))
+        except ValueError:
+            pass
+    
+    # Check if filename matches the pattern image (N).jpg/jpeg
+    if filename.startswith('image (') and (filename.lower().endswith(').jpg') or filename.lower().endswith(').jpeg')):
+        try:
+            start_idx = filename.find('(') + 1
+            end_idx = filename.find(')')
+            number_str = filename[start_idx:end_idx]
+            return int(number_str)
+        except (ValueError, IndexError):
+            pass
+    
+    # Check if filename matches the pattern imageXXXXX.jpg/jpeg
+    if filename.startswith('image') and has_jpeg_extension(filename) and '(' not in filename and ' - ' not in filename and '_' not in filename:
+        try:
+            ext_len = 5 if filename.lower().endswith('.jpeg') else 4
+            number_str = filename[5:-ext_len]
+            return int(number_str)
+        except ValueError:
+            pass
+    
+    # Check if filename matches the pattern XXXXX.jpg/jpeg
+    if has_jpeg_extension(filename) and not filename.startswith('image') and '_' not in filename:
+        try:
+            ext_len = 5 if filename.lower().endswith('.jpeg') else 4
+            number_str = filename[:-ext_len]
+            return int(number_str)
+        except ValueError:
+            pass
+    
+    # Check if filename matches the pattern PREFIX_XXXXX.jpg/jpeg (e.g., 004933159_00216.jpeg)
+    if has_jpeg_extension(filename) and '_' in filename:
+        try:
+            ext_len = 5 if filename.lower().endswith('.jpeg') else 4
+            base_no_ext = filename[:-ext_len]
+            # Take numeric part after the last underscore
+            underscore_idx = base_no_ext.rfind('_')
+            if underscore_idx != -1:
+                suffix = base_no_ext[underscore_idx + 1:]
+                if suffix.isdigit():
+                    return int(suffix)
+        except Exception:
+            pass
+    
+    return None
 
 
 def list_images(drive_service):
@@ -948,6 +1029,234 @@ Estimated Cost Per Page: N/A
     return overview_content, formatting_info
 
 
+def update_overview_section(docs_service, doc_id, pages, metrics=None, start_time=None, end_time=None):
+    """
+    Update the overview section in an existing document with final metrics.
+    
+    This function finds the overview section (between the header and first page transcription)
+    and replaces it with updated content that includes final metrics from all batches.
+    
+    Args:
+        docs_service: Google Docs API service
+        doc_id: Document ID
+        pages: List of all page dictionaries (from all batches)
+        metrics: Final metrics dictionary with overall stats
+        start_time: Start time of the transcription run
+        end_time: End time of the transcription run
+    """
+    try:
+        # Get current document state
+        doc = docs_service.documents().get(documentId=doc_id).execute()
+        
+        # Find the overview section
+        # It's between the header (Heading 1) and the first page transcription (Heading 2 with archive index)
+        content = doc['body']['content']
+        
+        # Find the end of the header (first Heading 1)
+        header_end = None
+        overview_start = None
+        overview_end = None
+        first_page_header_start = None
+        
+        for i, element in enumerate(content):
+            if 'paragraph' in element:
+                para = element['paragraph']
+                if 'paragraphStyle' in para and para['paragraphStyle'].get('namedStyleType') == 'HEADING_1':
+                    header_end = element['endIndex']
+                elif 'paragraphStyle' in para and para['paragraphStyle'].get('namedStyleType') == 'HEADING_2':
+                    # Check if this is the first page header (contains archive index pattern)
+                    if ARCHIVE_INDEX and ARCHIVE_INDEX in para.get('elements', [{}])[0].get('textRun', {}).get('content', ''):
+                        first_page_header_start = element['startIndex']
+                        break
+        
+        # If we found the header end and first page header start, the overview is between them
+        if header_end and first_page_header_start:
+            overview_start = header_end
+            overview_end = first_page_header_start
+        else:
+            # Fallback: look for "TRANSCRIPTION RUN SUMMARY" text
+            doc_text = ""
+            for element in content:
+                if 'paragraph' in element:
+                    for elem in element['paragraph'].get('elements', []):
+                        if 'textRun' in elem:
+                            doc_text += elem['textRun'].get('content', '')
+            
+            summary_pos = doc_text.find("TRANSCRIPTION RUN SUMMARY")
+            if summary_pos >= 0:
+                # Find the start and end of the overview section
+                # It starts after the header and ends before the first page transcription
+                # We'll search for the first Heading 2 that's not "TRANSCRIPTION RUN SUMMARY"
+                for i, element in enumerate(content):
+                    if 'paragraph' in element:
+                        para = element['paragraph']
+                        if 'paragraphStyle' in para:
+                            style = para['paragraphStyle'].get('namedStyleType')
+                            if style == 'HEADING_1':
+                                header_end = element['endIndex']
+                            elif style == 'HEADING_2':
+                                # Check if this is not the summary heading
+                                text_content = ""
+                                for elem in para.get('elements', []):
+                                    if 'textRun' in elem:
+                                        text_content += elem['textRun'].get('content', '')
+                                if "TRANSCRIPTION RUN SUMMARY" not in text_content and ARCHIVE_INDEX:
+                                    # This is likely the first page header
+                                    first_page_header_start = element['startIndex']
+                                    break
+                
+                if header_end and first_page_header_start:
+                    overview_start = header_end
+                    overview_end = first_page_header_start
+        
+        if not overview_start or not overview_end:
+            logging.warning("Could not locate overview section boundaries. Skipping overview update.")
+            return
+        
+        # Prepare new overview content with final metrics
+        overview_content, formatting_info = create_overview_section(pages, metrics, start_time, end_time)
+        folder_link_info = formatting_info['folder_link_info']
+        bold_labels = formatting_info['bold_labels']
+        prompt_text_range = formatting_info['prompt_text_range']
+        disclaimer_range = formatting_info.get('disclaimer_range', (0, 0))
+        folder_link_start_offset, folder_link_end_offset, folder_url = folder_link_info
+        
+        # Calculate position of "TRANSCRIPTION RUN SUMMARY" heading
+        summary_heading = "TRANSCRIPTION RUN SUMMARY"
+        summary_heading_start = 0
+        summary_heading_end = len(summary_heading)
+        
+        # Delete old overview and insert new one
+        update_requests = [
+            {
+                'deleteContentRange': {
+                    'range': {
+                        'startIndex': overview_start,
+                        'endIndex': overview_end
+                    }
+                }
+            },
+            {
+                'insertText': {
+                    'location': {'index': overview_start},
+                    'text': overview_content
+                }
+            },
+            {
+                'updateParagraphStyle': {
+                    'range': {'startIndex': overview_start, 'endIndex': overview_start + len(overview_content)},
+                    'paragraphStyle': {
+                        'namedStyleType': 'NORMAL_TEXT',
+                        'alignment': 'START'
+                    },
+                    'fields': 'namedStyleType,alignment'
+                }
+            },
+            {
+                'updateParagraphStyle': {
+                    'range': {'startIndex': overview_start + summary_heading_start, 'endIndex': overview_start + summary_heading_end + 1},
+                    'paragraphStyle': {
+                        'namedStyleType': 'HEADING_2',
+                        'alignment': 'START'
+                    },
+                    'fields': 'namedStyleType,alignment'
+                }
+            },
+            {
+                'updateTextStyle': {
+                    'range': {'startIndex': overview_start + summary_heading_start, 'endIndex': overview_start + summary_heading_end},
+                    'textStyle': {
+                        'bold': False
+                    },
+                    'fields': 'bold'
+                }
+            }
+        ]
+        
+        # Add disclaimer highlight (yellow background)
+        if disclaimer_range[1] > disclaimer_range[0]:
+            update_requests.append({
+                'updateTextStyle': {
+                    'range': {
+                        'startIndex': overview_start + disclaimer_range[0],
+                        'endIndex': overview_start + disclaimer_range[1]
+                    },
+                    'textStyle': {
+                        'backgroundColor': {
+                            'color': {
+                                'rgbColor': {
+                                    'red': 1.0,
+                                    'green': 1.0,
+                                    'blue': 0.0
+                                }
+                            }
+                        }
+                    },
+                    'fields': 'backgroundColor'
+                }
+            })
+        
+        # Add folder link
+        update_requests.append({
+            'updateTextStyle': {
+                'range': {
+                    'startIndex': overview_start + folder_link_start_offset,
+                    'endIndex': overview_start + folder_link_end_offset
+                },
+                'textStyle': {
+                    'link': {
+                        'url': folder_url
+                    }
+                },
+                'fields': 'link'
+            }
+        })
+        
+        # Add bold formatting for labels
+        for label_start, label_end in bold_labels:
+            update_requests.append({
+                'updateTextStyle': {
+                    'range': {
+                        'startIndex': overview_start + label_start,
+                        'endIndex': overview_start + label_end
+                    },
+                    'textStyle': {
+                        'bold': True
+                    },
+                    'fields': 'bold'
+                }
+            })
+        
+        # Format prompt text (6pt Roboto Mono Normal)
+        if prompt_text_range[1] > prompt_text_range[0]:
+            update_requests.append({
+                'updateTextStyle': {
+                    'range': {
+                        'startIndex': overview_start + prompt_text_range[0],
+                        'endIndex': overview_start + prompt_text_range[1]
+                    },
+                    'textStyle': {
+                        'fontSize': {
+                            'magnitude': 6,
+                            'unit': 'PT'
+                        },
+                        'weightedFontFamily': {
+                            'fontFamily': 'Roboto Mono'
+                        }
+                    },
+                    'fields': 'fontSize,weightedFontFamily'
+                }
+            })
+        
+        # Execute update
+        docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': update_requests}).execute()
+        logging.info("Overview section updated with final metrics successfully.")
+        
+    except Exception as e:
+        logging.error(f"Error updating overview section: {str(e)}")
+        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+
+
 def add_record_links_to_text(text, archive_index, page_number, web_view_link):
     """
     Find lines starting with ### (like "### Запись 1") and append clickable archive reference.
@@ -1041,15 +1350,14 @@ def save_transcription_locally(pages, doc_name, metrics=None, start_time=None, e
 
 def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_time=None, end_time=None, write_overview=True):
     """
-    Write transcribed content to a Google Doc with minimal formatting.
+    Write transcribed content to a Google Doc using Atomic Page Writes.
+    Fetches the true document end index before every page write to prevent index drift errors.
+    
     Formatting includes:
     - Overview section with metadata (if write_overview=True)
     - Archive reference + page number as Heading 2 (e.g., "ф201оп4спр104стр22")
     - Source image link
     - Raw Vertex AI output with clickable links on record headers
-    
-    Handles batching of requests to stay within Google Docs API limits (500 requests per batch).
-    Implements circuit breaker pattern to stop after consecutive failures.
     
     Args:
         docs_service: Google Docs API service
@@ -1066,29 +1374,21 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
         logging.info(f"Using archive index: {ARCHIVE_INDEX}")
     
     try:
-        # Get the current document to check its structure
-        doc = docs_service.documents().get(documentId=doc_id).execute()
-        
-        # Get current document end index
-        doc = docs_service.documents().get(documentId=doc_id).execute()
-        if write_overview:
-            # Start at the beginning of the document
-            idx = 1
-        else:
-            # Start at the end of the document (for incremental writes)
-            idx = doc['body']['content'][-1]['endIndex'] - 1
-        
-        all_requests = []
-        BATCH_SIZE = 450  # Using 450 to be safe, as some operations might generate multiple requests
-        
         # Circuit breaker to prevent cascading failures
         MAX_CONSECUTIVE_FAILURES = 5
         consecutive_failures = 0
         
+        # --- PHASE 1: Write Overview (if needed) ---
         if write_overview:
-            # Add document header (FOLDER_NAME + date) as Heading 1
+            # Fetch current doc state - start at beginning
+            doc = docs_service.documents().get(documentId=doc_id).execute()
+            idx = 1  # Start of document
+            
+            # Prepare Header
             run_date = datetime.now().strftime("%Y%m%d")
             document_header = f"{FOLDER_NAME} {run_date}"
+            
+            # Insert Header
             header_requests = [
                 {
                     'insertText': {
@@ -1108,11 +1408,14 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
                 }
             ]
             docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': header_requests}).execute()
-            doc = docs_service.documents().get(documentId=doc_id).execute()
-            idx = doc['body']['content'][-1]['endIndex'] - 1
             logging.info(f"Document header added: {document_header}")
             
-            # Add overview section
+            # Refresh Index for Overview
+            doc = docs_service.documents().get(documentId=doc_id).execute()
+            # Google Docs content list includes a final EOF character, so endIndex - 1 is the actual end
+            idx = doc['body']['content'][-1]['endIndex'] - 1
+            
+            # Prepare Overview Content
             overview_content, formatting_info = create_overview_section(pages, metrics, start_time, end_time)
             folder_link_info = formatting_info['folder_link_info']
             bold_labels = formatting_info['bold_labels']
@@ -1125,25 +1428,26 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
             summary_heading_start = 0
             summary_heading_end = len(summary_heading)
             
+            # Construct Overview Requests
             overview_requests = [
-                {
-                    'insertText': {
-                        'location': {'index': idx},
-                        'text': overview_content
-                    }
-                },
-                {
-                    'updateParagraphStyle': {
-                        'range': {'startIndex': idx, 'endIndex': idx + len(overview_content)},
-                        'paragraphStyle': {
-                            'namedStyleType': 'NORMAL_TEXT',
-                            'alignment': 'START'
-                        },
-                        'fields': 'namedStyleType,alignment'
-                    }
-                },
-                {
-                    'updateParagraphStyle': {
+            {
+                'insertText': {
+                    'location': {'index': idx},
+                    'text': overview_content
+                }
+            },
+            {
+                'updateParagraphStyle': {
+                    'range': {'startIndex': idx, 'endIndex': idx + len(overview_content)},
+                    'paragraphStyle': {
+                        'namedStyleType': 'NORMAL_TEXT',
+                        'alignment': 'START'
+                    },
+                    'fields': 'namedStyleType,alignment'
+                }
+            },
+            {
+                'updateParagraphStyle': {
                         'range': {'startIndex': idx + summary_heading_start, 'endIndex': idx + summary_heading_end + 1},  # +1 for newline
                         'paragraphStyle': {
                             'namedStyleType': 'HEADING_2',
@@ -1226,56 +1530,62 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
                 }
             })
             
-            # Write overview immediately and re-fetch index to ensure accuracy
+            # Execute Overview
             docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': overview_requests}).execute()
-            doc = docs_service.documents().get(documentId=doc_id).execute()
-            # Google Docs always ends with a trailing newline; insert before it (endIndex - 1)
-            idx = doc['body']['content'][-1]['endIndex'] - 1
             consecutive_failures = 0  # Reset counter on success
-            logging.info(f"Overview section added. Document end index: {doc['body']['content'][-1]['endIndex']}, insertion index: {idx}")
+            logging.info("Overview section added successfully.")
         
+        # --- PHASE 2: Write Page Transcriptions (Atomic Writes - One by One) ---
         for i, item in enumerate(pages[start_idx:], start=start_idx + 1):
             try:
-                # Determine page header: use archive index + page number if available, otherwise image name
+                # CRITICAL FIX: Get Fresh Index Before Every Page Write
+                # This ensures our index is 100% accurate and prevents "Precondition check failed" errors
+                doc = docs_service.documents().get(documentId=doc_id).execute()
+                current_idx = doc['body']['content'][-1]['endIndex'] - 1
+                
+                page_requests = []
+                
+                # Prepare page data
                 page_number = i
                 if ARCHIVE_INDEX:
                     page_header = f"{ARCHIVE_INDEX}стр{page_number}"
                 else:
                     page_header = item['name']
                 
-                # Add page header as Heading 2
-                all_requests.extend([
-                    {
+                link_text = f"Src Img Url: {item['name']}"
+                
+                # Build requests for this page atomically
+                # 1. Insert Header
+                page_requests.append({
                         'insertText': {
-                            'location': {'index': idx},
+                        'location': {'index': current_idx},
                             'text': f"{page_header}\n"
                         }
-                    },
-                    {
+                })
+                page_requests.append({
                         'updateParagraphStyle': {
-                            'range': {'startIndex': idx, 'endIndex': idx + len(page_header) + 1},
+                        'range': {'startIndex': current_idx, 'endIndex': current_idx + len(page_header) + 1},
                             'paragraphStyle': {
-                                'namedStyleType': 'HEADING_2',
+                            'namedStyleType': 'HEADING_2',
                                 'alignment': 'START'
                             },
                             'fields': 'namedStyleType,alignment'
                         }
-                    }
-                ])
-                idx += len(page_header) + 1
+                })
+                current_idx += len(page_header) + 1
                 
-                # Add source image link in new format: "Src Img Url: IMG_NAME_URL"
-                link_text = f"Src Img Url: {item['name']}"
-                all_requests.extend([
-                    {
+                # 2. Insert Image Link
+                page_requests.append({
                         'insertText': {
-                            'location': {'index': idx},
+                        'location': {'index': current_idx},
                             'text': link_text + "\n"
                         }
-                    },
-                    {
+                })
+                link_val_start = current_idx + len("Src Img Url: ")
+                link_val_end = current_idx + len(link_text)
+                page_requests.append({
                         'updateTextStyle': {
-                            'range': {'startIndex': idx + len("Src Img Url: "), 'endIndex': idx + len(link_text)},
+                        'range': {'startIndex': link_val_start, 'endIndex': link_val_end},
                             'textStyle': {
                                 'link': {'url': item['webViewLink']},
                                 'foregroundColor': {'color': {'rgbColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}}},
@@ -1283,11 +1593,10 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
                             },
                             'fields': 'link,foregroundColor,underline'
                         }
-                    }
-                ])
-                idx += len(link_text) + 1
+                })
+                current_idx += len(link_text) + 1
                 
-                # Process transcribed text to add links to ### record headers
+                # 3. Insert Transcription Body
                 if item['text']:
                     modified_text, link_insertions = add_record_links_to_text(
                         item['text'], 
@@ -1296,20 +1605,17 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
                         item['webViewLink']
                     )
                     text_to_insert = modified_text + "\n\n"
-                    text_start_idx = idx
+                    body_start_idx = current_idx
                     
-                    # Insert text
-                    all_requests.append({
+                    page_requests.append({
                         'insertText': {
-                            'location': {'index': idx},
+                            'location': {'index': current_idx},
                             'text': text_to_insert
                         }
                     })
-                    
-                    # Add paragraph style
-                    all_requests.append({
+                    page_requests.append({
                         'updateParagraphStyle': {
-                            'range': {'startIndex': idx, 'endIndex': idx + len(text_to_insert)},
+                            'range': {'startIndex': current_idx, 'endIndex': current_idx + len(text_to_insert)},
                             'paragraphStyle': {
                                 'namedStyleType': 'NORMAL_TEXT',
                                 'alignment': 'START'
@@ -1318,15 +1624,15 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
                         }
                     })
                     
-                    # Add links to record headers (### lines with archive references)
-                    for link_start_offset, link_end_offset, url in link_insertions:
-                        link_start = text_start_idx + link_start_offset
-                        link_end = text_start_idx + link_end_offset
-                        all_requests.append({
+                    # Apply links to ### record headers
+                    for l_start, l_end, l_url in link_insertions:
+                        abs_start = body_start_idx + l_start
+                        abs_end = body_start_idx + l_end
+                        page_requests.append({
                             'updateTextStyle': {
-                                'range': {'startIndex': link_start, 'endIndex': link_end},
+                                'range': {'startIndex': abs_start, 'endIndex': abs_end},
                                 'textStyle': {
-                                    'link': {'url': url},
+                                    'link': {'url': l_url},
                                     'foregroundColor': {'color': {'rgbColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}}},
                                     'underline': True
                                 },
@@ -1334,31 +1640,15 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
                             }
                         })
                     
-                    idx += len(text_to_insert)
-                
-                logging.info(f"Added transcription for '{item['name']}' to document (header: {page_header})")
-                
-                # Process requests in batches (always enforce chunking to avoid API limits)
-                if len(all_requests) >= BATCH_SIZE:
-                    logging.info(f"Processing batches (current queue: {len(all_requests)})...")
-                    # Write all pending requests in chunks to avoid stale indices
-                    # (Keeping requests across batch boundaries causes index drift)
-                    while all_requests:
-                        chunk = all_requests[:BATCH_SIZE]
-                        docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': chunk}).execute()
-                        all_requests = all_requests[BATCH_SIZE:]
-                        logging.info(f"Batch of {len(chunk)} requests processed ({len(all_requests)} remaining in queue)...")
-                    
-                    # Re-fetch document to get current end index (prevents "Precondition check failed" errors)
-                    doc = docs_service.documents().get(documentId=doc_id).execute()
-                    # Google Docs always ends with a trailing newline; insert before it (endIndex - 1)
-                    idx = doc['body']['content'][-1]['endIndex'] - 1
+                # 4. Execute immediately for this page (Atomic Write)
+                if page_requests:
+                    docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': page_requests}).execute()
                     consecutive_failures = 0  # Reset counter on success
-                    logging.info(f"All batches processed successfully. Document index updated to {idx}")
+                logging.info(f"Added transcription for '{item['name']}' to document (header: {page_header})")
                 
             except Exception as e:
                 consecutive_failures += 1
-                logging.error(f"Error processing page {i} ('{item['name']}'): {str(e)}")
+                logging.error(f"Error writing page {i} ('{item['name']}') to Doc: {str(e)}")
                 logging.warning(f"Consecutive failures: {consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}")
                 
                 # Circuit breaker: stop if too many consecutive failures
@@ -1369,58 +1659,19 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
                     logging.error(f"Use recovery_script.py with the AI response log to recover remaining pages")
                     raise Exception(f"Exceeded maximum consecutive failures ({MAX_CONSECUTIVE_FAILURES}). Document write stopped.")
                 
-                # Process any pending requests before handling error
-                if all_requests:
-                    try:
-                        logging.info(f"Flushing {len(all_requests)} pending requests before error handling...")
-                        while all_requests:
-                            chunk = all_requests[:BATCH_SIZE]
-                            docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': chunk}).execute()
-                            all_requests = all_requests[BATCH_SIZE:]
-                        # Re-fetch document to get current end index
-                        doc = docs_service.documents().get(documentId=doc_id).execute()
-                        # Google Docs always ends with a trailing newline; insert before it (endIndex - 1)
-                        idx = doc['body']['content'][-1]['endIndex'] - 1
-                        consecutive_failures = 0  # Reset if flush succeeds
-                        logging.info(f"Pending requests flushed successfully. Document index updated to {idx}")
-                    except Exception as flush_error:
-                        logging.error(f"Error flushing pending requests: {flush_error}")
-                        # Clear the queue to prevent further cascading errors
-                        all_requests = []
-                
-                # Add error message to document
-                error_text = f"\n[Error processing this page: {str(e)}]\n"
+                # Try to write an error marker to the doc so the user knows something is missing
                 try:
+                    doc = docs_service.documents().get(documentId=doc_id).execute()
+                    err_idx = doc['body']['content'][-1]['endIndex'] - 1
                     docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': [{
                         'insertText': {
-                            'location': {'index': idx},
-                            'text': error_text
+                            'location': {'index': err_idx},
+                            'text': f"\n[ERROR WRITING CONTENT FOR {item['name']}: {str(e)}]\n\n"
                         }
                     }]}).execute()
-                    # Re-fetch document after adding error message
-                    doc = docs_service.documents().get(documentId=doc_id).execute()
-                    # Google Docs always ends with a trailing newline; insert before it (endIndex - 1)
-                    idx = doc['body']['content'][-1]['endIndex'] - 1
                 except Exception as error_write_error:
                     logging.error(f"Could not write error message to document: {error_write_error}")
-        
-        # Process any remaining requests in safe chunks (should be minimal after loop batching)
-        if all_requests:
-            logging.info(f"Processing final {len(all_requests)} remaining requests...")
-        while all_requests:
-            chunk = all_requests[:BATCH_SIZE]
-            logging.info(f"Processing remaining batch of {len(chunk)} requests (left: {len(all_requests)})...")
-            docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': chunk}).execute()
-            all_requests = all_requests[BATCH_SIZE:]
-            consecutive_failures = 0  # Reset counter on success
-            
-            # Re-fetch document to keep index synchronized
-            if all_requests:  # Only if there are more batches to process
-                doc = docs_service.documents().get(documentId=doc_id).execute()
-                # Google Docs always ends with a trailing newline; insert before it (endIndex - 1)
-                idx = doc['body']['content'][-1]['endIndex'] - 1
-                logging.info(f"Remaining batch processed. Document index updated to {idx}")
-        logging.info("All batches processed successfully")
+                    # Continue to next page even if error marker fails
         
         logging.info("Google Doc updated successfully")
         
@@ -1555,22 +1806,28 @@ def main():
                         error_type = type(e).__name__
                         
                         # Calculate next image number to start from in case of failure
-                        next_image_number = IMAGE_START_NUMBER + global_idx
+                        # Extract the number from the current image filename
+                        current_image_number = extract_image_number(image_name)
+                        if current_image_number is not None:
+                            next_image_number = current_image_number + 1
+                        else:
+                            # Fallback: if we can't extract number, use position-based calculation
+                            next_image_number = IMAGE_START_NUMBER + global_idx
                         
                         error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
                         logging.error(error_msg)
                         logging.error(f"Full traceback:\n{traceback.format_exc()}")
-                        logging.error(f"RESUME INFO: To resume from this point, set IMAGE_START_NUMBER = {next_image_number}")
+                        logging.error(f"RESUME INFO: To resume from this point, set IMAGE_START_NUMBER = {next_image_number} (filename number from '{image_name}')")
                         ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
-                        ai_logger.error(f"RESUME INFO: Set IMAGE_START_NUMBER = {next_image_number} to resume from next image")
+                        ai_logger.error(f"RESUME INFO: Set IMAGE_START_NUMBER = {next_image_number} to resume from next image (current image filename number: {current_image_number})")
                         ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
                         
-                        # Add error message as text
+                # Add error message as text
                         batch_transcribed_pages.append({
-                            'name': img['name'],
-                            'webViewLink': img['webViewLink'],
-                            'text': f"[Error during transcription: {str(e)}]"
-                        })
+                    'name': img['name'],
+                    'webViewLink': img['webViewLink'],
+                    'text': f"[Error during transcription: {str(e)}]"
+                })
                         # Add None for metrics on error
                         batch_timing_list.append(None)
                         batch_usage_metadata_list.append(None)
@@ -1633,19 +1890,33 @@ def main():
             # Log error and resume information
             error_type = type(batch_error).__name__
             images_processed = len(transcribed_pages) if 'transcribed_pages' in locals() else 0
-            next_image_number = IMAGE_START_NUMBER + images_processed
+            
+            # Calculate next image number from the last successfully processed image
+            next_image_number = None
+            if images_processed > 0 and 'transcribed_pages' in locals():
+                last_image_name = transcribed_pages[-1]['name']
+                last_image_number = extract_image_number(last_image_name)
+                if last_image_number is not None:
+                    next_image_number = last_image_number + 1
+                else:
+                    # Fallback: use position-based calculation
+                    next_image_number = IMAGE_START_NUMBER + images_processed
+            elif images_processed > 0:
+                # Fallback if we can't get the last image name
+                next_image_number = IMAGE_START_NUMBER + images_processed
             
             logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error processing batch: {error_type}: {str(batch_error)}")
             logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
-            if images_processed > 0:
-                logging.error(f"RESUME INFO: To resume from this point, set IMAGE_START_NUMBER = {next_image_number}")
+            if next_image_number is not None:
+                last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
+                logging.error(f"RESUME INFO: To resume from this point, set IMAGE_START_NUMBER = {next_image_number}{last_image_info}")
             logging.error(f"Full traceback:\n{traceback.format_exc()}")
             
             ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch Processing Error ===")
             ai_logger.error(f"Error type: {error_type}")
             ai_logger.error(f"Error message: {str(batch_error)}")
             ai_logger.error(f"Images processed before error: {images_processed}")
-            if images_processed > 0:
+            if next_image_number is not None:
                 ai_logger.error(f"RESUME INFO: Set IMAGE_START_NUMBER = {next_image_number} to resume from next image")
             ai_logger.error(f"Full traceback:\n{traceback.format_exc()}")
             ai_logger.error(f"=== End Batch Processing Error ===")
@@ -1667,10 +1938,16 @@ def main():
         # Calculate final metrics
         final_metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
         
-        # If document was created, we could update the overview with final metrics
-        # For now, the overview was written with initial metrics from first batch
-        # This is acceptable as metrics are approximate anyway
+        # Update the overview section with final metrics from all batches
         if doc_id and len(transcribed_pages) > 0:
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Updating overview section with final metrics from all batches...")
+            try:
+                update_overview_section(docs_service, doc_id, transcribed_pages, final_metrics, start_time, end_time)
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Overview section updated successfully.")
+            except Exception as e:
+                logging.error(f"Error updating overview section: {str(e)}")
+                logging.error(f"Full traceback:\n{traceback.format_exc()}")
+            
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] All batches written to document '{doc_name}'")
             logging.info(f"Final metrics: {final_metrics}")
         elif len(transcribed_pages) > 0:
@@ -1689,21 +1966,36 @@ def main():
         # Log session error with resume information
         error_type = type(e).__name__
         images_processed = len(transcribed_pages) if 'transcribed_pages' in locals() else 0
-        next_image_number = IMAGE_START_NUMBER + images_processed
+        
+        # Calculate next image number from the last successfully processed image
+        next_image_number = None
+        if images_processed > 0 and 'transcribed_pages' in locals():
+            last_image_name = transcribed_pages[-1]['name']
+            last_image_number = extract_image_number(last_image_name)
+            if last_image_number is not None:
+                next_image_number = last_image_number + 1
+            else:
+                # Fallback: use position-based calculation
+                next_image_number = IMAGE_START_NUMBER + images_processed
+        elif images_processed > 0:
+            # Fallback if we can't get the last image name
+            next_image_number = IMAGE_START_NUMBER + images_processed
         
         ai_logger.error(f"=== Transcription Session Error ===")
         ai_logger.error(f"Error timestamp: {datetime.now().isoformat()}")
         ai_logger.error(f"Error type: {error_type}")
         ai_logger.error(f"Error: {str(e)}")
         ai_logger.error(f"Images processed before error: {images_processed}")
-        if images_processed > 0:
-            ai_logger.error(f"RESUME INFO: Set IMAGE_START_NUMBER = {next_image_number} to resume from next image")
+        if next_image_number is not None:
+            last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
+            ai_logger.error(f"RESUME INFO: Set IMAGE_START_NUMBER = {next_image_number} to resume from next image{last_image_info}")
         ai_logger.error(f"=== Session Error End ===\n")
         
         logging.error(f"Error in main: {error_type}: {str(e)}")
-        if images_processed > 0:
+        if next_image_number is not None:
+            last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
             logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
-            logging.error(f"RESUME INFO: To resume from this point, set IMAGE_START_NUMBER = {next_image_number}")
+            logging.error(f"RESUME INFO: To resume from this point, set IMAGE_START_NUMBER = {next_image_number}{last_image_info}")
         logging.error(f"Full traceback:\n{traceback.format_exc()}")
         raise
 
