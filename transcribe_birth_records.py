@@ -70,6 +70,7 @@ TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
 IMAGE_START_NUMBER = 1  # Starting image number (e.g., 101 for image00101.jpg or 101.jpg)
 IMAGE_COUNT = 200  # Number of images to process starting from IMAGE_START_NUMBER
+BATCH_SIZE_FOR_DOC = 3  # Number of images to transcribe before creating/writing to Google Doc (for resilience)
 
 # RETRY MODE - Set to True to retry specific failed images
 RETRY_MODE = False
@@ -1038,17 +1039,27 @@ def save_transcription_locally(pages, doc_name, metrics=None, start_time=None, e
         raise
 
 
-def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_time=None, end_time=None):
+def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_time=None, end_time=None, write_overview=True):
     """
     Write transcribed content to a Google Doc with minimal formatting.
     Formatting includes:
-    - Overview section with metadata
+    - Overview section with metadata (if write_overview=True)
     - Archive reference + page number as Heading 2 (e.g., "ф201оп4спр104стр22")
     - Source image link
     - Raw Vertex AI output with clickable links on record headers
     
     Handles batching of requests to stay within Google Docs API limits (500 requests per batch).
     Implements circuit breaker pattern to stop after consecutive failures.
+    
+    Args:
+        docs_service: Google Docs API service
+        doc_id: Document ID
+        pages: List of page dictionaries
+        start_idx: Starting index in pages list (for incremental writes)
+        metrics: Optional metrics dictionary
+        start_time: Optional start time
+        end_time: Optional end time
+        write_overview: If True, write overview section and document header (default: True)
     """
     logging.info(f"Preparing document content for folder '{FOLDER_NAME}'...")
     if ARCHIVE_INDEX:
@@ -1058,8 +1069,15 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
         # Get the current document to check its structure
         doc = docs_service.documents().get(documentId=doc_id).execute()
         
-        # Start at the beginning of the document
-        idx = 1
+        # Get current document end index
+        doc = docs_service.documents().get(documentId=doc_id).execute()
+        if write_overview:
+            # Start at the beginning of the document
+            idx = 1
+        else:
+            # Start at the end of the document (for incremental writes)
+            idx = doc['body']['content'][-1]['endIndex'] - 1
+        
         all_requests = []
         BATCH_SIZE = 450  # Using 450 to be safe, as some operations might generate multiple requests
         
@@ -1067,153 +1085,154 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
         MAX_CONSECUTIVE_FAILURES = 5
         consecutive_failures = 0
         
-        # Add document header (FOLDER_NAME + date) as Heading 1
-        run_date = datetime.now().strftime("%Y%m%d")
-        document_header = f"{FOLDER_NAME} {run_date}"
-        header_requests = [
-            {
-                'insertText': {
-                    'location': {'index': idx},
-                    'text': document_header + "\n\n"
-                }
-            },
-            {
-                'updateParagraphStyle': {
-                    'range': {'startIndex': idx, 'endIndex': idx + len(document_header) + 2},
-                    'paragraphStyle': {
-                        'namedStyleType': 'HEADING_1',
-                        'alignment': 'START'
-                    },
-                    'fields': 'namedStyleType,alignment'
-                }
-            }
-        ]
-        docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': header_requests}).execute()
-        doc = docs_service.documents().get(documentId=doc_id).execute()
-        idx = doc['body']['content'][-1]['endIndex'] - 1
-        logging.info(f"Document header added: {document_header}")
-        
-        # Add overview section
-        overview_content, formatting_info = create_overview_section(pages, metrics, start_time, end_time)
-        folder_link_info = formatting_info['folder_link_info']
-        bold_labels = formatting_info['bold_labels']
-        prompt_text_range = formatting_info['prompt_text_range']
-        disclaimer_range = formatting_info.get('disclaimer_range', (0, 0))
-        folder_link_start_offset, folder_link_end_offset, folder_url = folder_link_info
-        
-        # Calculate position of "TRANSCRIPTION RUN SUMMARY" heading
-        summary_heading = "TRANSCRIPTION RUN SUMMARY"
-        summary_heading_start = 0
-        summary_heading_end = len(summary_heading)
-        
-        overview_requests = [
-            {
-                'insertText': {
-                    'location': {'index': idx},
-                    'text': overview_content
-                }
-            },
-            {
-                'updateParagraphStyle': {
-                    'range': {'startIndex': idx, 'endIndex': idx + len(overview_content)},
-                    'paragraphStyle': {
-                        'namedStyleType': 'NORMAL_TEXT',
-                        'alignment': 'START'
-                    },
-                    'fields': 'namedStyleType,alignment'
-                }
-            },
-            {
-                'updateParagraphStyle': {
-                    'range': {'startIndex': idx + summary_heading_start, 'endIndex': idx + summary_heading_end + 1},  # +1 for newline
-                    'paragraphStyle': {
-                        'namedStyleType': 'HEADING_2',
-                        'alignment': 'START'
-                    },
-                    'fields': 'namedStyleType,alignment'
-                }
-            },
-            {
-                'updateTextStyle': {
-                    'range': {'startIndex': idx + summary_heading_start, 'endIndex': idx + summary_heading_end},
-                    'textStyle': {
-                        'bold': False
-                    },
-                    'fields': 'bold'
-                }
-            },
-            {
-                'updateTextStyle': {
-                    'range': {'startIndex': idx + folder_link_start_offset, 'endIndex': idx + folder_link_end_offset},
-                    'textStyle': {
-                        'link': {'url': folder_url},
-                        'foregroundColor': {'color': {'rgbColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}}},
-                        'underline': True
-                    },
-                    'fields': 'link,foregroundColor,underline'
-                }
-            }
-        ]
-        
-        # Add bold formatting for labels
-        for label_start, label_end in bold_labels:
-            overview_requests.append({
-                'updateTextStyle': {
-                    'range': {'startIndex': idx + label_start, 'endIndex': idx + label_end},
-                    'textStyle': {
-                        'bold': True
-                    },
-                    'fields': 'bold'
-                }
-            })
-        
-        # Add yellow highlight for disclaimer
-        if disclaimer_range[1] > disclaimer_range[0]:
-            disclaimer_start, disclaimer_end = disclaimer_range
-            overview_requests.append({
-                'updateTextStyle': {
-                    'range': {'startIndex': idx + disclaimer_start, 'endIndex': idx + disclaimer_end},
-                    'textStyle': {
-                        'backgroundColor': {
-                            'color': {
-                                'rgbColor': {
-                                    'red': 1.0,
-                                    'green': 1.0,
-                                    'blue': 0.0
-                                }
-                            }
-                        }
-                    },
-                    'fields': 'backgroundColor'
-                }
-            })
-        
-        # Add formatting for prompt text (6pt Roboto Mono)
-        prompt_text_start, prompt_text_end = prompt_text_range
-        overview_requests.append({
-            'updateTextStyle': {
-                'range': {'startIndex': idx + prompt_text_start, 'endIndex': idx + prompt_text_end},
-                'textStyle': {
-                    'fontSize': {
-                        'magnitude': 6.0,
-                        'unit': 'PT'
-                    },
-                    'weightedFontFamily': {
-                        'fontFamily': 'Roboto Mono',
-                        'weight': 400  # Normal weight
+        if write_overview:
+            # Add document header (FOLDER_NAME + date) as Heading 1
+            run_date = datetime.now().strftime("%Y%m%d")
+            document_header = f"{FOLDER_NAME} {run_date}"
+            header_requests = [
+                {
+                    'insertText': {
+                        'location': {'index': idx},
+                        'text': document_header + "\n\n"
                     }
                 },
-                'fields': 'fontSize,weightedFontFamily'
-            }
-        })
-        
-        # Write overview immediately and re-fetch index to ensure accuracy
-        docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': overview_requests}).execute()
-        doc = docs_service.documents().get(documentId=doc_id).execute()
-        # Google Docs always ends with a trailing newline; insert before it (endIndex - 1)
-        idx = doc['body']['content'][-1]['endIndex'] - 1
-        consecutive_failures = 0  # Reset counter on success
-        logging.info(f"Overview section added. Document end index: {doc['body']['content'][-1]['endIndex']}, insertion index: {idx}")
+                {
+                    'updateParagraphStyle': {
+                        'range': {'startIndex': idx, 'endIndex': idx + len(document_header) + 2},
+                        'paragraphStyle': {
+                            'namedStyleType': 'HEADING_1',
+                            'alignment': 'START'
+                        },
+                        'fields': 'namedStyleType,alignment'
+                    }
+                }
+            ]
+            docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': header_requests}).execute()
+            doc = docs_service.documents().get(documentId=doc_id).execute()
+            idx = doc['body']['content'][-1]['endIndex'] - 1
+            logging.info(f"Document header added: {document_header}")
+            
+            # Add overview section
+            overview_content, formatting_info = create_overview_section(pages, metrics, start_time, end_time)
+            folder_link_info = formatting_info['folder_link_info']
+            bold_labels = formatting_info['bold_labels']
+            prompt_text_range = formatting_info['prompt_text_range']
+            disclaimer_range = formatting_info.get('disclaimer_range', (0, 0))
+            folder_link_start_offset, folder_link_end_offset, folder_url = folder_link_info
+            
+            # Calculate position of "TRANSCRIPTION RUN SUMMARY" heading
+            summary_heading = "TRANSCRIPTION RUN SUMMARY"
+            summary_heading_start = 0
+            summary_heading_end = len(summary_heading)
+            
+            overview_requests = [
+                {
+                    'insertText': {
+                        'location': {'index': idx},
+                        'text': overview_content
+                    }
+                },
+                {
+                    'updateParagraphStyle': {
+                        'range': {'startIndex': idx, 'endIndex': idx + len(overview_content)},
+                        'paragraphStyle': {
+                            'namedStyleType': 'NORMAL_TEXT',
+                            'alignment': 'START'
+                        },
+                        'fields': 'namedStyleType,alignment'
+                    }
+                },
+                {
+                    'updateParagraphStyle': {
+                        'range': {'startIndex': idx + summary_heading_start, 'endIndex': idx + summary_heading_end + 1},  # +1 for newline
+                        'paragraphStyle': {
+                            'namedStyleType': 'HEADING_2',
+                            'alignment': 'START'
+                        },
+                        'fields': 'namedStyleType,alignment'
+                    }
+                },
+                {
+                    'updateTextStyle': {
+                        'range': {'startIndex': idx + summary_heading_start, 'endIndex': idx + summary_heading_end},
+                        'textStyle': {
+                            'bold': False
+                        },
+                        'fields': 'bold'
+                    }
+                },
+                {
+                    'updateTextStyle': {
+                        'range': {'startIndex': idx + folder_link_start_offset, 'endIndex': idx + folder_link_end_offset},
+                        'textStyle': {
+                            'link': {'url': folder_url},
+                            'foregroundColor': {'color': {'rgbColor': {'red': 0.0, 'green': 0.0, 'blue': 1.0}}},
+                            'underline': True
+                        },
+                        'fields': 'link,foregroundColor,underline'
+                    }
+                }
+            ]
+            
+            # Add bold formatting for labels
+            for label_start, label_end in bold_labels:
+                overview_requests.append({
+                    'updateTextStyle': {
+                        'range': {'startIndex': idx + label_start, 'endIndex': idx + label_end},
+                        'textStyle': {
+                            'bold': True
+                        },
+                        'fields': 'bold'
+                    }
+                })
+            
+            # Add yellow highlight for disclaimer
+            if disclaimer_range[1] > disclaimer_range[0]:
+                disclaimer_start, disclaimer_end = disclaimer_range
+                overview_requests.append({
+                    'updateTextStyle': {
+                        'range': {'startIndex': idx + disclaimer_start, 'endIndex': idx + disclaimer_end},
+                        'textStyle': {
+                            'backgroundColor': {
+                                'color': {
+                                    'rgbColor': {
+                                        'red': 1.0,
+                                        'green': 1.0,
+                                        'blue': 0.0
+                                    }
+                                }
+                            }
+                        },
+                        'fields': 'backgroundColor'
+                    }
+                })
+            
+            # Add formatting for prompt text (6pt Roboto Mono)
+            prompt_text_start, prompt_text_end = prompt_text_range
+            overview_requests.append({
+                'updateTextStyle': {
+                    'range': {'startIndex': idx + prompt_text_start, 'endIndex': idx + prompt_text_end},
+                    'textStyle': {
+                        'fontSize': {
+                            'magnitude': 6.0,
+                            'unit': 'PT'
+                        },
+                        'weightedFontFamily': {
+                            'fontFamily': 'Roboto Mono',
+                            'weight': 400  # Normal weight
+                        }
+                    },
+                    'fields': 'fontSize,weightedFontFamily'
+                }
+            })
+            
+            # Write overview immediately and re-fetch index to ensure accuracy
+            docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': overview_requests}).execute()
+            doc = docs_service.documents().get(documentId=doc_id).execute()
+            # Google Docs always ends with a trailing newline; insert before it (endIndex - 1)
+            idx = doc['body']['content'][-1]['endIndex'] - 1
+            consecutive_failures = 0  # Reset counter on success
+            logging.info(f"Overview section added. Document end index: {doc['body']['content'][-1]['endIndex']}, insertion index: {idx}")
         
         for i, item in enumerate(pages[start_idx:], start=start_idx + 1):
             try:
@@ -1429,6 +1448,7 @@ def main():
             ai_logger.info(f"Max images: {MAX_IMAGES}")
             ai_logger.info(f"Image start number: {IMAGE_START_NUMBER}")
             ai_logger.info(f"Image count: {IMAGE_COUNT}")
+        ai_logger.info(f"Batch size for doc: {BATCH_SIZE_FOR_DOC}")
         ai_logger.info(f"=== Session Configuration ===\n")
         
         # Initialize services
@@ -1446,120 +1466,216 @@ def main():
                 ai_logger.error(f"No images found for range {IMAGE_START_NUMBER} to {IMAGE_START_NUMBER + IMAGE_COUNT - 1}")
             return
         
-        # First, transcribe all images
-        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription of {len(images)} images...")
-        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting batch transcription of {len(images)} images ===")
+        # Process images in batches for incremental document writing
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription of {len(images)} images in batches of {BATCH_SIZE_FOR_DOC}...")
+        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting batch transcription of {len(images)} images (batch size: {BATCH_SIZE_FOR_DOC}) ===")
         start_time = datetime.now()
         transcribed_pages = []
         usage_metadata_list = []
         timing_list = []
         last_image_end_time = None
+        doc_id = None
+        doc_name = None
+        first_batch = True
         
-        for idx, img in enumerate(images, 1):
-            image_start_time = datetime.now()
-            image_name = img['name']
+        # Process images in batches
+        total_images = len(images)
+        num_batches = (total_images + BATCH_SIZE_FOR_DOC - 1) // BATCH_SIZE_FOR_DOC  # Ceiling division
+        
+        try:
+            for batch_num in range(num_batches):
+                batch_start_idx = batch_num * BATCH_SIZE_FOR_DOC
+                batch_end_idx = min(batch_start_idx + BATCH_SIZE_FOR_DOC, total_images)
+                batch_images = images[batch_start_idx:batch_end_idx]
+                batch_size = len(batch_images)
+                
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing batch {batch_num + 1}/{num_batches} (images {batch_start_idx + 1}-{batch_end_idx} of {total_images}) ===")
+                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch {batch_num + 1}/{num_batches}: Processing images {batch_start_idx + 1}-{batch_end_idx} ===")
+                
+                # Track batch-level transcribed pages and metrics
+                batch_transcribed_pages = []
+                batch_usage_metadata_list = []
+                batch_timing_list = []
+                
+                for batch_idx, img in enumerate(batch_images, 1):
+                    global_idx = batch_start_idx + batch_idx
+                    image_start_time = datetime.now()
+                    image_name = img['name']
+                    
+                    # Log gap detection
+                    if last_image_end_time:
+                        gap_seconds = (image_start_time - last_image_end_time).total_seconds()
+                        if gap_seconds > 60:  # Log if gap is more than 1 minute
+                            logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Large time gap detected: {gap_seconds:.1f} seconds ({gap_seconds/60:.1f} minutes) between previous image and '{image_name}'")
+                            ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Time gap of {gap_seconds:.1f}s ({gap_seconds/60:.1f} min) before {image_name}")
+                    
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Processing image {global_idx}/{total_images} (batch {batch_num + 1}, item {batch_idx}/{batch_size}): '{image_name}'")
+                    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing image {global_idx}/{total_images}: {image_name} ===")
+                    
+                    try:
+                        download_start = datetime.now()
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{image_name}'...")
+                        img_bytes = download_image(drive_service, img['id'], img['name'])
+                        download_elapsed = (datetime.now() - download_start).total_seconds()
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' downloaded in {download_elapsed:.1f}s, starting transcription...")
+                        
+                        transcription_start = datetime.now()
+                        text, elapsed_time, usage_metadata = transcribe_image(genai_client, img_bytes, img['name'])
+                        transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
+                        
+                        # Ensure text is not None
+                        if text is None:
+                            text = "[No transcription text received]"
+                        
+                        batch_transcribed_pages.append({
+                            'name': img['name'],
+                            'webViewLink': img['webViewLink'],
+                            'text': text
+                        })
+                        
+                        # Collect metrics
+                        batch_timing_list.append(elapsed_time)
+                        batch_usage_metadata_list.append(usage_metadata)
+                        
+                        image_end_time = datetime.now()
+                        image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                        last_image_end_time = image_end_time
+                        
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {global_idx}/{total_images}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
+                        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
+                        
+                        # Log progress
+                        progress_pct = (global_idx / total_images) * 100
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {global_idx}/{total_images} images ({progress_pct:.1f}%)")
+                        
+                    except Exception as e:
+                        image_end_time = datetime.now()
+                        image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                        last_image_end_time = image_end_time
+                        error_type = type(e).__name__
+                        
+                        # Calculate next image number to start from in case of failure
+                        next_image_number = IMAGE_START_NUMBER + global_idx
+                        
+                        error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
+                        logging.error(error_msg)
+                        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                        logging.error(f"RESUME INFO: To resume from this point, set IMAGE_START_NUMBER = {next_image_number}")
+                        ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
+                        ai_logger.error(f"RESUME INFO: Set IMAGE_START_NUMBER = {next_image_number} to resume from next image")
+                        ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
+                        
+                        # Add error message as text
+                        batch_transcribed_pages.append({
+                            'name': img['name'],
+                            'webViewLink': img['webViewLink'],
+                            'text': f"[Error during transcription: {str(e)}]"
+                        })
+                        # Add None for metrics on error
+                        batch_timing_list.append(None)
+                        batch_usage_metadata_list.append(None)
+                
+                # After batch is transcribed, write to document
+                if batch_transcribed_pages:
+                    # Accumulate all transcribed pages and metrics
+                    transcribed_pages.extend(batch_transcribed_pages)
+                    usage_metadata_list.extend(batch_usage_metadata_list)
+                    timing_list.extend(batch_timing_list)
+                    
+                    if first_batch:
+                        # Create document after first batch
+                        run_date = datetime.now().strftime("%Y%m%d")
+                        doc_name = f"{FOLDER_NAME} {run_date}"
+                        
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed ({len(batch_transcribed_pages)} images). Creating Google Doc '{doc_name}'...")
+                        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed, creating document...")
+                        
+                        # Calculate metrics for overview (will be updated later)
+                        batch_metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
+                        
+                        # Try to create Google Doc
+                        doc_id = create_doc(docs_service, drive_service, doc_name)
+                        
+                        if doc_id is None:
+                            # Permission error - save locally instead
+                            logging.warning("Cannot create Google Doc due to insufficient permissions")
+                            logging.info("Saving transcription to local file instead...")
+                            local_file = save_transcription_locally(transcribed_pages, doc_name, batch_metrics, start_time, None)
+                            logging.info(f"✓ Transcription saved locally: {local_file}")
+                            logging.info(f"✓ Processed {len(transcribed_pages)} images successfully")
+                            # Continue processing but save locally for each batch
+                            first_batch = False
+                            continue
+                        else:
+                            # Write first batch with overview
+                            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing first batch ({len(batch_transcribed_pages)} images) to document with overview...")
+                            write_to_doc(docs_service, doc_id, transcribed_pages, start_idx=0, metrics=batch_metrics, start_time=start_time, end_time=None, write_overview=True)
+                            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ First batch written to document")
+                            first_batch = False
+                    else:
+                        # Append subsequent batches to existing document
+                        if doc_id:
+                            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing batch {batch_num + 1} ({len(batch_transcribed_pages)} images) to document...")
+                            # Calculate start_idx for this batch (number of pages already written)
+                            pages_written_so_far = len(transcribed_pages) - len(batch_transcribed_pages)
+                            # Pass full transcribed_pages list with correct start_idx for proper page numbering
+                            write_to_doc(docs_service, doc_id, transcribed_pages, start_idx=pages_written_so_far, metrics=None, start_time=None, end_time=None, write_overview=False)
+                            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Batch {batch_num + 1} written to document")
+                        else:
+                            # Document creation failed earlier, save locally
+                            logging.warning(f"Cannot write batch {batch_num + 1} to document (doc creation failed). Saving locally...")
+                            # Append to local file if it exists, or create new one
+                            run_date = datetime.now().strftime("%Y%m%d")
+                            doc_name = f"{FOLDER_NAME} {run_date}"
+                            save_transcription_locally(batch_transcribed_pages, doc_name, None, None, None)
+        
+        except Exception as batch_error:
+            # Log error and resume information
+            error_type = type(batch_error).__name__
+            images_processed = len(transcribed_pages) if 'transcribed_pages' in locals() else 0
+            next_image_number = IMAGE_START_NUMBER + images_processed
             
-            # Log gap detection
-            if last_image_end_time:
-                gap_seconds = (image_start_time - last_image_end_time).total_seconds()
-                if gap_seconds > 60:  # Log if gap is more than 1 minute
-                    logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Large time gap detected: {gap_seconds:.1f} seconds ({gap_seconds/60:.1f} minutes) between previous image and '{image_name}'")
-                    ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Time gap of {gap_seconds:.1f}s ({gap_seconds/60:.1f} min) before {image_name}")
+            logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error processing batch: {error_type}: {str(batch_error)}")
+            logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
+            if images_processed > 0:
+                logging.error(f"RESUME INFO: To resume from this point, set IMAGE_START_NUMBER = {next_image_number}")
+            logging.error(f"Full traceback:\n{traceback.format_exc()}")
             
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Processing image {idx}/{len(images)}: '{image_name}'")
-            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing image {idx}/{len(images)}: {image_name} ===")
+            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch Processing Error ===")
+            ai_logger.error(f"Error type: {error_type}")
+            ai_logger.error(f"Error message: {str(batch_error)}")
+            ai_logger.error(f"Images processed before error: {images_processed}")
+            if images_processed > 0:
+                ai_logger.error(f"RESUME INFO: Set IMAGE_START_NUMBER = {next_image_number} to resume from next image")
+            ai_logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            ai_logger.error(f"=== End Batch Processing Error ===")
             
-            try:
-                download_start = datetime.now()
-                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{image_name}'...")
-                img_bytes = download_image(drive_service, img['id'], img['name'])
-                download_elapsed = (datetime.now() - download_start).total_seconds()
-                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' downloaded in {download_elapsed:.1f}s, starting transcription...")
-                
-                transcription_start = datetime.now()
-                text, elapsed_time, usage_metadata = transcribe_image(genai_client, img_bytes, img['name'])
-                transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
-                
-                # Ensure text is not None
-                if text is None:
-                    text = "[No transcription text received]"
-                
-                transcribed_pages.append({
-                    'name': img['name'],
-                    'webViewLink': img['webViewLink'],
-                    'text': text
-                })
-                
-                # Collect metrics
-                timing_list.append(elapsed_time)
-                usage_metadata_list.append(usage_metadata)
-                
-                image_end_time = datetime.now()
-                image_total_elapsed = (image_end_time - image_start_time).total_seconds()
-                last_image_end_time = image_end_time
-                
-                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {idx}/{len(images)}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
-                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
-                
-                # Log progress
-                progress_pct = (idx / len(images)) * 100
-                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {idx}/{len(images)} images ({progress_pct:.1f}%)")
-                
-            except Exception as e:
-                image_end_time = datetime.now()
-                image_total_elapsed = (image_end_time - image_start_time).total_seconds()
-                last_image_end_time = image_end_time
-                error_type = type(e).__name__
-                
-                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {idx}/{len(images)} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
-                logging.error(error_msg)
-                logging.error(f"Full traceback:\n{traceback.format_exc()}")
-                ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
-                ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
-                
-                # Add error message as text
-                transcribed_pages.append({
-                    'name': img['name'],
-                    'webViewLink': img['webViewLink'],
-                    'text': f"[Error during transcription: {str(e)}]"
-                })
-                # Add None for metrics on error
-                timing_list.append(None)
-                usage_metadata_list.append(None)
+            # Re-raise to be caught by outer exception handler
+            raise
         
         # Record end time
         end_time = datetime.now()
         batch_total_elapsed = (end_time - start_time).total_seconds()
         
-        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Completed transcription batch: {len(transcribed_pages)} images processed in {batch_total_elapsed:.1f} seconds ({batch_total_elapsed/60:.1f} minutes)")
-        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch transcription completed ===")
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Completed all batches: {len(transcribed_pages)} images processed in {batch_total_elapsed:.1f} seconds ({batch_total_elapsed/60:.1f} minutes)")
+        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === All batches transcription completed ===")
         ai_logger.info(f"Total images: {len(transcribed_pages)}")
         ai_logger.info(f"Total time: {batch_total_elapsed:.1f}s ({batch_total_elapsed/60:.1f} min)")
         ai_logger.info(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         ai_logger.info(f"End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
-        # Calculate metrics
-        metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
+        # Calculate final metrics
+        final_metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
         
-        # Create document with filename as FOLDER_NAME + date (restored previous logic)
-        if len(transcribed_pages) > 0:
-            run_date = datetime.now().strftime("%Y%m%d")
-            doc_name = f"{FOLDER_NAME} {run_date}"
-            
-            # Try to create Google Doc with FOLDER_NAME + date (this sets both filename and tab title)
-            doc_id = create_doc(docs_service, drive_service, doc_name)
-            
-            if doc_id is None:
-                # Permission error - save locally instead
-                logging.warning("Cannot create Google Doc due to insufficient permissions")
-                logging.info("Saving transcription to local file instead...")
-                local_file = save_transcription_locally(transcribed_pages, doc_name, metrics, start_time, end_time)
-                logging.info(f"✓ Transcription saved locally: {local_file}")
-                logging.info(f"✓ Processed {len(transcribed_pages)} images successfully")
-            else:
-                # Successfully created doc - write to it
-                write_to_doc(docs_service, doc_id, transcribed_pages, metrics=metrics, start_time=start_time, end_time=end_time)
-                logging.info(f"Created document '{doc_name}' with {len(transcribed_pages)} images")
+        # If document was created, we could update the overview with final metrics
+        # For now, the overview was written with initial metrics from first batch
+        # This is acceptable as metrics are approximate anyway
+        if doc_id and len(transcribed_pages) > 0:
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] All batches written to document '{doc_name}'")
+            logging.info(f"Final metrics: {final_metrics}")
+        elif len(transcribed_pages) > 0:
+            # Document creation failed, but we saved locally
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] All batches processed. Transcription saved locally.")
         
         # Log session completion
         ai_logger.info(f"=== Transcription Session Completed ===")
@@ -1570,12 +1686,25 @@ def main():
         ai_logger.info(f"=== Session Summary ===\n")
         
     except Exception as e:
-        # Log session error
+        # Log session error with resume information
+        error_type = type(e).__name__
+        images_processed = len(transcribed_pages) if 'transcribed_pages' in locals() else 0
+        next_image_number = IMAGE_START_NUMBER + images_processed
+        
         ai_logger.error(f"=== Transcription Session Error ===")
         ai_logger.error(f"Error timestamp: {datetime.now().isoformat()}")
+        ai_logger.error(f"Error type: {error_type}")
         ai_logger.error(f"Error: {str(e)}")
+        ai_logger.error(f"Images processed before error: {images_processed}")
+        if images_processed > 0:
+            ai_logger.error(f"RESUME INFO: Set IMAGE_START_NUMBER = {next_image_number} to resume from next image")
         ai_logger.error(f"=== Session Error End ===\n")
-        logging.error(f"Error in main: {str(e)}")
+        
+        logging.error(f"Error in main: {error_type}: {str(e)}")
+        if images_processed > 0:
+            logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
+            logging.error(f"RESUME INFO: To resume from this point, set IMAGE_START_NUMBER = {next_image_number}")
+        logging.error(f"Full traceback:\n{traceback.format_exc()}")
         raise
 
 

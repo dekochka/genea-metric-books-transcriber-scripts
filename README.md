@@ -11,7 +11,8 @@ A specialized tool for transcribing handwritten genealogical records (birth, dea
 - **Flexible Image Processing**: Supports multiple filename patterns (numbered, timestamped, prefixed)
 - **Configurable Prompts**: Uses external prompt files for different record types (births, deaths, marriages)
 - **Batch Processing**: Process specific ranges of images with configurable start/count parameters
-- **Smart Error Recovery**: Local file fallback when Google Docs API fails
+- **Incremental Document Writing**: Creates Google Doc after first batch, then appends subsequent batches incrementally for resilience
+- **Smart Error Recovery**: Local file fallback when Google Docs API fails, with resume information logged on failures
 - **Comprehensive Logging**: Separate logs for script progress and AI responses
 - **Retry Mechanism**: Reprocess specific failed images without re-running entire batch
 - **Test Mode**: Quick validation of authentication and API access
@@ -301,6 +302,9 @@ TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000
 IMAGE_START_NUMBER = 1
 IMAGE_COUNT = 120
+BATCH_SIZE_FOR_DOC = 10  # Number of images to transcribe before creating/writing to Google Doc (for resilience)
+                         # Script creates doc after first batch, then appends subsequent batches incrementally
+                         # If processing fails, only current batch is lost - resume with new IMAGE_START_NUMBER
 ```
 
 **Archive Index (`ARCHIVE_INDEX`):** Optional condensed archive reference used for:
@@ -328,9 +332,11 @@ python3 transcribe_birth_records.py
 
 The script will:
 - List images in the folder
+- Process images in batches (configurable via `BATCH_SIZE_FOR_DOC`)
 - Download and send each image to Vertex AI for transcription
-- Create a Google Doc and write results in safe chunks
+- Create a Google Doc after the first batch completes, then append subsequent batches incrementally
 - Log AI responses to `logs/<timestamp>-ai-responses.log`
+- On failure, log resume information (next `IMAGE_START_NUMBER` to continue from)
 
 ## Output
 
@@ -357,6 +363,12 @@ The script will:
 - Verify `DRIVE_FOLDER_ID` and sharing.
 - Confirm filenames match supported patterns.
 - Use fallback by position via `IMAGE_START_NUMBER`/`IMAGE_COUNT`.
+
+### Processing interrupted or failed
+- The script processes images in batches and writes incrementally to the Google Doc.
+- If processing fails, check the logs for "RESUME INFO" messages indicating the next `IMAGE_START_NUMBER` to use.
+- Update `IMAGE_START_NUMBER` in the script configuration and re-run to resume from where it left off.
+- Completed batches are already saved in the Google Doc, so only the current batch needs to be reprocessed.
 
 ### Google Docs: Precondition check failed / 400 on batchUpdate
 - The main script writes in small chunks; if a run still fails late or the Doc is partial, use the Recovery Script below to rebuild from the AI log without re-running transcription.
