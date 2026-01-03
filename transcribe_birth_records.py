@@ -36,7 +36,7 @@ from google.genai import types
 # ------------------------- PROMPTS -------------------------
 # Set which prompt file to load from the `prompts` folder (without path).
 # Use "INSTRUCTION.txt" by default.
-PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION_KURIPOW_f201o4As2881.md")
+PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION_TEMIRIVTSY_f631o12s33.md")
 
 def load_prompt_text() -> str:
     prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
@@ -58,9 +58,9 @@ PROJECT_ID = "ukr-transcribe-genea"
 #FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
 #DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
 #FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "1wtD1MxriKowHUn9Ll_SnIyzHLPvHwPMo"
-FOLDER_NAME = "1837-1866 Kurypow Курипов Остров Пукасивцы FamSearch 004933159 Ф.201 О.4А Д.2881"
-ARCHIVE_INDEX = "ф201о4Aд2881"
+DRIVE_FOLDER_ID = "1oD3IgPb24mMzhrzDKTlf13_5-Q_2BoP8"
+FOLDER_NAME = "1889-1942 Темировцы Селище Крылос Козина Ивано-Франковский район ТранскрипцияФ.631 О.12 Д.33"
+ARCHIVE_INDEX = "ф631о12д33"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-3-flash-preview"
@@ -68,7 +68,7 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 215  # Starting image number - refers to the NUMBER IN THE FILENAME (e.g., 474 for 004932851_00474.jpeg)
+IMAGE_START_NUMBER = 1  # Starting image number - refers to the NUMBER IN THE FILENAME (e.g., 474 for 004932851_00474.jpeg)
                           # NOT the position in sequence. Extract number from filename pattern (e.g., 101 for image00101.jpg or 101.jpg)
 IMAGE_COUNT = 200  # Number of images to process starting from IMAGE_START_NUMBER
 BATCH_SIZE_FOR_DOC = 5  # Number of images to transcribe before creating/writing to Google Doc (for resilience)
@@ -154,10 +154,13 @@ def init_services(creds):
 
     logging.info("Initializing Google Drive and Docs APIs...")
     import httplib2
+    from google_auth_httplib2 import AuthorizedHttp
     # Configure httplib2 with longer timeout for Google Docs API (5 minutes for large documents)
-    http = httplib2.Http(timeout=300)  # 5 minutes timeout
-    drive = build("drive", "v3", credentials=creds, http=http)
-    docs = build("docs", "v1", credentials=creds, http=http)
+    http_base = httplib2.Http(timeout=300)  # 5 minutes timeout
+    # Create authorized http object from credentials
+    http = AuthorizedHttp(creds, http=http_base)
+    drive = build("drive", "v3", http=http)
+    docs = build("docs", "v1", http=http)
     logging.info("Google Drive and Docs APIs initialized with 5-minute timeout.")
     return drive, docs, genai_client
 
