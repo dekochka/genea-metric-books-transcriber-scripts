@@ -153,9 +153,12 @@ def init_services(creds):
     logging.info(f"Gemini client initialized in {REGION} with project {PROJECT_ID}")
 
     logging.info("Initializing Google Drive and Docs APIs...")
-    drive = build("drive", "v3", credentials=creds)
-    docs = build("docs", "v1", credentials=creds)
-    logging.info("Google Drive and Docs APIs initialized.")
+    import httplib2
+    # Configure httplib2 with longer timeout for Google Docs API (5 minutes for large documents)
+    http = httplib2.Http(timeout=300)  # 5 minutes timeout
+    drive = build("drive", "v3", credentials=creds, http=http)
+    docs = build("docs", "v1", credentials=creds, http=http)
+    logging.info("Google Drive and Docs APIs initialized with 5-minute timeout.")
     return drive, docs, genai_client
 
 
@@ -634,17 +637,19 @@ def transcribe_image(genai_client, image_bytes, file_name):
         ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] TIMEOUT: {error_msg}")
         raise TimeoutError(error_msg)
     
-    max_retries = 1
+    max_retries = 3
     retry_delay = 30  # seconds
-    timeout_seconds = 10 * 60  # 10 minutes
+    # Exponential backoff timeouts: 1 min, 2 min, 5 min
+    timeout_seconds_list = [60, 120, 300]
     
     for attempt in range(max_retries):
         attempt_start_time = time.time()
+        timeout_seconds = timeout_seconds_list[attempt]
         try:
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} for image '{file_name}'")
             ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} starting for {file_name}")
             
-            # Set up timeout (10 minutes)
+            # Set up timeout with exponential backoff (1 min, 2 min, 5 min)
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(timeout_seconds)
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Timeout set to {timeout_seconds/60:.1f} minutes for '{file_name}'")
@@ -1044,90 +1049,102 @@ def update_overview_section(docs_service, doc_id, pages, metrics=None, start_tim
         start_time: Start time of the transcription run
         end_time: End time of the transcription run
     """
-    try:
-        # Get current document state
-        doc = docs_service.documents().get(documentId=doc_id).execute()
-        
-        # Find the overview section
-        # It's between the header (Heading 1) and the first page transcription (Heading 2 with archive index)
-        content = doc['body']['content']
-        
-        # Find the end of the header (first Heading 1)
-        header_end = None
-        overview_start = None
-        overview_end = None
-        first_page_header_start = None
-        
-        for i, element in enumerate(content):
-            if 'paragraph' in element:
-                para = element['paragraph']
-                if 'paragraphStyle' in para and para['paragraphStyle'].get('namedStyleType') == 'HEADING_1':
-                    header_end = element['endIndex']
-                elif 'paragraphStyle' in para and para['paragraphStyle'].get('namedStyleType') == 'HEADING_2':
-                    # Check if this is the first page header (contains archive index pattern)
-                    if ARCHIVE_INDEX and ARCHIVE_INDEX in para.get('elements', [{}])[0].get('textRun', {}).get('content', ''):
-                        first_page_header_start = element['startIndex']
-                        break
-        
-        # If we found the header end and first page header start, the overview is between them
-        if header_end and first_page_header_start:
-            overview_start = header_end
-            overview_end = first_page_header_start
-        else:
-            # Fallback: look for "TRANSCRIPTION RUN SUMMARY" text
-            doc_text = ""
-            for element in content:
-                if 'paragraph' in element:
-                    for elem in element['paragraph'].get('elements', []):
-                        if 'textRun' in elem:
-                            doc_text += elem['textRun'].get('content', '')
+    import time
+    from googleapiclient.errors import HttpError
+    
+    max_retries = 3
+    retry_delay = 30  # seconds
+    # Exponential backoff timeouts: 1 min, 2 min, 5 min
+    timeout_seconds_list = [60, 120, 300]
+    
+    for attempt in range(max_retries):
+        attempt_start_time = time.time()
+        try:
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} to update overview section (timeout: {timeout_seconds_list[attempt]/60:.1f} min)...")
             
-            summary_pos = doc_text.find("TRANSCRIPTION RUN SUMMARY")
-            if summary_pos >= 0:
-                # Find the start and end of the overview section
-                # It starts after the header and ends before the first page transcription
-                # We'll search for the first Heading 2 that's not "TRANSCRIPTION RUN SUMMARY"
-                for i, element in enumerate(content):
+            # Get current document state
+            doc = docs_service.documents().get(documentId=doc_id).execute()
+            
+            # Find the overview section
+            # It's between the header (Heading 1) and the first page transcription (Heading 2 with archive index)
+            content = doc['body']['content']
+            
+            # Find the end of the header (first Heading 1)
+            header_end = None
+            overview_start = None
+            overview_end = None
+            first_page_header_start = None
+            
+            for i, element in enumerate(content):
+                if 'paragraph' in element:
+                    para = element['paragraph']
+                    if 'paragraphStyle' in para and para['paragraphStyle'].get('namedStyleType') == 'HEADING_1':
+                        header_end = element['endIndex']
+                    elif 'paragraphStyle' in para and para['paragraphStyle'].get('namedStyleType') == 'HEADING_2':
+                        # Check if this is the first page header (contains archive index pattern)
+                        if ARCHIVE_INDEX and ARCHIVE_INDEX in para.get('elements', [{}])[0].get('textRun', {}).get('content', ''):
+                            first_page_header_start = element['startIndex']
+                            break
+            
+            # If we found the header end and first page header start, the overview is between them
+            if header_end and first_page_header_start:
+                overview_start = header_end
+                overview_end = first_page_header_start
+            else:
+                # Fallback: look for "TRANSCRIPTION RUN SUMMARY" text
+                doc_text = ""
+                for element in content:
                     if 'paragraph' in element:
-                        para = element['paragraph']
-                        if 'paragraphStyle' in para:
-                            style = para['paragraphStyle'].get('namedStyleType')
-                            if style == 'HEADING_1':
-                                header_end = element['endIndex']
-                            elif style == 'HEADING_2':
-                                # Check if this is not the summary heading
-                                text_content = ""
-                                for elem in para.get('elements', []):
-                                    if 'textRun' in elem:
-                                        text_content += elem['textRun'].get('content', '')
-                                if "TRANSCRIPTION RUN SUMMARY" not in text_content and ARCHIVE_INDEX:
-                                    # This is likely the first page header
-                                    first_page_header_start = element['startIndex']
-                                    break
+                        for elem in element['paragraph'].get('elements', []):
+                            if 'textRun' in elem:
+                                doc_text += elem['textRun'].get('content', '')
                 
-                if header_end and first_page_header_start:
-                    overview_start = header_end
-                    overview_end = first_page_header_start
-        
-        if not overview_start or not overview_end:
-            logging.warning("Could not locate overview section boundaries. Skipping overview update.")
-            return
-        
-        # Prepare new overview content with final metrics
-        overview_content, formatting_info = create_overview_section(pages, metrics, start_time, end_time)
-        folder_link_info = formatting_info['folder_link_info']
-        bold_labels = formatting_info['bold_labels']
-        prompt_text_range = formatting_info['prompt_text_range']
-        disclaimer_range = formatting_info.get('disclaimer_range', (0, 0))
-        folder_link_start_offset, folder_link_end_offset, folder_url = folder_link_info
-        
-        # Calculate position of "TRANSCRIPTION RUN SUMMARY" heading
-        summary_heading = "TRANSCRIPTION RUN SUMMARY"
-        summary_heading_start = 0
-        summary_heading_end = len(summary_heading)
-        
-        # Delete old overview and insert new one
-        update_requests = [
+                summary_pos = doc_text.find("TRANSCRIPTION RUN SUMMARY")
+                if summary_pos >= 0:
+                    # Find the start and end of the overview section
+                    # It starts after the header and ends before the first page transcription
+                    # We'll search for the first Heading 2 that's not "TRANSCRIPTION RUN SUMMARY"
+                    for i, element in enumerate(content):
+                        if 'paragraph' in element:
+                            para = element['paragraph']
+                            if 'paragraphStyle' in para:
+                                style = para['paragraphStyle'].get('namedStyleType')
+                                if style == 'HEADING_1':
+                                    header_end = element['endIndex']
+                                elif style == 'HEADING_2':
+                                    # Check if this is not the summary heading
+                                    text_content = ""
+                                    for elem in para.get('elements', []):
+                                        if 'textRun' in elem:
+                                            text_content += elem['textRun'].get('content', '')
+                                    if "TRANSCRIPTION RUN SUMMARY" not in text_content and ARCHIVE_INDEX:
+                                        # This is likely the first page header
+                                        first_page_header_start = element['startIndex']
+                                        break
+                    
+                    if header_end and first_page_header_start:
+                        overview_start = header_end
+                        overview_end = first_page_header_start
+            
+            if not overview_start or not overview_end:
+                logging.warning("Could not locate overview section boundaries. Skipping overview update.")
+                return False
+            
+            # Prepare new overview content with final metrics
+            overview_content, formatting_info = create_overview_section(pages, metrics, start_time, end_time)
+            folder_link_info = formatting_info['folder_link_info']
+            bold_labels = formatting_info['bold_labels']
+            prompt_text_range = formatting_info['prompt_text_range']
+            disclaimer_range = formatting_info.get('disclaimer_range', (0, 0))
+            folder_link_start_offset, folder_link_end_offset, folder_url = folder_link_info
+            
+            # Calculate position of "TRANSCRIPTION RUN SUMMARY" heading
+            summary_heading = "TRANSCRIPTION RUN SUMMARY"
+            summary_heading_start = 0
+            summary_heading_end = len(summary_heading)
+            
+            # Delete old overview and insert new one
+            update_requests = [
             {
                 'deleteContentRange': {
                     'range': {
@@ -1171,90 +1188,113 @@ def update_overview_section(docs_service, doc_id, pages, metrics=None, start_tim
                     'fields': 'bold'
                 }
             }
-        ]
-        
-        # Add disclaimer highlight (yellow background)
-        if disclaimer_range[1] > disclaimer_range[0]:
-            update_requests.append({
-                'updateTextStyle': {
-                    'range': {
-                        'startIndex': overview_start + disclaimer_range[0],
-                        'endIndex': overview_start + disclaimer_range[1]
-                    },
-                    'textStyle': {
-                        'backgroundColor': {
-                            'color': {
-                                'rgbColor': {
-                                    'red': 1.0,
-                                    'green': 1.0,
-                                    'blue': 0.0
+            ]
+            
+            # Add disclaimer highlight (yellow background)
+            if disclaimer_range[1] > disclaimer_range[0]:
+                update_requests.append({
+                    'updateTextStyle': {
+                        'range': {
+                            'startIndex': overview_start + disclaimer_range[0],
+                            'endIndex': overview_start + disclaimer_range[1]
+                        },
+                        'textStyle': {
+                            'backgroundColor': {
+                                'color': {
+                                    'rgbColor': {
+                                        'red': 1.0,
+                                        'green': 1.0,
+                                        'blue': 0.0
+                                    }
                                 }
                             }
-                        }
-                    },
-                    'fields': 'backgroundColor'
-                }
-            })
-        
-        # Add folder link
-        update_requests.append({
-            'updateTextStyle': {
-                'range': {
-                    'startIndex': overview_start + folder_link_start_offset,
-                    'endIndex': overview_start + folder_link_end_offset
-                },
-                'textStyle': {
-                    'link': {
-                        'url': folder_url
-                    }
-                },
-                'fields': 'link'
-            }
-        })
-        
-        # Add bold formatting for labels
-        for label_start, label_end in bold_labels:
-            update_requests.append({
-                'updateTextStyle': {
-                    'range': {
-                        'startIndex': overview_start + label_start,
-                        'endIndex': overview_start + label_end
-                    },
-                    'textStyle': {
-                        'bold': True
-                    },
-                    'fields': 'bold'
-                }
-            })
-        
-        # Format prompt text (6pt Roboto Mono Normal)
-        if prompt_text_range[1] > prompt_text_range[0]:
-            update_requests.append({
-                'updateTextStyle': {
-                    'range': {
-                        'startIndex': overview_start + prompt_text_range[0],
-                        'endIndex': overview_start + prompt_text_range[1]
-                    },
-                    'textStyle': {
-                        'fontSize': {
-                            'magnitude': 6,
-                            'unit': 'PT'
                         },
-                        'weightedFontFamily': {
-                            'fontFamily': 'Roboto Mono'
+                        'fields': 'backgroundColor'
+                    }
+                })
+            
+            # Add folder link
+            update_requests.append({
+                'updateTextStyle': {
+                    'range': {
+                        'startIndex': overview_start + folder_link_start_offset,
+                        'endIndex': overview_start + folder_link_end_offset
+                    },
+                    'textStyle': {
+                        'link': {
+                            'url': folder_url
                         }
                     },
-                    'fields': 'fontSize,weightedFontFamily'
+                    'fields': 'link'
                 }
             })
+            
+            # Add bold formatting for labels
+            for label_start, label_end in bold_labels:
+                update_requests.append({
+                    'updateTextStyle': {
+                        'range': {
+                            'startIndex': overview_start + label_start,
+                            'endIndex': overview_start + label_end
+                        },
+                        'textStyle': {
+                            'bold': True
+                        },
+                        'fields': 'bold'
+                    }
+                })
+            
+            # Format prompt text (6pt Roboto Mono Normal)
+            if prompt_text_range[1] > prompt_text_range[0]:
+                update_requests.append({
+                    'updateTextStyle': {
+                        'range': {
+                            'startIndex': overview_start + prompt_text_range[0],
+                            'endIndex': overview_start + prompt_text_range[1]
+                        },
+                        'textStyle': {
+                            'fontSize': {
+                                'magnitude': 6,
+                                'unit': 'PT'
+                            },
+                            'weightedFontFamily': {
+                                'fontFamily': 'Roboto Mono'
+                            }
+                        },
+                        'fields': 'fontSize,weightedFontFamily'
+                    }
+                })
         
-        # Execute update
-        docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': update_requests}).execute()
-        logging.info("Overview section updated with final metrics successfully.")
-        
-    except Exception as e:
-        logging.error(f"Error updating overview section: {str(e)}")
-        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+            # Execute update
+            docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': update_requests}).execute()
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Overview section updated with final metrics successfully.")
+            return True  # Success, exit retry loop
+            
+        except (TimeoutError, HttpError, ConnectionError, OSError) as e:
+            attempt_elapsed = time.time() - attempt_start_time
+            error_type = type(e).__name__
+            error_msg = f"Attempt {attempt + 1}/{max_retries} failed to update overview section after {attempt_elapsed:.1f}s: {error_type}: {str(e)}"
+            logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] {error_msg}")
+            
+            if attempt < max_retries - 1:
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay} seconds... (exponential backoff)")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                # All retries exhausted
+                logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] All {max_retries} attempts failed to update overview section: {error_type}: {str(e)}")
+                logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                return False  # Give up after all retries
+                
+        except Exception as e:
+            # Non-retryable error, log and return
+            error_type = type(e).__name__
+            logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error updating overview section: {error_type}: {str(e)}")
+            logging.error(f"Full traceback:\n{traceback.format_exc()}")
+            return False
+    
+    # If we get here, all retries failed
+    return False
 
 
 def add_record_links_to_text(text, archive_index, page_number, web_view_link):
@@ -1941,12 +1981,11 @@ def main():
         # Update the overview section with final metrics from all batches
         if doc_id and len(transcribed_pages) > 0:
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Updating overview section with final metrics from all batches...")
-            try:
-                update_overview_section(docs_service, doc_id, transcribed_pages, final_metrics, start_time, end_time)
+            success = update_overview_section(docs_service, doc_id, transcribed_pages, final_metrics, start_time, end_time)
+            if success:
                 logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Overview section updated successfully.")
-            except Exception as e:
-                logging.error(f"Error updating overview section: {str(e)}")
-                logging.error(f"Full traceback:\n{traceback.format_exc()}")
+            else:
+                logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] Overview section update failed or was skipped.")
             
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] All batches written to document '{doc_name}'")
             logging.info(f"Final metrics: {final_metrics}")

@@ -349,6 +349,30 @@ The script will:
   - `transcription_*.log` (script progress)
   - `logs/*-ai-responses.log` (full AI responses per image, including archive index in session config)
 
+## Error Handling and Retry Logic
+
+The script includes comprehensive error handling with automatic retries and exponential backoff for API calls:
+
+### Vertex AI API Timeouts and Retries
+- **Initial timeout**: 1 minute (60 seconds)
+- **Retry attempts**: 3 total attempts with exponential backoff
+- **Timeout progression**: 1 min → 2 min → 5 min
+- **Retry delay**: 30 seconds between attempts (doubles with each retry)
+- Handles `TimeoutError`, `ConnectionError`, and `OSError` with automatic retries
+
+### Google Docs API Timeouts and Retries
+- **Base timeout**: 5 minutes (300 seconds) configured for all Google Docs API calls
+- **Overview update retries**: 3 attempts with exponential backoff for updating the TRANSCRIPTION RUN SUMMARY section
+- **Timeout progression**: 1 min → 2 min → 5 min
+- **Retry delay**: 30 seconds between attempts (doubles with each retry)
+- Handles `TimeoutError`, `HttpError`, `ConnectionError`, and `OSError` with automatic retries
+
+### Error Recovery
+- Failed API calls are automatically retried with increasing timeouts
+- All retry attempts are logged with attempt numbers and elapsed times
+- If all retries are exhausted, the script logs detailed error information and continues to the next image
+- Resume information is logged on failures, indicating the correct `IMAGE_START_NUMBER` to use for resuming
+
 ## Troubleshooting
 
 ### Authentication / OAuth 403 access_denied
