@@ -36,7 +36,7 @@ from google.genai import types
 # ------------------------- PROMPTS -------------------------
 # Set which prompt file to load from the `prompts` folder (without path).
 # Use "INSTRUCTION.txt" by default.
-PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION_TEMIRIVTSY_f631o12s33.md")
+PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION_KRYLOS_f201o4Ad2557.md")
 
 def load_prompt_text() -> str:
     prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
@@ -58,9 +58,9 @@ PROJECT_ID = "ukr-transcribe-genea"
 #FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
 #DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
 #FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "1oD3IgPb24mMzhrzDKTlf13_5-Q_2BoP8"
-FOLDER_NAME = "1889-1942 Темировцы Селище Крылос Козина Ивано-Франковский район ТранскрипцияФ.631 О.12 Д.33"
-ARCHIVE_INDEX = "ф631о12д33"
+DRIVE_FOLDER_ID = "1YakfoMDId6f9S4Qf-95SpYGHw2FWhu8y"
+FOLDER_NAME = "1840, 1856 - Колодиев, Крылос, Темировцы и др. Ф.201, Оп.4-А, Д.2557"
+ARCHIVE_INDEX = "ф201о4д2557"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-3-flash-preview"
@@ -68,7 +68,7 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 1  # Starting image number - refers to the NUMBER IN THE FILENAME (e.g., 474 for 004932851_00474.jpeg)
+IMAGE_START_NUMBER = 401  # Starting image number - refers to the NUMBER IN THE FILENAME (e.g., 474 for 004932851_00474.jpeg)
                           # NOT the position in sequence. Extract number from filename pattern (e.g., 101 for image00101.jpg or 101.jpg)
 IMAGE_COUNT = 200  # Number of images to process starting from IMAGE_START_NUMBER
 BATCH_SIZE_FOR_DOC = 5  # Number of images to transcribe before creating/writing to Google Doc (for resilience)
@@ -1302,8 +1302,9 @@ def update_overview_section(docs_service, doc_id, pages, metrics=None, start_tim
 
 def add_record_links_to_text(text, archive_index, page_number, web_view_link):
     """
-    Find lines starting with ### (like "### Запись 1") and append clickable archive reference.
+    Find lines starting with ### or #### (like "### Запись 1" or "#### Record 1") and append clickable archive reference.
     For example: "### Запись 1" becomes "### Запись 1 ф201оп4спр104стр22"
+    or "#### Record 1" becomes "#### Record 1 ф201оп4спр104стр22"
     where the archive part is a hyperlink.
     
     Returns tuple of (modified_text, link_insertions) where link_insertions is a list of
@@ -1319,9 +1320,9 @@ def add_record_links_to_text(text, archive_index, page_number, web_view_link):
     link_insertions = []
     current_pos = 0
     
-    # Pattern to match ### at start of line (with optional whitespace) followed by any text
-    # Matches lines like "### Запись 1", "### Record 1", "### Запис 1", etc.
-    pattern = re.compile(r'^(###\s+[^\n]+)', re.IGNORECASE)
+    # Pattern to match ### or #### at start of line (with optional whitespace) followed by any text
+    # Matches lines like "### Запись 1", "#### Record 1", "### Запис 1", etc.
+    pattern = re.compile(r'^(#{3,4}\s+[^\n]+)', re.IGNORECASE)
     
     for line in lines:
         match = pattern.match(line)
