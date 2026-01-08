@@ -36,7 +36,7 @@ from google.genai import types
 # ------------------------- PROMPTS -------------------------
 # Set which prompt file to load from the `prompts` folder (without path).
 # Use "INSTRUCTION.txt" by default.
-PROMPT_FILE = os.environ.get("PROMPT_FILE", "NIWRA_f487o1s47.md")
+PROMPT_FILE = os.environ.get("PROMPT_FILE", "f301-1440-WOJNILOW-MARRIAGES-1784-1814.md")
 
 def load_prompt_text() -> str:
     prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
@@ -54,9 +54,9 @@ PROMPT_TEXT = load_prompt_text()
 # ------------------------- CONFIGURATION -------------------------
 #PROJECT_ID = "ru-ocr-genea"
 PROJECT_ID = "ukr-transcribe-genea"
-DRIVE_FOLDER_ID = "1P8CUcS84wd4n1az47rEThM6FOyuIqHzH"
-FOLDER_NAME = "ф487-1-47 1860-1876 с.Нивра Борщивского повиту "
-ARCHIVE_INDEX = "Ф487О1Д47"
+DRIVE_FOLDER_ID = "1SYbg18euGtqen5gEXCBu7FqS298mD8m_"
+FOLDER_NAME = "301_1440 1784-1807 Wojnilow includes Temerowce Bludniki"
+ARCHIVE_INDEX = "f301-1440-"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-3-flash-preview"
