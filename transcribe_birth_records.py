@@ -36,7 +36,7 @@ from google.genai import types
 # ------------------------- PROMPTS -------------------------
 # Set which prompt file to load from the `prompts` folder (without path).
 # Use "INSTRUCTION.txt" by default.
-PROMPT_FILE = os.environ.get("PROMPT_FILE", "INSTRUCTION_KRYLOS_f201o4Ad2557.md")
+PROMPT_FILE = os.environ.get("PROMPT_FILE", "NIWRA_f487o1s47.md")
 
 def load_prompt_text() -> str:
     prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
@@ -54,13 +54,9 @@ PROMPT_TEXT = load_prompt_text()
 # ------------------------- CONFIGURATION -------------------------
 #PROJECT_ID = "ru-ocr-genea"
 PROJECT_ID = "ukr-transcribe-genea"
-#DRIVE_FOLDER_ID = "1Hqd3Kgys9yyDg_iXlXDQm1GNBLVABVVX"
-#FOLDER_NAME = "1888-1924 Турилче Вербивки Метрич Книга (487-1-545)"
-#DRIVE_FOLDER_ID = "1ka-1tUaGDc55BGihPm9q56Yskfbm6m-a"
-#FOLDER_NAME = "1874-1936 Турильче Вербивка записи о смерти 487-1-729-смерті"
-DRIVE_FOLDER_ID = "1YakfoMDId6f9S4Qf-95SpYGHw2FWhu8y"
-FOLDER_NAME = "1840, 1856 - Колодиев, Крылос, Темировцы и др. Ф.201, Оп.4-А, Д.2557"
-ARCHIVE_INDEX = "ф201о4д2557"
+DRIVE_FOLDER_ID = "1P8CUcS84wd4n1az47rEThM6FOyuIqHzH"
+FOLDER_NAME = "ф487-1-47 1860-1876 с.Нивра Борщивского повиту "
+ARCHIVE_INDEX = "Ф487О1Д47"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-3-flash-preview"
@@ -68,7 +64,7 @@ ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
 TEST_MODE = True
 TEST_IMAGE_COUNT = 2
 MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 401  # Starting image number - refers to the NUMBER IN THE FILENAME (e.g., 474 for 004932851_00474.jpeg)
+IMAGE_START_NUMBER = 1  # Starting image number - refers to the NUMBER IN THE FILENAME (e.g., 474 for 004932851_00474.jpeg)
                           # NOT the position in sequence. Extract number from filename pattern (e.g., 101 for image00101.jpg or 101.jpg)
 IMAGE_COUNT = 200  # Number of images to process starting from IMAGE_START_NUMBER
 BATCH_SIZE_FOR_DOC = 5  # Number of images to transcribe before creating/writing to Google Doc (for resilience)
@@ -76,7 +72,7 @@ BATCH_SIZE_FOR_DOC = 5  # Number of images to transcribe before creating/writing
 # RETRY MODE - Set to True to retry specific failed images
 RETRY_MODE = False
 RETRY_IMAGE_LIST = [
-    # Image that failed with timeout on 2025-08-03 (now fixed)
+    # Image that failed with timeout on 2025-08-03
      "2025-07-23T065033.080.jpg"
 ]
 
