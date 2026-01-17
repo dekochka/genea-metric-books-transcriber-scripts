@@ -10,7 +10,6 @@ Key Features:
 - Uses external prompt files for different record types (see prompts/ folder)
 - Comprehensive logging and error recovery
 - Batch processing with configurable start/count parameters
-- Test mode for development
 
 Configuration:
 - Requires a YAML config file (see config/config.yaml.example)
@@ -67,7 +66,7 @@ def load_config(config_path: str) -> dict:
     required_keys = [
         'prompt_file', 'project_id', 'drive_folder_id', 'folder_name',
         'archive_index', 'region', 'ocr_model_id', 'adc_file',
-        'test_mode', 'test_image_count', 'max_images', 'image_start_number',
+        'max_images', 'image_start_number',
         'image_count', 'batch_size_for_doc', 'retry_mode', 'retry_image_list'
     ]
     
@@ -1885,7 +1884,6 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
     folder_name = config['folder_name']
     archive_index = config['archive_index']
     ocr_model_id = config['ocr_model_id']
-    test_mode = config['test_mode']
     retry_mode = config['retry_mode']
     retry_image_list = config['retry_image_list']
     max_images = config['max_images']
@@ -1902,7 +1900,6 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
         ai_logger.info(f"Folder: {folder_name}")
         ai_logger.info(f"Archive Index: {archive_index if archive_index else 'None'}")
         ai_logger.info(f"Model: {ocr_model_id}")
-        ai_logger.info(f"Test mode: {test_mode}")
         ai_logger.info(f"Retry mode: {retry_mode}")
         if retry_mode:
             ai_logger.info(f"Retry images count: {len(retry_image_list)}")
