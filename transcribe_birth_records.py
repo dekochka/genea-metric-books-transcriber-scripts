@@ -36,7 +36,7 @@ from google.genai import types
 # ------------------------- PROMPTS -------------------------
 # Set which prompt file to load from the `prompts` folder (without path).
 # Use "INSTRUCTION.txt" by default.
-PROMPT_FILE = os.environ.get("PROMPT_FILE", "f301-1440-WOJNILOW-MARRIAGES-1784-1814.md")
+PROMPT_FILE = os.environ.get("PROMPT_FILE", "f301-1439-WOJNILOW-1784-1829.md")
 
 def load_prompt_text() -> str:
     prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
@@ -54,9 +54,9 @@ PROMPT_TEXT = load_prompt_text()
 # ------------------------- CONFIGURATION -------------------------
 #PROJECT_ID = "ru-ocr-genea"
 PROJECT_ID = "ukr-transcribe-genea"
-DRIVE_FOLDER_ID = "1SYbg18euGtqen5gEXCBu7FqS298mD8m_"
-FOLDER_NAME = "301_1440 1784-1807 Wojnilow includes Temerowce Bludniki"
-ARCHIVE_INDEX = "f301-1440-"
+DRIVE_FOLDER_ID = "1uWEsCZXIe7k8r4Vw7kxR9RBAhV5Yw6J6"
+FOLDER_NAME = "301_1438 Wojnilow"
+ARCHIVE_INDEX = "f301-1438-"
 
 REGION = "global"  # Changed to global as per sample
 OCR_MODEL_ID = "gemini-3-flash-preview"
@@ -67,7 +67,7 @@ MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
 IMAGE_START_NUMBER = 1  # Starting image number - refers to the NUMBER IN THE FILENAME (e.g., 474 for 004932851_00474.jpeg)
                           # NOT the position in sequence. Extract number from filename pattern (e.g., 101 for image00101.jpg or 101.jpg)
 IMAGE_COUNT = 200  # Number of images to process starting from IMAGE_START_NUMBER
-BATCH_SIZE_FOR_DOC = 5  # Number of images to transcribe before creating/writing to Google Doc (for resilience)
+BATCH_SIZE_FOR_DOC = 2  # Number of images to transcribe before creating/writing to Google Doc (for resilience)
 
 # RETRY MODE - Set to True to retry specific failed images
 RETRY_MODE = False
