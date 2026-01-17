@@ -60,13 +60,6 @@ image_count: 3
 # Recommended: 2-10 depending on image complexity
 batch_size_for_doc: 2
 
-# Test mode - when true, limits processing to test_image_count images
-# Set to false for full production runs
-test_mode: true
-
-# Number of images to process in test mode (only used when test_mode is true)
-test_image_count: 2
-
 # Maximum number of images to fetch from Google Drive
 # The script will fetch up to this many images, then filter based on
 # image_start_number and image_count parameters
