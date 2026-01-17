@@ -270,7 +270,7 @@ Before configuring the script, create or select a prompt file in the [`prompts/`
 - [`NIWRA_f487o1s47.md`](prompts/NIWRA_f487o1s47.md) - Example for Niwra village birth records (1860-1876)
 - [`f487o1s545-Turilche.md`](prompts/f487o1s545-Turilche.md) - Example for Turilche village birth records (1888-1924)
 
-Customize the prompt with:
+Customize Context section of the prompt with:
 - Village names specific to your metric book
 - Common surnames found in those villages
 - Date ranges and archive references
@@ -294,6 +294,9 @@ prompt_file: "NIWRA_f487o1s47.md"
 project_id: "ukr-transcribe-genea"  # or your project
 drive_folder_id: "<your_drive_folder_id>"
 document_name: "<your_document_name>"  # Optional: if not provided, will be fetched from Google Drive folder name
+title_page_filename: "<title_page_image_filename>"  # Optional: filename of title page image in Drive folder (e.g., "title_page.jpg")
+                                                      # Image will be inserted under the document header on the first page
+                                                      # Image must be in the same Drive folder as the transcription images
 archive_index: "ф201оп4Aспр350"  # Condensed archive reference (e.g., "ф487оп1спр545")
                                   # Used for document headers and record links (format: ф[FOND]оп[OPIS]спр[DELO])
 region: "global"  # you can also try "us-central1"
@@ -347,7 +350,9 @@ The script will:
 ## Output
 
 - One Google Doc per run with:
-  - Page header: Archive index + page number (e.g., "ф201оп4Aспр350стр22") if `ARCHIVE_INDEX` is set, otherwise image filename
+  - Document header with date (format: "{document_name} {YYYYMMDD}")
+  - Title page image (if `title_page_filename` is specified in config) inserted under the header
+  - Page header: Archive index + page number (e.g., "ф201оп4Aспр350стр22") if `archive_index` is set, otherwise image filename
   - Clickable source image link (format: "Src Img Url: {image_name}")
   - Raw transcription text with clickable archive references on record headers (lines starting with `###`)
   - Overview section with folder link, archive index, and processing metadata

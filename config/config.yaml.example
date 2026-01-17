@@ -22,6 +22,12 @@ drive_folder_id: "1YHAeW5Yi8oeKqvQHHKHf8u0o_MpTKJPR"
 # Used for document title and headers
 # document_name: "<your_document_name>"
 
+# Title page image filename (optional)
+# Name of image file in the Drive folder to insert as title page image
+# Will be inserted under the document header on the first page
+# Example: "title_page.jpg" or "cover_image.jpg"
+title_page_filename: "image00001.jpg"
+
 # Archive index reference (condensed archive reference)
 # Format: ф[FOND]оп[OPIS]спр[DELO] or custom format like "f301-1438-"
 # Used for document headers and record links
@@ -52,7 +58,7 @@ image_start_number: 1
 # Number of images to process starting from image_start_number
 # Example: if image_start_number=101 and image_count=5,
 # will process image00101.jpg through image00105.jpg
-image_count: 3
+image_count: 1
 
 # Number of images to transcribe before creating/writing to Google Doc
 # (for resilience - script creates doc after first batch, then appends

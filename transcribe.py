@@ -940,6 +940,205 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
             return f"[Error during transcription: {str(e)}]", None, None
 
 
+def find_title_page_image(drive_service, drive_folder_id: str, title_page_filename: str):
+    """
+    Find title page image file in Google Drive folder by filename.
+    
+    Args:
+        drive_service: Google Drive API service
+        drive_folder_id: Google Drive folder ID
+        title_page_filename: Filename of the title page image
+        
+    Returns:
+        File ID if found, None otherwise
+    """
+    try:
+        query = (
+            f"name='{title_page_filename}' and '{drive_folder_id}' in parents and "
+            f"(mimeType='image/jpeg' or mimeType='image/jpg' or mimeType='image/png') and trashed=false"
+        )
+        results = drive_service.files().list(
+            q=query,
+            fields="files(id, name)"
+        ).execute()
+        
+        files = results.get('files', [])
+        if files:
+            return files[0]['id']
+        return None
+    except Exception as e:
+        logging.warning(f"Error searching for title page image '{title_page_filename}': {str(e)}")
+        return None
+
+
+def upload_image_to_drive(drive_service, image_bytes, filename: str, drive_folder_id: str):
+    """
+    Upload image bytes to Google Drive and return the file ID.
+    
+    Args:
+        drive_service: Google Drive API service
+        image_bytes: Image data as bytes
+        filename: Filename for the uploaded image
+        drive_folder_id: Google Drive folder ID where to upload
+        
+    Returns:
+        File ID of uploaded image, or None if upload fails
+    """
+    try:
+        from googleapiclient.http import MediaIoBaseUpload
+        
+        file_metadata = {
+            'name': filename,
+            'parents': [drive_folder_id]
+        }
+        media = MediaIoBaseUpload(io.BytesIO(image_bytes), mimetype='image/jpeg', resumable=True)
+        
+        file = drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id'
+        ).execute()
+        
+        return file.get('id')
+    except Exception as e:
+        logging.error(f"Error uploading image to Drive: {str(e)}")
+        return None
+
+
+def insert_title_page_image_and_transcribe(docs_service, drive_service, doc_id: str, config: dict, insert_index: int, genai_client, prompt_text: str):
+    """
+    Insert title page image into Google Doc and transcribe it.
+    If image insertion fails (e.g., sharing not allowed), still transcribe and return transcription.
+    
+    Args:
+        docs_service: Google Docs API service
+        drive_service: Google Drive API service
+        doc_id: Google Doc ID
+        config: Configuration dictionary
+        insert_index: Index where to insert the image
+        genai_client: Vertex AI Gemini client for transcription
+        prompt_text: Prompt text for transcription
+        
+    Returns:
+        Tuple of (new_index, transcription_text) where transcription_text is the transcribed content or None
+    """
+    title_page_filename = config.get('title_page_filename')
+    if not title_page_filename:
+        return insert_index, None
+    
+    drive_folder_id = config['drive_folder_id']
+    ocr_model_id = config.get('ocr_model_id', 'gemini-3-flash-preview')
+    transcription_text = None
+    image_inserted = False
+    
+    try:
+        # Try to find the image in the Drive folder
+        image_file_id = find_title_page_image(drive_service, drive_folder_id, title_page_filename)
+        
+        if not image_file_id:
+            logging.warning(f"Title page image '{title_page_filename}' not found in Drive folder")
+            return insert_index, None
+        
+        # Try to make the file publicly accessible temporarily (required for Docs API)
+        file_public = False
+        try:
+            drive_service.permissions().create(
+                fileId=image_file_id,
+                body={'role': 'reader', 'type': 'anyone'},
+                fields='id'
+            ).execute()
+            file_public = True
+            logging.info(f"Made title page image '{title_page_filename}' publicly accessible for insertion")
+        except Exception as perm_error:
+            # Check if permission already exists
+            if 'duplicate' in str(perm_error).lower() or 'already' in str(perm_error).lower():
+                file_public = True
+                logging.info(f"Title page image '{title_page_filename}' is already publicly accessible")
+            else:
+                logging.warning(f"Could not make title page image publicly accessible (sharing may not be allowed): {str(perm_error)}")
+                logging.info(f"Will skip image insertion but will still transcribe the image")
+        
+        # Try to insert the image if we made it public (or it was already public)
+        if file_public:
+            try:
+                # Get webContentLink for the image
+                file_metadata = drive_service.files().get(
+                    fileId=image_file_id,
+                    fields='id, name, webContentLink'
+                ).execute()
+                
+                image_uri = file_metadata.get('webContentLink')
+                if not image_uri:
+                    # Fallback to direct view link
+                    image_uri = f"https://drive.google.com/uc?export=view&id={image_file_id}"
+                
+                # Insert the image
+                requests = [{
+                    'insertInlineImage': {
+                        'location': {'index': insert_index},
+                        'uri': image_uri,
+                        'objectSize': {
+                            'height': {'magnitude': 400, 'unit': 'PT'},
+                            'width': {'magnitude': 600, 'unit': 'PT'}
+                        }
+                    }
+                }]
+                
+                docs_service.documents().batchUpdate(
+                    documentId=doc_id,
+                    body={'requests': requests}
+                ).execute()
+                
+                logging.info(f"Title page image '{title_page_filename}' inserted successfully")
+                image_inserted = True
+                
+                # Refresh index after image insertion and add a newline after the image
+                doc = docs_service.documents().get(documentId=doc_id).execute()
+                insert_index = doc['body']['content'][-1]['endIndex'] - 1
+                
+                # Insert a newline after the image to ensure proper spacing
+                # This prevents the image from being affected by subsequent text insertions
+                newline_request = [{
+                    'insertText': {
+                        'location': {'index': insert_index},
+                        'text': '\n'
+                    }
+                }]
+                docs_service.documents().batchUpdate(
+                    documentId=doc_id,
+                    body={'requests': newline_request}
+                ).execute()
+                
+                # Refresh index again after newline insertion
+                doc = docs_service.documents().get(documentId=doc_id).execute()
+                insert_index = doc['body']['content'][-1]['endIndex'] - 1
+                
+            except Exception as img_error:
+                logging.warning(f"Error inserting title page image (will still transcribe): {str(img_error)}")
+                image_inserted = False
+        
+        # Always try to download and transcribe the title page image (even if insertion failed)
+        try:
+            logging.info(f"Transcribing title page image '{title_page_filename}'...")
+            img_bytes = download_image(drive_service, image_file_id, title_page_filename, config.get('document_name', 'Unknown'))
+            transcription_text, _, _ = transcribe_image(genai_client, img_bytes, title_page_filename, prompt_text, ocr_model_id)
+            
+            if transcription_text and not transcription_text.startswith('[Error'):
+                logging.info(f"Title page image '{title_page_filename}' transcribed successfully")
+            else:
+                logging.warning(f"Title page image transcription failed or returned error")
+                transcription_text = None
+        except Exception as e:
+            logging.warning(f"Error transcribing title page image: {str(e)}")
+            transcription_text = None
+        
+        return insert_index, transcription_text
+        
+    except Exception as e:
+        logging.warning(f"Error in title page image processing: {str(e)}")
+        return insert_index, None
+
+
 def create_doc(docs_service, drive_service, title, config: dict):
     """Create a new Google Doc in the specified folder and return its ID."""
     drive_folder_id = config['drive_folder_id']
@@ -1238,62 +1437,75 @@ def update_overview_section(docs_service, doc_id, pages, config: dict, prompt_te
             # It's between the header (Heading 1) and the first page transcription (Heading 2 with archive index)
             content = doc['body']['content']
             
-            # Find the end of the header (first Heading 1)
-            header_end = None
+            # Find the overview section boundaries
+            # Overview starts at "TRANSCRIPTION RUN SUMMARY" and ends before the first page transcription
             overview_start = None
             overview_end = None
             first_page_header_start = None
             
+            # First, find the start of "TRANSCRIPTION RUN SUMMARY" heading and first page header
+            summary_heading = "TRANSCRIPTION RUN SUMMARY"
             for i, element in enumerate(content):
                 if 'paragraph' in element:
                     para = element['paragraph']
-                    if 'paragraphStyle' in para and para['paragraphStyle'].get('namedStyleType') == 'HEADING_1':
-                        header_end = element['endIndex']
-                    elif 'paragraphStyle' in para and para['paragraphStyle'].get('namedStyleType') == 'HEADING_2':
-                        # Check if this is the first page header (contains archive index pattern)
-                        if archive_index and archive_index in para.get('elements', [{}])[0].get('textRun', {}).get('content', ''):
+                    if 'paragraphStyle' in para and para['paragraphStyle'].get('namedStyleType') == 'HEADING_2':
+                        # Get text content of this paragraph
+                        text_content = ""
+                        for elem in para.get('elements', []):
+                            if 'textRun' in elem:
+                                text_content += elem['textRun'].get('content', '')
+                        
+                        # Check if this is the "TRANSCRIPTION RUN SUMMARY" heading
+                        if summary_heading in text_content and not overview_start:
+                            overview_start = element['startIndex']
+                            if first_page_header_start:
+                                break
+                        # Check if this is the first page header (contains archive index but not summary heading)
+                        elif archive_index and archive_index in text_content and summary_heading not in text_content and not first_page_header_start:
                             first_page_header_start = element['startIndex']
-                            break
+                            if overview_start:
+                                break
             
-            # If we found the header end and first page header start, the overview is between them
-            if header_end and first_page_header_start:
-                overview_start = header_end
-                overview_end = first_page_header_start
-            else:
-                # Fallback: look for "TRANSCRIPTION RUN SUMMARY" text
+            # If we didn't find overview_start by heading, try fallback method
+            if not overview_start:
+                # Fallback: look for "TRANSCRIPTION RUN SUMMARY" text in document
                 doc_text = ""
+                char_positions = []  # Track character positions
+                current_pos = 0
                 for element in content:
                     if 'paragraph' in element:
                         for elem in element['paragraph'].get('elements', []):
                             if 'textRun' in elem:
-                                doc_text += elem['textRun'].get('content', '')
+                                text = elem['textRun'].get('content', '')
+                                doc_text += text
+                                char_positions.append((current_pos, current_pos + len(text), element['startIndex']))
+                                current_pos += len(text)
                 
                 summary_pos = doc_text.find("TRANSCRIPTION RUN SUMMARY")
                 if summary_pos >= 0:
-                    # Find the start and end of the overview section
-                    # It starts after the header and ends before the first page transcription
-                    # We'll search for the first Heading 2 that's not "TRANSCRIPTION RUN SUMMARY"
-                    for i, element in enumerate(content):
-                        if 'paragraph' in element:
-                            para = element['paragraph']
-                            if 'paragraphStyle' in para:
-                                style = para['paragraphStyle'].get('namedStyleType')
-                                if style == 'HEADING_1':
-                                    header_end = element['endIndex']
-                                elif style == 'HEADING_2':
-                                    # Check if this is not the summary heading
-                                    text_content = ""
-                                    for elem in para.get('elements', []):
-                                        if 'textRun' in elem:
-                                            text_content += elem['textRun'].get('content', '')
-                                    if "TRANSCRIPTION RUN SUMMARY" not in text_content and archive_index:
-                                        # This is likely the first page header
-                                        first_page_header_start = element['startIndex']
-                                        break
-                    
-                    if header_end and first_page_header_start:
-                        overview_start = header_end
-                        overview_end = first_page_header_start
+                    # Find the element that contains this position
+                    for start_char, end_char, element_start in char_positions:
+                        if start_char <= summary_pos < end_char:
+                            overview_start = element_start + (summary_pos - start_char)
+                            break
+            # Find the end of overview section (start of first page transcription) if not already found
+            if not first_page_header_start:
+                for i, element in enumerate(content):
+                    if 'paragraph' in element:
+                        para = element['paragraph']
+                        if 'paragraphStyle' in para and para['paragraphStyle'].get('namedStyleType') == 'HEADING_2':
+                            text_content = ""
+                            for elem in para.get('elements', []):
+                                if 'textRun' in elem:
+                                    text_content += elem['textRun'].get('content', '')
+                            # This is the first page header if it contains archive index but not the summary heading
+                            if archive_index and archive_index in text_content and summary_heading not in text_content:
+                                first_page_header_start = element['startIndex']
+                                break
+            
+            # Set overview_end to first page header start
+            if first_page_header_start:
+                overview_end = first_page_header_start
             
             if not overview_start or not overview_end:
                 logging.warning("Could not locate overview section boundaries. Skipping overview update.")
@@ -1560,7 +1772,7 @@ def save_transcription_locally(pages, doc_name, config: dict, prompt_text: str, 
         raise
 
 
-def write_to_doc(docs_service, doc_id, pages, config: dict, prompt_text: str, start_idx=0, metrics=None, start_time=None, end_time=None, write_overview=True):
+def write_to_doc(docs_service, drive_service, doc_id, pages, config: dict, prompt_text: str, start_idx=0, metrics=None, start_time=None, end_time=None, write_overview=True, genai_client=None):
     """
     Write transcribed content to a Google Doc using Atomic Page Writes.
     Fetches the true document end index before every page write to prevent index drift errors.
@@ -1573,6 +1785,7 @@ def write_to_doc(docs_service, doc_id, pages, config: dict, prompt_text: str, st
     
     Args:
         docs_service: Google Docs API service
+        drive_service: Google Drive API service
         doc_id: Document ID
         pages: List of page dictionaries
         config: Configuration dictionary
@@ -1582,6 +1795,7 @@ def write_to_doc(docs_service, doc_id, pages, config: dict, prompt_text: str, st
         start_time: Optional start time
         end_time: Optional end time
         write_overview: If True, write overview section and document header (default: True)
+        genai_client: Optional Vertex AI Gemini client (needed for title page transcription)
     """
     document_name = config.get('document_name', 'Unknown')
     archive_index = config['archive_index']
@@ -1627,9 +1841,42 @@ def write_to_doc(docs_service, doc_id, pages, config: dict, prompt_text: str, st
             docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': header_requests}).execute()
             logging.info(f"Document header added: {document_header}")
             
-            # Refresh Index for Overview
+            # Refresh Index after header insertion
             doc = docs_service.documents().get(documentId=doc_id).execute()
             # Google Docs content list includes a final EOF character, so endIndex - 1 is the actual end
+            idx = doc['body']['content'][-1]['endIndex'] - 1
+            
+            # Insert title page image and transcribe it if specified
+            title_page_transcription = None
+            if config.get('title_page_filename') and genai_client:
+                idx, title_page_transcription = insert_title_page_image_and_transcribe(
+                    docs_service, drive_service, doc_id, config, idx, genai_client, prompt_text
+                )
+                # Refresh index after image insertion
+                doc = docs_service.documents().get(documentId=doc_id).execute()
+                idx = doc['body']['content'][-1]['endIndex'] - 1
+                
+                # Insert title page transcription if available, before overview section
+                if title_page_transcription:
+                    transcription_text = f"\n\n{title_page_transcription}\n\n"
+                    transcription_requests = [{
+                        'insertText': {
+                            'location': {'index': idx},
+                            'text': transcription_text
+                        }
+                    }]
+                    docs_service.documents().batchUpdate(
+                        documentId=doc_id,
+                        body={'requests': transcription_requests}
+                    ).execute()
+                    logging.info(f"Title page transcription inserted successfully")
+                    # Refresh index after transcription insertion
+                    doc = docs_service.documents().get(documentId=doc_id).execute()
+                    idx = doc['body']['content'][-1]['endIndex'] - 1
+            
+            # CRITICAL: Refresh index right before inserting overview to ensure accuracy
+            # This prevents any issues with image insertion affecting index calculations
+            doc = docs_service.documents().get(documentId=doc_id).execute()
             idx = doc['body']['content'][-1]['endIndex'] - 1
             
             # Prepare Overview Content
@@ -1655,7 +1902,8 @@ def write_to_doc(docs_service, doc_id, pages, config: dict, prompt_text: str, st
             },
             {
                 'updateParagraphStyle': {
-                    'range': {'startIndex': idx, 'endIndex': idx + len(overview_content)},
+                    # Start range after the inserted text to avoid affecting any preceding content (like images)
+                    'range': {'startIndex': idx + 1, 'endIndex': idx + len(overview_content)},
                     'paragraphStyle': {
                         'namedStyleType': 'NORMAL_TEXT',
                         'alignment': 'START'
@@ -2107,7 +2355,7 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
                         else:
                             # Write first batch with overview
                             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing first batch ({len(batch_transcribed_pages)} images) to document with overview...")
-                            write_to_doc(docs_service, doc_id, transcribed_pages, config, prompt_text, start_idx=0, metrics=batch_metrics, start_time=start_time, end_time=None, write_overview=True)
+                            write_to_doc(docs_service, drive_service, doc_id, transcribed_pages, config, prompt_text, start_idx=0, metrics=batch_metrics, start_time=start_time, end_time=None, write_overview=True, genai_client=genai_client)
                             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ First batch written to document")
                             first_batch = False
                     else:
@@ -2117,7 +2365,7 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
                             # Calculate start_idx for this batch (number of pages already written)
                             pages_written_so_far = len(transcribed_pages) - len(batch_transcribed_pages)
                             # Pass full transcribed_pages list with correct start_idx for proper page numbering
-                            write_to_doc(docs_service, doc_id, transcribed_pages, config, prompt_text, start_idx=pages_written_so_far, metrics=None, start_time=None, end_time=None, write_overview=False)
+                            write_to_doc(docs_service, drive_service, doc_id, transcribed_pages, config, prompt_text, start_idx=pages_written_so_far, metrics=None, start_time=None, end_time=None, write_overview=False, genai_client=genai_client)
                             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Batch {batch_num + 1} written to document")
                         else:
                             # Document creation failed earlier, save locally
