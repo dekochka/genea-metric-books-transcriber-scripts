@@ -26,6 +26,8 @@ A specialized tool for transcribing handwritten genealogical records (birth, dea
 
 The script processes images from a Google Drive folder containing scanned pages from historical metric books (birth, death, and marriage records).
 
+**Output: Complete Transcription Document** - [ДАТО ф487о1с545 1894 Турильче Вербівки народж.pdf](data_samples/ДАТО%20ф487о1с545%201894%20Турильче%20Вербівки%20народж.pdf) - Example of a complete transcribed document exported from Google Docs.
+
 **Output: Google Doc Title Page** (Document header with title page image and transcription):
 
 ![Google Doc Title Page](data_samples/gdrive_gdoc_transcribed_title_after.jpg)
