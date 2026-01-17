@@ -120,7 +120,7 @@ graph TB
     end
     
     subgraph TE["Transcription Engine"]
-        SCRIPT["⚙️ transcribe_birth_records.py<br/>Main Automation Script"]
+        SCRIPT["⚙️ transcribe.py<br/>Main Automation Script"]
         AUTH["🔐 Authentication<br/>OAuth2/ADC"]
         CONFIG["⚙️ Configuration<br/>Folder, Model, Range"]
         REFRESH["🔄 refresh_credentials.py<br/>OAuth2 Setup (Prerequisite)"]
@@ -282,7 +282,7 @@ Customize the prompt with:
 
 ### 2. Configure Script Parameters
 
-Edit [`transcribe_birth_records.py`](transcribe_birth_records.py):
+Edit [`transcribe.py`](transcribe.py):
 
 ```python
 # Prompt configuration - point to your custom prompt file
@@ -327,7 +327,7 @@ If no numeric/timestamp match is found, the script falls back to selecting by po
 
 ```bash
 source venv/bin/activate
-python3 transcribe_birth_records.py
+python3 transcribe.py
 ```
 
 The script will:

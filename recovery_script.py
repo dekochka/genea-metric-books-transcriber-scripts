@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Recovery script to process AI response logs and create a Google Doc.
-This script parses the AI response logs from transcribe_birth_records.py
+This script parses the AI response logs from transcribe.py
 and recreates the Google Doc that failed to be created due to timeout errors.
 """
 
