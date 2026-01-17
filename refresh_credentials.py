@@ -19,13 +19,10 @@ SCOPES = [
 
 def _find_client_secret_path():
     """
-    Return the preferred client secret path.
-    Preference order:
-    1) client_secret_ok.json
-    2) client_secret.json
+    Return the client secret file path.
+    Looks for client_secret.json in the project root.
     """
     candidates = [
-        'client_secret_ok.json',
         'client_secret.json'
     ]
     for path in candidates:
@@ -40,11 +37,11 @@ def refresh_credentials():
     This will open a browser window for authentication.
     """
     
-    # Resolve client secret path with preference to new project credentials
+    # Resolve client secret path
     client_secret_path = _find_client_secret_path()
     if not client_secret_path:
         print("ERROR: No client secret file found!")
-        print("Expected one of: client_secret_ok.json or client_secret.json in the project root")
+        print("Expected client_secret.json in the project root")
         print("Please download it from Google Cloud Console > APIs & Services > Credentials")
         return False
     

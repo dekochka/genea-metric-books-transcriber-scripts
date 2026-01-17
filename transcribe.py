@@ -13,19 +13,23 @@ Key Features:
 - Test mode for development
 
 Configuration:
-- Set PROMPT_FILE environment variable to select prompt (default: INSTRUCTION.txt)
-- Configure IMAGE_START_NUMBER and IMAGE_COUNT for selective processing
-- Enable RETRY_MODE to reprocess failed images
+- Requires a YAML config file (see config/config.yaml.example)
+- Pass config file as mandatory argument: python transcribe.py config/your_config.yaml
+- Configure image_start_number and image_count for selective processing
+- Enable retry_mode to reprocess failed images
 
 For detailed setup instructions, prerequisites, and troubleshooting, see README.md
 """
 
 import io
 import os
+import sys
+import argparse
 import logging
 import base64
 import json
 import traceback
+import yaml
 from datetime import datetime
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -33,120 +37,220 @@ from googleapiclient.http import MediaIoBaseDownload
 from google import genai
 from google.genai import types
 
-# ------------------------- PROMPTS -------------------------
-# Set which prompt file to load from the `prompts` folder (without path).
-# Use "INSTRUCTION.txt" by default.
-PROMPT_FILE = os.environ.get("PROMPT_FILE", "f301-1439-WOJNILOW-1784-1829.md")
+# ------------------------- CONFIGURATION LOADING -------------------------
 
-def load_prompt_text() -> str:
+def load_config(config_path: str) -> dict:
+    """
+    Load configuration from YAML file.
+    
+    Args:
+        config_path: Path to the YAML configuration file
+        
+    Returns:
+        Dictionary containing configuration values
+        
+    Raises:
+        FileNotFoundError: If config file doesn't exist
+        yaml.YAMLError: If config file is invalid YAML
+        KeyError: If required configuration keys are missing
+    """
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+    
+    with open(config_path, 'r', encoding='utf-8') as f:
+        config = yaml.safe_load(f)
+    
+    if config is None:
+        raise ValueError(f"Configuration file is empty: {config_path}")
+    
+    # Validate required keys
+    required_keys = [
+        'prompt_file', 'project_id', 'drive_folder_id', 'folder_name',
+        'archive_index', 'region', 'ocr_model_id', 'adc_file',
+        'test_mode', 'test_image_count', 'max_images', 'image_start_number',
+        'image_count', 'batch_size_for_doc', 'retry_mode', 'retry_image_list'
+    ]
+    
+    missing_keys = [key for key in required_keys if key not in config]
+    if missing_keys:
+        raise KeyError(f"Missing required configuration keys: {', '.join(missing_keys)}")
+    
+    return config
+
+
+def load_prompt_text(prompt_file: str) -> str:
+    """
+    Load prompt text from file in the prompts directory.
+    
+    Args:
+        prompt_file: Name of the prompt file (without path)
+        
+    Returns:
+        Prompt text as string, or fallback minimal prompt if file not found
+    """
     prompts_dir = os.path.join(os.path.dirname(__file__), "prompts")
-    prompt_path = os.path.join(prompts_dir, PROMPT_FILE)
+    prompt_path = os.path.join(prompts_dir, prompt_file)
     try:
         with open(prompt_path, 'r', encoding='utf-8') as f:
             return f.read()
     except Exception as e:
-        logging.warning(f"Failed to load prompt '{PROMPT_FILE}' from {prompt_path}: {e}. Falling back to minimal prompt.")
+        logging.warning(f"Failed to load prompt '{prompt_file}' from {prompt_path}: {e}. Falling back to minimal prompt.")
         return "Transcribe the content of this image as structured text."
 
-# Load prompt once at startup
-PROMPT_TEXT = load_prompt_text()
 
-# ------------------------- CONFIGURATION -------------------------
-#PROJECT_ID = "ru-ocr-genea"
-PROJECT_ID = "ukr-transcribe-genea"
-DRIVE_FOLDER_ID = "1uWEsCZXIe7k8r4Vw7kxR9RBAhV5Yw6J6"
-FOLDER_NAME = "301_1438 Wojnilow"
-ARCHIVE_INDEX = "f301-1438-"
-
-REGION = "global"  # Changed to global as per sample
-OCR_MODEL_ID = "gemini-3-flash-preview"
-ADC_FILE = "application_default_credentials.json"  # ADC file with refresh token
-TEST_MODE = True
-TEST_IMAGE_COUNT = 2
-MAX_IMAGES = 1000  # Increased to 1000 to fetch more images
-IMAGE_START_NUMBER = 1  # Starting image number - refers to the NUMBER IN THE FILENAME (e.g., 474 for 004932851_00474.jpeg)
-                          # NOT the position in sequence. Extract number from filename pattern (e.g., 101 for image00101.jpg or 101.jpg)
-IMAGE_COUNT = 200  # Number of images to process starting from IMAGE_START_NUMBER
-BATCH_SIZE_FOR_DOC = 2  # Number of images to transcribe before creating/writing to Google Doc (for resilience)
-
-# RETRY MODE - Set to True to retry specific failed images
-RETRY_MODE = False
-RETRY_IMAGE_LIST = [
-    # Image that failed with timeout on 2025-08-03
-     "2025-07-23T065033.080.jpg"
-]
-
-# Image Selection Notes:
-# - IMAGE_START_NUMBER: The starting image number (e.g., 101 will start from image00101.jpg or 101.jpg)
-# - IMAGE_COUNT: How many consecutive images to process (e.g., 5 will process image00101.jpg through image00105.jpg or 101.jpg through 105.jpg)
-# - Files must follow one of these patterns: 
-#   * image (N).jpg where N is a number (e.g., image (7).jpg, image (10).jpg)
-#   * imageXXXXX.jpg where XXXXX is a 5-digit number (e.g., image00101.jpg)
-#   * XXXXX.jpg where XXXXX is a number (e.g., 52.jpg, 102.jpg)
-#   * image - YYYY-MM-DDTHHMMSS.mmm.jpg (timestamp format, e.g., image - 2025-07-20T112914.366.jpg)
-# - The script will fetch up to MAX_IMAGES from Google Drive, then filter based on these parameters
-
-# Create logs directory if it doesn't exist
-LOGS_DIR = "logs"
-if not os.path.exists(LOGS_DIR):
-    os.makedirs(LOGS_DIR)
-
-# Generate timestamp for log files
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-# Logging setup - create shorter log filename to avoid filesystem limits
-safe_folder_name = "".join(c for c in FOLDER_NAME if c.isalnum() or c in (' ', '-', '_')).rstrip()
-safe_folder_name = safe_folder_name.replace(' ', '_')[:50]  # Limit to 50 chars
-log_filename = os.path.join(LOGS_DIR, f"transcription_{safe_folder_name}_{timestamp}.log")
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(log_filename)
-    ]
-)
-
-# Set up separate logger for AI responses
-ai_logger = logging.getLogger('ai_responses')
-ai_logger.setLevel(logging.INFO)
-ai_log_filename = os.path.join(LOGS_DIR, f"{timestamp}-ai-responses.log")
-ai_handler = logging.FileHandler(ai_log_filename)
-ai_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
-ai_logger.addHandler(ai_handler)
-ai_logger.propagate = False  # Prevent duplicate logging
-
-# Make ai_logger globally accessible
-globals()['ai_logger'] = ai_logger
+def setup_logging(config: dict) -> tuple:
+    """
+    Set up logging based on configuration.
+    
+    Args:
+        config: Configuration dictionary
+        
+    Returns:
+        Tuple of (log_filename, ai_log_filename, ai_logger)
+    """
+    # Create logs directory if it doesn't exist
+    LOGS_DIR = "logs"
+    if not os.path.exists(LOGS_DIR):
+        os.makedirs(LOGS_DIR)
+    
+    # Generate timestamp for log files
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Logging setup - create shorter log filename to avoid filesystem limits
+    folder_name = config['folder_name']
+    safe_folder_name = "".join(c for c in folder_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+    safe_folder_name = safe_folder_name.replace(' ', '_')[:50]  # Limit to 50 chars
+    log_filename = os.path.join(LOGS_DIR, f"transcription_{safe_folder_name}_{timestamp}.log")
+    
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(log_filename)
+        ]
+    )
+    
+    # Set up separate logger for AI responses
+    ai_logger = logging.getLogger('ai_responses')
+    ai_logger.setLevel(logging.INFO)
+    ai_log_filename = os.path.join(LOGS_DIR, f"{timestamp}-ai-responses.log")
+    ai_handler = logging.FileHandler(ai_log_filename)
+    ai_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+    ai_logger.addHandler(ai_handler)
+    ai_logger.propagate = False  # Prevent duplicate logging
+    
+    return log_filename, ai_log_filename, ai_logger
 
 
-def authenticate():
+def authenticate(adc_file: str):
     """
     Load user credentials from ADC file with required OAuth2 scopes.
+    
+    Args:
+        adc_file: Path to the ADC credentials file
+        
+    Returns:
+        Credentials object
+        
+    Raises:
+        SystemExit: If token is expired or revoked, with helpful error message
     """
     scopes = [
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/documents",
         "https://www.googleapis.com/auth/cloud-platform"
     ]
-    creds = Credentials.from_authorized_user_file(ADC_FILE, scopes=scopes)
-    logging.info(f"Credentials loaded with scopes: {scopes}")
-    return creds
+    try:
+        creds = Credentials.from_authorized_user_file(adc_file, scopes=scopes)
+        
+        # Check if credentials are expired and try to refresh if possible
+        if creds.expired and creds.refresh_token:
+            try:
+                from google.auth.transport.requests import Request
+                creds.refresh(Request())
+                logging.info("Credentials refreshed successfully")
+            except Exception as refresh_error:
+                error_str = str(refresh_error).lower()
+                if 'invalid_grant' in error_str or 'expired' in error_str or 'revoked' in error_str:
+                    print("\n" + "="*70)
+                    print("ERROR: Google Cloud authentication token has expired or been revoked")
+                    print("="*70)
+                    print("\nTo fix this, please refresh your Google Cloud credentials:")
+                    print("\n  1. Verify your OAuth client configuration:")
+                    print("     - Ensure client_secret.json belongs to the")
+                    print("       correct Google Cloud project and Google account")
+                    print("     - Check that the file matches the account you're authenticating with")
+                    print("\n  2. Run the credential refresh script:")
+                    print("     python refresh_credentials.py")
+                    print("\n  3. Or use gcloud (if you have gcloud CLI installed):")
+                    print("     gcloud auth application-default login --project=<PROJECT_ID> \\")
+                    print("       --scopes=https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/cloud-platform")
+                    print("\n  4. After refreshing, run the transcription script again:")
+                    print(f"     python transcribe.py <your_config.yaml>")
+                    print("\n  For more details, see the 'Troubleshooting' section in README.md")
+                    print("\n" + "="*70 + "\n")
+                    logging.error(f"Google Cloud authentication failed: {str(refresh_error)}")
+                    raise SystemExit(1)
+                else:
+                    raise
+        
+        logging.info(f"Credentials loaded with scopes: {scopes}")
+        return creds
+    except SystemExit:
+        raise
+    except Exception as e:
+        error_str = str(e).lower()
+        if 'invalid_grant' in error_str or 'expired' in error_str or 'revoked' in error_str:
+            print("\n" + "="*70)
+            print("ERROR: Google Cloud authentication token has expired or been revoked")
+            print("="*70)
+            print("\nTo fix this, please refresh your Google Cloud credentials:")
+            print("\n  1. Verify your OAuth client configuration:")
+            print("     - Ensure client_secret.json belongs to the")
+            print("       correct Google Cloud project and Google account")
+            print("     - Check that the file matches the account you're authenticating with")
+            print("\n  2. Run the credential refresh script:")
+            print("     python refresh_credentials.py")
+            print("\n  3. Or use gcloud (if you have gcloud CLI installed):")
+            print("     gcloud auth application-default login --project=<PROJECT_ID> \\")
+            print("       --scopes=https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/cloud-platform")
+            print("\n  4. After refreshing, run the transcription script again:")
+            print(f"     python transcribe.py <your_config.yaml>")
+            print("\n  For more details, see the 'Troubleshooting' section in README.md")
+            print("\n" + "="*70 + "\n")
+            logging.error(f"Google Cloud authentication failed: {str(e)}")
+            raise SystemExit(1)
+        else:
+            # Re-raise other authentication errors
+            logging.error(f"Authentication error: {str(e)}")
+            raise
 
 
-def init_services(creds):
-    logging.info(f"Initializing Vertex AI for project {PROJECT_ID}...")
+def init_services(creds, config: dict):
+    """
+    Initialize Google Cloud services.
+    
+    Args:
+        creds: OAuth2 credentials
+        config: Configuration dictionary
+    """
+    project_id = config['project_id']
+    region = config['region']
+    adc_file = config['adc_file']
+    
+    logging.info(f"Initializing Vertex AI for project {project_id}...")
     # Set env var for Vertex AI SDK
-    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = ADC_FILE
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = adc_file
     
     # Initialize Gemini client
     genai_client = genai.Client(
         vertexai=True,
-        project=PROJECT_ID,
-        location=REGION,
+        project=project_id,
+        location=region,
         credentials=creds
     )
-    logging.info(f"Gemini client initialized in {REGION} with project {PROJECT_ID}")
+    logging.info(f"Gemini client initialized in {region} with project {project_id}")
 
     logging.info("Initializing Google Drive and Docs APIs...")
     import httplib2
@@ -241,10 +345,10 @@ def extract_image_number(filename):
     return None
 
 
-def list_images(drive_service):
+def list_images(drive_service, config: dict):
     """
     Get list of images from Google Drive folder, sorted by filename.
-    Handles pagination to fetch up to 1000 images and filters based on IMAGE_START_NUMBER and IMAGE_COUNT.
+    Handles pagination to fetch up to max_images and filters based on image_start_number and image_count.
     Supports filename patterns: 
     - image (N).jpg where N is a number (e.g., image (7).jpg, image (10).jpg)
     - imageXXXXX.jpg where XXXXX is a 5-digit number (e.g., image00101.jpg)
@@ -257,15 +361,23 @@ def list_images(drive_service):
     import re
     from datetime import datetime
     
+    drive_folder_id = config['drive_folder_id']
+    folder_name = config['folder_name']
+    max_images = config['max_images']
+    retry_mode = config['retry_mode']
+    retry_image_list = config['retry_image_list']
+    image_start_number = config['image_start_number']
+    image_count = config['image_count']
+    
     query = (
-        f"mimeType='image/jpeg' and '{DRIVE_FOLDER_ID}' in parents and trashed=false"
+        f"mimeType='image/jpeg' and '{drive_folder_id}' in parents and trashed=false"
     )
     
     all_images = []
     page_token = None
     
-    # Fetch all images with pagination (up to MAX_IMAGES)
-    while len(all_images) < MAX_IMAGES:
+    # Fetch all images with pagination (up to max_images)
+    while len(all_images) < max_images:
         try:
             # Add orderBy parameter to sort by name
             resp = drive_service.files().list(
@@ -287,21 +399,45 @@ def list_images(drive_service):
                 break
                 
         except Exception as e:
-            logging.error(f"Error fetching images from Google Drive: {str(e)}")
-            break
+            error_str = str(e).lower()
+            if 'invalid_grant' in error_str or 'expired' in error_str or 'revoked' in error_str:
+                logging.error(f"Error fetching images from Google Drive: {str(e)}")
+                project_id = config.get('project_id', '<PROJECT_ID>')
+                print("\n" + "="*70)
+                print("ERROR: Google Cloud authentication token has expired or been revoked")
+                print("="*70)
+                print("\nTo fix this, please refresh your Google Cloud credentials:")
+                print("\n  1. Verify your OAuth client configuration:")
+                print("     - Ensure client_secret.json belongs to the")
+                print("       correct Google Cloud project and Google account")
+                print("     - Check that the file matches the account you're authenticating with")
+                print("\n  2. Run the credential refresh script:")
+                print("     python refresh_credentials.py")
+                print("\n  3. Or use gcloud (if you have gcloud CLI installed):")
+                print(f"     gcloud auth application-default login --project={project_id} \\")
+                print("       --scopes=https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/cloud-platform")
+                print("\n  4. After refreshing, run the transcription script again:")
+                print(f"     python transcribe.py <your_config.yaml>")
+                print("\n  For more details, see the 'Troubleshooting' section in README.md")
+                print("\n" + "="*70 + "\n")
+                # Return empty list so the script can exit gracefully
+                return []
+            else:
+                logging.error(f"Error fetching images from Google Drive: {str(e)}")
+                break
     
-    # Limit to MAX_IMAGES
-    all_images = all_images[:MAX_IMAGES]
-    logging.info(f"Found {len(all_images)} total images in folder '{FOLDER_NAME}' (sorted by filename)")
+    # Limit to max_images
+    all_images = all_images[:max_images]
+    logging.info(f"Found {len(all_images)} total images in folder '{folder_name}' (sorted by filename)")
     
     # RETRY MODE: If enabled, filter for specific failed images only
-    if RETRY_MODE:
-        logging.info(f"RETRY MODE ENABLED: Looking for {len(RETRY_IMAGE_LIST)} specific failed images")
+    if retry_mode:
+        logging.info(f"RETRY MODE ENABLED: Looking for {len(retry_image_list)} specific failed images")
         retry_images = []
         
         # Convert retry list to full image names (add "image - " prefix if needed)
         retry_full_names = []
-        for retry_img in RETRY_IMAGE_LIST:
+        for retry_img in retry_image_list:
             if retry_img.startswith('image - '):
                 retry_full_names.append(retry_img)
             else:
@@ -312,12 +448,12 @@ def list_images(drive_service):
             if img['name'] in retry_full_names:
                 retry_images.append(img)
         
-        logging.info(f"Found {len(retry_images)} retry images out of {len(RETRY_IMAGE_LIST)} requested")
+        logging.info(f"Found {len(retry_images)} retry images out of {len(retry_image_list)} requested")
         if retry_images:
             retry_filenames = [img['name'] for img in retry_images]
             logging.info(f"Retry images found: {retry_filenames}")
         else:
-            logging.warning("No retry images found! Check the RETRY_IMAGE_LIST names.")
+            logging.warning("No retry images found! Check the retry_image_list names in config.")
         
         return retry_images
     
@@ -403,7 +539,7 @@ def list_images(drive_service):
         
         # If we found a valid number, check if it's in the desired range
         if number is not None:
-            if IMAGE_START_NUMBER <= number < IMAGE_START_NUMBER + IMAGE_COUNT:
+            if image_start_number <= number < image_start_number + image_count:
                 numbered_images.append(img)
     
     # Handle numbered images (existing logic)
@@ -411,12 +547,12 @@ def list_images(drive_service):
     
     if numbered_images:
         # Define expected filename patterns for logging
-        start_filename_pattern1 = f"image ({IMAGE_START_NUMBER}).jpg"
-        end_filename_pattern1 = f"image ({IMAGE_START_NUMBER + IMAGE_COUNT - 1}).jpg"
-        start_filename_pattern2 = f"image{IMAGE_START_NUMBER:05d}.jpg"
-        end_filename_pattern2 = f"image{IMAGE_START_NUMBER + IMAGE_COUNT - 1:05d}.jpg"
-        start_filename_pattern3 = f"{IMAGE_START_NUMBER}.jpg"
-        end_filename_pattern3 = f"{IMAGE_START_NUMBER + IMAGE_COUNT - 1}.jpg"
+        start_filename_pattern1 = f"image ({image_start_number}).jpg"
+        end_filename_pattern1 = f"image ({image_start_number + image_count - 1}).jpg"
+        start_filename_pattern2 = f"image{image_start_number:05d}.jpg"
+        end_filename_pattern2 = f"image{image_start_number + image_count - 1:05d}.jpg"
+        start_filename_pattern3 = f"{image_start_number}.jpg"
+        end_filename_pattern3 = f"{image_start_number + image_count - 1}.jpg"
         
         logging.info(f"Filtering numbered images from {start_filename_pattern1} to {end_filename_pattern1} OR {start_filename_pattern2} to {end_filename_pattern2} OR {start_filename_pattern3} to {end_filename_pattern3}")
         
@@ -469,16 +605,16 @@ def list_images(drive_service):
         
         timestamp_images.sort(key=extract_timestamp_for_sorting)
         
-        # For timestamp images, treat IMAGE_START_NUMBER as the starting position (1-indexed)
-        # and IMAGE_COUNT as the number of images to process
-        start_pos = max(1, IMAGE_START_NUMBER) - 1  # Convert to 0-indexed
-        end_pos = min(len(timestamp_images), start_pos + IMAGE_COUNT)
+        # For timestamp images, treat image_start_number as the starting position (1-indexed)
+        # and image_count as the number of images to process
+        start_pos = max(1, image_start_number) - 1  # Convert to 0-indexed
+        end_pos = min(len(timestamp_images), start_pos + image_count)
         
         selected_timestamp_images = timestamp_images[start_pos:end_pos]
         filtered_images.extend(selected_timestamp_images)
         
         if selected_timestamp_images:
-            logging.info(f"Selected {len(selected_timestamp_images)} timestamp images from position {IMAGE_START_NUMBER} to {start_pos + len(selected_timestamp_images)}")
+            logging.info(f"Selected {len(selected_timestamp_images)} timestamp images from position {image_start_number} to {start_pos + len(selected_timestamp_images)}")
             filenames = [img['name'] for img in selected_timestamp_images]
             logging.info(f"Selected timestamp files: {filenames}")
     
@@ -523,13 +659,13 @@ def list_images(drive_service):
         filtered_images.sort(key=mixed_sorting_key)
     
     # If no images were selected by number/timestamp filters, fall back to position-based selection
-    if not filtered_images and all_images and not RETRY_MODE:
+    if not filtered_images and all_images and not retry_mode:
         # all_images are already sorted by name from the Drive API
-        start_pos = max(1, IMAGE_START_NUMBER) - 1
-        end_pos = min(len(all_images), start_pos + IMAGE_COUNT)
+        start_pos = max(1, image_start_number) - 1
+        end_pos = min(len(all_images), start_pos + image_count)
         fallback_selected = all_images[start_pos:end_pos]
         if fallback_selected:
-            logging.info(f"No numeric/timestamp matches; falling back to position selection: items {IMAGE_START_NUMBER} to {IMAGE_START_NUMBER + len(fallback_selected) - 1}")
+            logging.info(f"No numeric/timestamp matches; falling back to position selection: items {image_start_number} to {image_start_number + len(fallback_selected) - 1}")
             filtered_images = fallback_selected
 
     logging.info(f"Selected {len(filtered_images)} total images for processing")
@@ -542,10 +678,10 @@ def list_images(drive_service):
     return filtered_images
 
 
-def download_image(drive_service, file_id, file_name):
+def download_image(drive_service, file_id, file_name, folder_name: str):
     import time
     download_start = time.time()
-    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{file_name}' from folder '{FOLDER_NAME}'")
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{file_name}' from folder '{folder_name}'")
     try:
         request = drive_service.files().get_media(fileId=file_id)
         fh = io.BytesIO()
@@ -575,7 +711,7 @@ def download_image(drive_service, file_id, file_name):
         raise
 
 
-def transcribe_image(genai_client, image_bytes, file_name):
+def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr_model_id: str):
     import signal
     import time
     
@@ -593,7 +729,7 @@ def transcribe_image(genai_client, image_bytes, file_name):
     content = types.Content(
         role="user",
         parts=[
-                    types.Part.from_text(text=PROMPT_TEXT),
+                    types.Part.from_text(text=prompt_text),
             image_part
         ]
     )
@@ -622,7 +758,7 @@ def transcribe_image(genai_client, image_bytes, file_name):
         #         threshold="OFF"
         #     )
         # ],
-        system_instruction=[types.Part.from_text(text=PROMPT_TEXT)],
+        system_instruction=[types.Part.from_text(text=prompt_text)],
         thinking_config=types.ThinkingConfig(
             thinking_budget=5000,
         ),
@@ -659,7 +795,7 @@ def transcribe_image(genai_client, image_bytes, file_name):
             
             # Generate content
             response = genai_client.models.generate_content(
-                model=OCR_MODEL_ID,
+                model=ocr_model_id,
                 contents=[content],
                 config=generate_content_config
             )
@@ -687,10 +823,10 @@ def transcribe_image(genai_client, image_bytes, file_name):
             
             # Log the full AI response to the AI responses log
             ai_logger.info(f"=== AI Response for {file_name} ===")
-            ai_logger.info(f"Model: {OCR_MODEL_ID}")
+            ai_logger.info(f"Model: {ocr_model_id}")
             ai_logger.info(f"Request timestamp: {datetime.now().isoformat()}")
             ai_logger.info(f"Image size: {len(image_bytes)} bytes")
-            ai_logger.info(f"Instruction length: {len(PROMPT_TEXT)} characters")
+            ai_logger.info(f"Instruction length: {len(prompt_text)} characters")
             ai_logger.info(f"Response length: {len(text) if text else 0} characters")
             ai_logger.info(f"Processing time: {elapsed_time:.1f} seconds")
             
@@ -783,8 +919,11 @@ def transcribe_image(genai_client, image_bytes, file_name):
             return f"[Error during transcription: {str(e)}]", None, None
 
 
-def create_doc(docs_service, drive_service, title):
+def create_doc(docs_service, drive_service, title, config: dict):
     """Create a new Google Doc in the specified folder and return its ID."""
+    drive_folder_id = config['drive_folder_id']
+    folder_name = config['folder_name']
+    
     try:
         # First create the document
         doc = docs_service.documents().create(body={'title': title}).execute()
@@ -793,17 +932,18 @@ def create_doc(docs_service, drive_service, title):
         # Then move it to the specified folder
         file = drive_service.files().update(
             fileId=doc_id,
-            addParents=DRIVE_FOLDER_ID,
+            addParents=drive_folder_id,
             fields='id, parents'
         ).execute()
         
-        logging.info(f"Created new Google Doc '{title}' in folder '{FOLDER_NAME}' with ID: {doc_id}")
+        logging.info(f"Created new Google Doc '{title}' in folder '{folder_name}' with ID: {doc_id}")
         return doc_id
     except Exception as e:
         logging.error(f"Error creating Google Doc: {str(e)}")
         # Check if it's a permission error
         if 'insufficientFilePermissions' in str(e) or '403' in str(e):
-            logging.warning(f"Insufficient permissions to add document to folder '{FOLDER_NAME}'")
+            folder_name = config['folder_name']
+            logging.warning(f"Insufficient permissions to add document to folder '{folder_name}'")
             logging.warning(f"Document was created but could not be moved to the target folder")
             logging.info(f"Returning None to trigger local save fallback")
             return None
@@ -869,7 +1009,7 @@ def calculate_metrics(usage_metadata_list, timing_list):
     }
 
 
-def create_overview_section(pages, metrics=None, start_time=None, end_time=None):
+def create_overview_section(pages, config: dict, prompt_text: str, metrics=None, start_time=None, end_time=None):
     """
     Create overview section content for the document.
     Returns tuple of (overview_content, formatting_info) where formatting_info is a dict with:
@@ -880,10 +1020,18 @@ def create_overview_section(pages, metrics=None, start_time=None, end_time=None)
     
     Args:
         pages: List of page dictionaries with 'name', 'webViewLink', 'text'
+        config: Configuration dictionary
+        prompt_text: The prompt text used for transcription
         metrics: Optional dictionary with calculated metrics (total_time, avg_time_per_page, etc.)
         start_time: Optional datetime object for when transcription started
         end_time: Optional datetime object for when transcription ended
     """
+    drive_folder_id = config['drive_folder_id']
+    folder_name = config['folder_name']
+    archive_index = config['archive_index']
+    ocr_model_id = config['ocr_model_id']
+    prompt_file = config['prompt_file']
+    
     # Get folder link from the first page
     folder_link = pages[0]['webViewLink'] if pages else ""
     # Extract folder ID from the link for a cleaner folder link
@@ -891,8 +1039,8 @@ def create_overview_section(pages, metrics=None, start_time=None, end_time=None)
         folder_id = folder_link.split('folders/')[1].split('/')[0]
         folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
     else:
-        # Use DRIVE_FOLDER_ID to construct folder URL if webViewLink doesn't have folder info
-        folder_url = f"https://drive.google.com/drive/folders/{DRIVE_FOLDER_ID}"
+        # Use drive_folder_id to construct folder URL if webViewLink doesn't have folder info
+        folder_url = f"https://drive.google.com/drive/folders/{drive_folder_id}"
     
     # Count successful and failed transcriptions
     successful_pages = [p for p in pages if p['text'] and not p['text'].startswith('[Error')]
@@ -920,18 +1068,18 @@ The neural network makes many inaccuracies in translating names and surnames - u
 
 {disclaimer_text}
 
-Name: {FOLDER_NAME}
-Folder Link: {FOLDER_NAME}
+Name: {folder_name}
+Folder Link: {folder_name}
 """
     
     # Calculate folder link position (after "Folder Link: ")
     folder_link_start = overview_content.find("Folder Link: ") + len("Folder Link: ")
-    folder_link_end = folder_link_start + len(FOLDER_NAME)
+    folder_link_end = folder_link_start + len(folder_name)
     folder_link_info = (folder_link_start, folder_link_end, folder_url)
     
     # Add archive index if available
-    if ARCHIVE_INDEX:
-        overview_content += f"Archive Index: {ARCHIVE_INDEX}\n"
+    if archive_index:
+        overview_content += f"Archive Index: {archive_index}\n"
     
     # Add time start and time end
     if start_time:
@@ -947,8 +1095,8 @@ Folder Link: {FOLDER_NAME}
     metrics_label = "Metrics:"
     prompt_used_label = "Prompt Used:"
     
-    overview_content += f"""Model: {OCR_MODEL_ID}
-Prompt File: {PROMPT_FILE}
+    overview_content += f"""Model: {ocr_model_id}
+Prompt File: {prompt_file}
 
 {files_processed_label}
 Count: {file_count}
@@ -1004,7 +1152,7 @@ Estimated Cost Per Page: N/A
     
     overview_content += f"""
 {prompt_used_label}
-{PROMPT_TEXT}
+{prompt_text}
 
 {'='*50}
 
@@ -1012,7 +1160,7 @@ Estimated Cost Per Page: N/A
     
     # Calculate prompt text range (after the label and newline)
     prompt_text_start = overview_content.find(prompt_used_label) + len(prompt_used_label) + 1  # +1 for newline
-    prompt_text_end = prompt_text_start + len(PROMPT_TEXT)
+    prompt_text_end = prompt_text_start + len(prompt_text)
     
     # Recalculate disclaimer range (positions may have shifted)
     disclaimer_start = overview_content.find(disclaimer_text.split('\n')[0])
@@ -1033,7 +1181,7 @@ Estimated Cost Per Page: N/A
     return overview_content, formatting_info
 
 
-def update_overview_section(docs_service, doc_id, pages, metrics=None, start_time=None, end_time=None):
+def update_overview_section(docs_service, doc_id, pages, config: dict, prompt_text: str, metrics=None, start_time=None, end_time=None):
     """
     Update the overview section in an existing document with final metrics.
     
@@ -1044,10 +1192,13 @@ def update_overview_section(docs_service, doc_id, pages, metrics=None, start_tim
         docs_service: Google Docs API service
         doc_id: Document ID
         pages: List of all page dictionaries (from all batches)
+        config: Configuration dictionary
+        prompt_text: The prompt text used for transcription
         metrics: Final metrics dictionary with overall stats
         start_time: Start time of the transcription run
         end_time: End time of the transcription run
     """
+    archive_index = config['archive_index']
     import time
     from googleapiclient.errors import HttpError
     
@@ -1081,7 +1232,7 @@ def update_overview_section(docs_service, doc_id, pages, metrics=None, start_tim
                         header_end = element['endIndex']
                     elif 'paragraphStyle' in para and para['paragraphStyle'].get('namedStyleType') == 'HEADING_2':
                         # Check if this is the first page header (contains archive index pattern)
-                        if ARCHIVE_INDEX and ARCHIVE_INDEX in para.get('elements', [{}])[0].get('textRun', {}).get('content', ''):
+                        if archive_index and archive_index in para.get('elements', [{}])[0].get('textRun', {}).get('content', ''):
                             first_page_header_start = element['startIndex']
                             break
             
@@ -1116,7 +1267,7 @@ def update_overview_section(docs_service, doc_id, pages, metrics=None, start_tim
                                     for elem in para.get('elements', []):
                                         if 'textRun' in elem:
                                             text_content += elem['textRun'].get('content', '')
-                                    if "TRANSCRIPTION RUN SUMMARY" not in text_content and ARCHIVE_INDEX:
+                                    if "TRANSCRIPTION RUN SUMMARY" not in text_content and archive_index:
                                         # This is likely the first page header
                                         first_page_header_start = element['startIndex']
                                         break
@@ -1130,7 +1281,7 @@ def update_overview_section(docs_service, doc_id, pages, metrics=None, start_tim
                 return False
             
             # Prepare new overview content with final metrics
-            overview_content, formatting_info = create_overview_section(pages, metrics, start_time, end_time)
+            overview_content, formatting_info = create_overview_section(pages, config, prompt_text, metrics, start_time, end_time)
             folder_link_info = formatting_info['folder_link_info']
             bold_labels = formatting_info['bold_labels']
             prompt_text_range = formatting_info['prompt_text_range']
@@ -1343,13 +1494,15 @@ def add_record_links_to_text(text, archive_index, page_number, web_view_link):
     return modified_text, link_insertions
 
 
-def save_transcription_locally(pages, doc_name, metrics=None, start_time=None, end_time=None):
+def save_transcription_locally(pages, doc_name, config: dict, prompt_text: str, logs_dir: str, metrics=None, start_time=None, end_time=None):
     """
     Save transcription to a local text file when Google Doc creation fails.
     """
+    folder_name = config['folder_name']
+    
     try:
         # Create output directory if it doesn't exist
-        output_dir = os.path.join(LOGS_DIR, "local_transcriptions")
+        output_dir = os.path.join(logs_dir, "local_transcriptions")
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
         
@@ -1359,13 +1512,13 @@ def save_transcription_locally(pages, doc_name, metrics=None, start_time=None, e
         output_file = os.path.join(output_dir, f"{safe_doc_name}.txt")
         
         # Create overview content (for local files, we just need the text, not formatting info)
-        overview_content, _ = create_overview_section(pages, metrics, start_time, end_time)
+        overview_content, _ = create_overview_section(pages, config, prompt_text, metrics, start_time, end_time)
         
         # Write to file
         with open(output_file, 'w', encoding='utf-8') as f:
             # Write document header
             run_date = datetime.now().strftime("%Y%m%d")
-            document_header = f"{FOLDER_NAME} {run_date}"
+            document_header = f"{folder_name} {run_date}"
             f.write(document_header + "\n\n")
             
             # Write overview
@@ -1388,7 +1541,7 @@ def save_transcription_locally(pages, doc_name, metrics=None, start_time=None, e
         raise
 
 
-def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_time=None, end_time=None, write_overview=True):
+def write_to_doc(docs_service, doc_id, pages, config: dict, prompt_text: str, start_idx=0, metrics=None, start_time=None, end_time=None, write_overview=True):
     """
     Write transcribed content to a Google Doc using Atomic Page Writes.
     Fetches the true document end index before every page write to prevent index drift errors.
@@ -1403,15 +1556,20 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
         docs_service: Google Docs API service
         doc_id: Document ID
         pages: List of page dictionaries
+        config: Configuration dictionary
+        prompt_text: The prompt text used for transcription
         start_idx: Starting index in pages list (for incremental writes)
         metrics: Optional metrics dictionary
         start_time: Optional start time
         end_time: Optional end time
         write_overview: If True, write overview section and document header (default: True)
     """
-    logging.info(f"Preparing document content for folder '{FOLDER_NAME}'...")
-    if ARCHIVE_INDEX:
-        logging.info(f"Using archive index: {ARCHIVE_INDEX}")
+    folder_name = config['folder_name']
+    archive_index = config['archive_index']
+    
+    logging.info(f"Preparing document content for folder '{folder_name}'...")
+    if archive_index:
+        logging.info(f"Using archive index: {archive_index}")
     
     try:
         # Circuit breaker to prevent cascading failures
@@ -1426,7 +1584,7 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
             
             # Prepare Header
             run_date = datetime.now().strftime("%Y%m%d")
-            document_header = f"{FOLDER_NAME} {run_date}"
+            document_header = f"{folder_name} {run_date}"
             
             # Insert Header
             header_requests = [
@@ -1456,7 +1614,7 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
             idx = doc['body']['content'][-1]['endIndex'] - 1
             
             # Prepare Overview Content
-            overview_content, formatting_info = create_overview_section(pages, metrics, start_time, end_time)
+            overview_content, formatting_info = create_overview_section(pages, config, prompt_text, metrics, start_time, end_time)
             folder_link_info = formatting_info['folder_link_info']
             bold_labels = formatting_info['bold_labels']
             prompt_text_range = formatting_info['prompt_text_range']
@@ -1587,8 +1745,8 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
                 
                 # Prepare page data
                 page_number = i
-                if ARCHIVE_INDEX:
-                    page_header = f"{ARCHIVE_INDEX}стр{page_number}"
+                if archive_index:
+                    page_header = f"{archive_index}стр{page_number}"
                 else:
                     page_header = item['name']
                 
@@ -1640,7 +1798,7 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
                 if item['text']:
                     modified_text, link_insertions = add_record_links_to_text(
                         item['text'], 
-                        ARCHIVE_INDEX, 
+                        archive_index, 
                         page_number, 
                         item['webViewLink']
                     )
@@ -1720,46 +1878,60 @@ def write_to_doc(docs_service, doc_id, pages, start_idx=0, metrics=None, start_t
         raise
 
 
-def main():
+def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
     """Main function to process images and create transcription document."""
+    # Extract config values for easier access
+    project_id = config['project_id']
+    folder_name = config['folder_name']
+    archive_index = config['archive_index']
+    ocr_model_id = config['ocr_model_id']
+    test_mode = config['test_mode']
+    retry_mode = config['retry_mode']
+    retry_image_list = config['retry_image_list']
+    max_images = config['max_images']
+    image_start_number = config['image_start_number']
+    image_count = config['image_count']
+    batch_size_for_doc = config['batch_size_for_doc']
+    adc_file = config['adc_file']
+    
     try:
         # Log session start
         ai_logger.info(f"=== Transcription Session Started ===")
         ai_logger.info(f"Session timestamp: {datetime.now().isoformat()}")
-        ai_logger.info(f"Project ID: {PROJECT_ID}")
-        ai_logger.info(f"Folder: {FOLDER_NAME}")
-        ai_logger.info(f"Archive Index: {ARCHIVE_INDEX if ARCHIVE_INDEX else 'None'}")
-        ai_logger.info(f"Model: {OCR_MODEL_ID}")
-        ai_logger.info(f"Test mode: {TEST_MODE}")
-        ai_logger.info(f"Retry mode: {RETRY_MODE}")
-        if RETRY_MODE:
-            ai_logger.info(f"Retry images count: {len(RETRY_IMAGE_LIST)}")
-            ai_logger.info(f"Retry images: {RETRY_IMAGE_LIST}")
+        ai_logger.info(f"Project ID: {project_id}")
+        ai_logger.info(f"Folder: {folder_name}")
+        ai_logger.info(f"Archive Index: {archive_index if archive_index else 'None'}")
+        ai_logger.info(f"Model: {ocr_model_id}")
+        ai_logger.info(f"Test mode: {test_mode}")
+        ai_logger.info(f"Retry mode: {retry_mode}")
+        if retry_mode:
+            ai_logger.info(f"Retry images count: {len(retry_image_list)}")
+            ai_logger.info(f"Retry images: {retry_image_list}")
         else:
-            ai_logger.info(f"Max images: {MAX_IMAGES}")
-            ai_logger.info(f"Image start number: {IMAGE_START_NUMBER}")
-            ai_logger.info(f"Image count: {IMAGE_COUNT}")
-        ai_logger.info(f"Batch size for doc: {BATCH_SIZE_FOR_DOC}")
+            ai_logger.info(f"Max images: {max_images}")
+            ai_logger.info(f"Image start number: {image_start_number}")
+            ai_logger.info(f"Image count: {image_count}")
+        ai_logger.info(f"Batch size for doc: {batch_size_for_doc}")
         ai_logger.info(f"=== Session Configuration ===\n")
         
         # Initialize services
-        creds = authenticate()
-        drive_service, docs_service, genai_client = init_services(creds)
+        creds = authenticate(adc_file)
+        drive_service, docs_service, genai_client = init_services(creds, config)
 
-        images = list_images(drive_service)
+        images = list_images(drive_service, config)
         
         if not images:
-            if RETRY_MODE:
-                logging.error(f"No retry images found in folder '{FOLDER_NAME}' from the RETRY_IMAGE_LIST")
-                ai_logger.error(f"No retry images found from list of {len(RETRY_IMAGE_LIST)} images")
+            if retry_mode:
+                logging.error(f"No retry images found in folder '{folder_name}' from the retry_image_list")
+                ai_logger.error(f"No retry images found from list of {len(retry_image_list)} images")
             else:
-                logging.error(f"No images found in folder '{FOLDER_NAME}' for the specified range (start: {IMAGE_START_NUMBER}, count: {IMAGE_COUNT})")
-                ai_logger.error(f"No images found for range {IMAGE_START_NUMBER} to {IMAGE_START_NUMBER + IMAGE_COUNT - 1}")
+                logging.error(f"No images found in folder '{folder_name}' for the specified range (start: {image_start_number}, count: {image_count})")
+                ai_logger.error(f"No images found for range {image_start_number} to {image_start_number + image_count - 1}")
             return
         
         # Process images in batches for incremental document writing
-        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription of {len(images)} images in batches of {BATCH_SIZE_FOR_DOC}...")
-        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting batch transcription of {len(images)} images (batch size: {BATCH_SIZE_FOR_DOC}) ===")
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription of {len(images)} images in batches of {batch_size_for_doc}...")
+        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting batch transcription of {len(images)} images (batch size: {batch_size_for_doc}) ===")
         start_time = datetime.now()
         transcribed_pages = []
         usage_metadata_list = []
@@ -1771,12 +1943,12 @@ def main():
         
         # Process images in batches
         total_images = len(images)
-        num_batches = (total_images + BATCH_SIZE_FOR_DOC - 1) // BATCH_SIZE_FOR_DOC  # Ceiling division
+        num_batches = (total_images + batch_size_for_doc - 1) // batch_size_for_doc  # Ceiling division
         
         try:
             for batch_num in range(num_batches):
-                batch_start_idx = batch_num * BATCH_SIZE_FOR_DOC
-                batch_end_idx = min(batch_start_idx + BATCH_SIZE_FOR_DOC, total_images)
+                batch_start_idx = batch_num * batch_size_for_doc
+                batch_end_idx = min(batch_start_idx + batch_size_for_doc, total_images)
                 batch_images = images[batch_start_idx:batch_end_idx]
                 batch_size = len(batch_images)
                 
@@ -1806,12 +1978,12 @@ def main():
                     try:
                         download_start = datetime.now()
                         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{image_name}'...")
-                        img_bytes = download_image(drive_service, img['id'], img['name'])
+                        img_bytes = download_image(drive_service, img['id'], img['name'], folder_name)
                         download_elapsed = (datetime.now() - download_start).total_seconds()
                         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' downloaded in {download_elapsed:.1f}s, starting transcription...")
                         
                         transcription_start = datetime.now()
-                        text, elapsed_time, usage_metadata = transcribe_image(genai_client, img_bytes, img['name'])
+                        text, elapsed_time, usage_metadata = transcribe_image(genai_client, img_bytes, img['name'], prompt_text, ocr_model_id)
                         transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
                         
                         # Ensure text is not None
@@ -1852,14 +2024,14 @@ def main():
                             next_image_number = current_image_number + 1
                         else:
                             # Fallback: if we can't extract number, use position-based calculation
-                            next_image_number = IMAGE_START_NUMBER + global_idx
+                            next_image_number = image_start_number + global_idx
                         
                         error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
                         logging.error(error_msg)
                         logging.error(f"Full traceback:\n{traceback.format_exc()}")
-                        logging.error(f"RESUME INFO: To resume from this point, set IMAGE_START_NUMBER = {next_image_number} (filename number from '{image_name}')")
+                        logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number} (filename number from '{image_name}')")
                         ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
-                        ai_logger.error(f"RESUME INFO: Set IMAGE_START_NUMBER = {next_image_number} to resume from next image (current image filename number: {current_image_number})")
+                        ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image (current image filename number: {current_image_number})")
                         ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
                         
                 # Add error message as text
@@ -1882,7 +2054,7 @@ def main():
                     if first_batch:
                         # Create document after first batch
                         run_date = datetime.now().strftime("%Y%m%d")
-                        doc_name = f"{FOLDER_NAME} {run_date}"
+                        doc_name = f"{folder_name} {run_date}"
                         
                         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed ({len(batch_transcribed_pages)} images). Creating Google Doc '{doc_name}'...")
                         ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed, creating document...")
@@ -1891,13 +2063,13 @@ def main():
                         batch_metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
                         
                         # Try to create Google Doc
-                        doc_id = create_doc(docs_service, drive_service, doc_name)
+                        doc_id = create_doc(docs_service, drive_service, doc_name, config)
                         
                         if doc_id is None:
                             # Permission error - save locally instead
                             logging.warning("Cannot create Google Doc due to insufficient permissions")
                             logging.info("Saving transcription to local file instead...")
-                            local_file = save_transcription_locally(transcribed_pages, doc_name, batch_metrics, start_time, None)
+                            local_file = save_transcription_locally(transcribed_pages, doc_name, config, prompt_text, logs_dir, batch_metrics, start_time, None)
                             logging.info(f"✓ Transcription saved locally: {local_file}")
                             logging.info(f"✓ Processed {len(transcribed_pages)} images successfully")
                             # Continue processing but save locally for each batch
@@ -1906,7 +2078,7 @@ def main():
                         else:
                             # Write first batch with overview
                             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing first batch ({len(batch_transcribed_pages)} images) to document with overview...")
-                            write_to_doc(docs_service, doc_id, transcribed_pages, start_idx=0, metrics=batch_metrics, start_time=start_time, end_time=None, write_overview=True)
+                            write_to_doc(docs_service, doc_id, transcribed_pages, config, prompt_text, start_idx=0, metrics=batch_metrics, start_time=start_time, end_time=None, write_overview=True)
                             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ First batch written to document")
                             first_batch = False
                     else:
@@ -1916,15 +2088,15 @@ def main():
                             # Calculate start_idx for this batch (number of pages already written)
                             pages_written_so_far = len(transcribed_pages) - len(batch_transcribed_pages)
                             # Pass full transcribed_pages list with correct start_idx for proper page numbering
-                            write_to_doc(docs_service, doc_id, transcribed_pages, start_idx=pages_written_so_far, metrics=None, start_time=None, end_time=None, write_overview=False)
+                            write_to_doc(docs_service, doc_id, transcribed_pages, config, prompt_text, start_idx=pages_written_so_far, metrics=None, start_time=None, end_time=None, write_overview=False)
                             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Batch {batch_num + 1} written to document")
                         else:
                             # Document creation failed earlier, save locally
                             logging.warning(f"Cannot write batch {batch_num + 1} to document (doc creation failed). Saving locally...")
                             # Append to local file if it exists, or create new one
                             run_date = datetime.now().strftime("%Y%m%d")
-                            doc_name = f"{FOLDER_NAME} {run_date}"
-                            save_transcription_locally(batch_transcribed_pages, doc_name, None, None, None)
+                            doc_name = f"{folder_name} {run_date}"
+                            save_transcription_locally(batch_transcribed_pages, doc_name, config, prompt_text, logs_dir, None, None, None)
         
         except Exception as batch_error:
             # Log error and resume information
@@ -1940,16 +2112,16 @@ def main():
                     next_image_number = last_image_number + 1
                 else:
                     # Fallback: use position-based calculation
-                    next_image_number = IMAGE_START_NUMBER + images_processed
+                    next_image_number = image_start_number + images_processed
             elif images_processed > 0:
                 # Fallback if we can't get the last image name
-                next_image_number = IMAGE_START_NUMBER + images_processed
+                next_image_number = image_start_number + images_processed
             
             logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error processing batch: {error_type}: {str(batch_error)}")
             logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
             if next_image_number is not None:
                 last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
-                logging.error(f"RESUME INFO: To resume from this point, set IMAGE_START_NUMBER = {next_image_number}{last_image_info}")
+                logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number}{last_image_info}")
             logging.error(f"Full traceback:\n{traceback.format_exc()}")
             
             ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch Processing Error ===")
@@ -1957,7 +2129,7 @@ def main():
             ai_logger.error(f"Error message: {str(batch_error)}")
             ai_logger.error(f"Images processed before error: {images_processed}")
             if next_image_number is not None:
-                ai_logger.error(f"RESUME INFO: Set IMAGE_START_NUMBER = {next_image_number} to resume from next image")
+                ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image")
             ai_logger.error(f"Full traceback:\n{traceback.format_exc()}")
             ai_logger.error(f"=== End Batch Processing Error ===")
             
@@ -1981,7 +2153,7 @@ def main():
         # Update the overview section with final metrics from all batches
         if doc_id and len(transcribed_pages) > 0:
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Updating overview section with final metrics from all batches...")
-            success = update_overview_section(docs_service, doc_id, transcribed_pages, final_metrics, start_time, end_time)
+            success = update_overview_section(docs_service, doc_id, transcribed_pages, config, prompt_text, final_metrics, start_time, end_time)
             if success:
                 logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Overview section updated successfully.")
             else:
@@ -2015,10 +2187,10 @@ def main():
                 next_image_number = last_image_number + 1
             else:
                 # Fallback: use position-based calculation
-                next_image_number = IMAGE_START_NUMBER + images_processed
+                next_image_number = image_start_number + images_processed
         elif images_processed > 0:
             # Fallback if we can't get the last image name
-            next_image_number = IMAGE_START_NUMBER + images_processed
+            next_image_number = image_start_number + images_processed
         
         ai_logger.error(f"=== Transcription Session Error ===")
         ai_logger.error(f"Error timestamp: {datetime.now().isoformat()}")
@@ -2027,17 +2199,73 @@ def main():
         ai_logger.error(f"Images processed before error: {images_processed}")
         if next_image_number is not None:
             last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
-            ai_logger.error(f"RESUME INFO: Set IMAGE_START_NUMBER = {next_image_number} to resume from next image{last_image_info}")
+            ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image{last_image_info}")
         ai_logger.error(f"=== Session Error End ===\n")
         
         logging.error(f"Error in main: {error_type}: {str(e)}")
         if next_image_number is not None:
             last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
             logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
-            logging.error(f"RESUME INFO: To resume from this point, set IMAGE_START_NUMBER = {next_image_number}{last_image_info}")
+            logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number}{last_image_info}")
         logging.error(f"Full traceback:\n{traceback.format_exc()}")
         raise
 
 
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(
+        description='Genealogical Record Transcription Tool',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Example usage:
+  python transcribe.py config/config.yaml
+  
+The config file must be a YAML file containing all required configuration parameters.
+See config/config.yaml.example for a template.
+        """
+    )
+    parser.add_argument(
+        'config_file',
+        type=str,
+        help='Path to YAML configuration file (e.g., config/config.yaml)'
+    )
+    
+    args = parser.parse_args()
+    
+    try:
+        # Load configuration first (needed for logging setup)
+        config = load_config(args.config_file)
+        
+        # Set up logging (needs config for folder_name) - MUST be done before any logging calls
+        log_filename, ai_log_filename, ai_logger = setup_logging(config)
+        
+        # Now we can log
+        logging.info(f"Configuration loaded from: {args.config_file}")
+        logging.info(f"Logging initialized. Main log: {log_filename}, AI log: {ai_log_filename}")
+        
+        # Load prompt text
+        prompt_file = config['prompt_file']
+        prompt_text = load_prompt_text(prompt_file)
+        logging.info(f"Prompt file loaded: {prompt_file} ({len(prompt_text)} characters)")
+        
+        # Get logs directory for save_transcription_locally
+        logs_dir = "logs"
+        
+        # Run main function
+        main(config, prompt_text, ai_logger, logs_dir)
+        
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        print(f"Please provide a valid configuration file path.", file=sys.stderr)
+        sys.exit(1)
+    except KeyError as e:
+        print(f"Error: Missing required configuration key: {e}", file=sys.stderr)
+        print(f"Please check your configuration file against config/config.yaml.example", file=sys.stderr)
+        sys.exit(1)
+    except yaml.YAMLError as e:
+        print(f"Error: Invalid YAML in configuration file: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        logging.error(f"Fatal error: {e}")
+        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+        sys.exit(1)

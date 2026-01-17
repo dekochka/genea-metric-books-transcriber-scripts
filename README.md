@@ -247,8 +247,8 @@ sequenceDiagram
      - `gcloud auth application-default login --project=<PROJECT_ID> --scopes=https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/cloud-platform`
      - This writes `application_default_credentials.json` used by the scripts.
    - OAuth client via built-in helper:
-     - Place your OAuth client as `client_secret_ok.json` (or `client_secret.json`).
-     - Run `python refresh_credentials.py` (auto-detects `client_secret_ok.json`, generates `application_default_credentials.json`).
+     - Place your OAuth client as `client_secret.json` in the project root.
+     - Run `python refresh_credentials.py` (generates `application_default_credentials.json`).
 4. Drive access:
    - Share the target Drive folder (`DRIVE_FOLDER_ID`) with the same Google account that authenticated (Editor).
 
@@ -375,8 +375,15 @@ The script includes comprehensive error handling with automatic retries and expo
 
 ## Troubleshooting
 
-### Authentication / OAuth 403 access_denied
+### Authentication / OAuth Issues
+
+#### 403 access_denied or "app not verified"
 - If using OAuth client and you see “app not verified” / `access_denied`, either add your account as a Test User on the OAuth consent screen or use the gcloud ADC method (recommended).
+
+#### Token expired or invalid_grant errors
+- **Verify OAuth client file**: Ensure `client_secret.json` belongs to the correct Google Cloud project and matches the Google account you're authenticating with. Using a client secret from a different project/account will cause authentication failures.
+- **Refresh credentials**: Run `python refresh_credentials.py` to generate new credentials.
+- **Alternative**: Use gcloud ADC method (see Prerequisites section above) which doesn't require OAuth client files.
 
 ### Vertex AI first call is slow (cold start)
 - First call can take minutes. To reduce:
