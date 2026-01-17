@@ -20,11 +20,36 @@ A specialized tool for transcribing handwritten genealogical records (birth, dea
 
 ### Example: Input → Output
 
-**Input Image** (19th century Latin metric book record):
+**Input: Google Drive Folder** (Images of historical metric book records):
+
+![Google Drive Folder with Images](data_samples/gdrive_folder_context_before.jpg)
+
+The script processes images from a Google Drive folder containing scanned pages from historical metric books (birth, death, and marriage records).
+
+**Output: Google Doc Title Page** (Document header with title page image and transcription):
+
+![Google Doc Title Page](data_samples/gdrive_gdoc_transcribed_title_after.jpg)
+
+The script creates a Google Doc with:
+- Document title with transcription date
+- Title page image (if configured) with its transcription
+- Transcription run summary with metadata
+
+**Output: Transcribed Record** (Structured multilingual transcription):
+
+![Google Doc Transcribed Record](data_samples/gdrive_gdoc_transcribed_record_after.jpg)
+
+Each record is transcribed in **Russian, Ukrainian, and Latin**, preserving:
+- Names, dates, and relationships
+- Historical context from the original handwritten document
+- Clickable links to source images
+- Archive references (if configured)
+
+**Sample Input Record** (19th century Latin metric book record):
 
 ![Sample Birth Record](data_samples/latin_turilche_birth_sample_1_record_input.jpg)
 
-**Output Transcription** (Multilingual structured format):
+**Sample Output Transcription** (Text format):
 
 ```
 Год 1894
