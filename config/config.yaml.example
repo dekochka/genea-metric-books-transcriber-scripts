@@ -58,7 +58,7 @@ image_start_number: 1
 # Number of images to process starting from image_start_number
 # Example: if image_start_number=101 and image_count=5,
 # will process image00101.jpg through image00105.jpg
-image_count: 1
+image_count: 100
 
 # Number of images to transcribe before creating/writing to Google Doc
 # (for resilience - script creates doc after first batch, then appends
