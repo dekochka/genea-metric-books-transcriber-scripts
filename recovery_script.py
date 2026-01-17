@@ -14,7 +14,8 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 # Use same configuration as main script
-PROJECT_ID = "ru-ocr-genea"
+# Note: PROJECT_ID is not used in this script, but kept for reference
+# The script uses credentials from ADC_FILE which contains project info
 ADC_FILE = "application_default_credentials.json"
 
 def setup_logging():

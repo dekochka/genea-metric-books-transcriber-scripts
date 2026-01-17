@@ -15,11 +15,11 @@ project_id: "ukr-transcribe-genea"
 
 # Google Drive folder ID containing the images to transcribe
 # Get this from the Drive folder URL: https://drive.google.com/drive/folders/FOLDER_ID
-drive_folder_id: "1uWEsCZXIe8k8r4Vw7kxR9RBAhV5Yw6X6"
+drive_folder_id: "<your_drive_folder_id>"
 
 # Folder name for logging purposes (used in log filenames)
 # Should match or describe the Drive folder being processed
-folder_name: "ф487-1-47 1860-1876 с.Нивра Борщивского повиту"
+folder_name: "<your_folder_name>"
 
 # Archive index reference (condensed archive reference)
 # Format: ф[FOND]оп[OPIS]спр[DELO] or custom format like "f301-1438-"
