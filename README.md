@@ -267,11 +267,8 @@ pip install -r requirements.txt
 Before configuring the script, create or select a prompt file in the [`prompts/`](prompts/) folder. The prompt file defines the transcription instructions, village names, and common surnames for your specific metric book.
 
 **Note:** Use one of the existing prompt samples as a template and adjust it for your use case:
-- [`INSTRUCTION_TEMERIVTSY.txt`](prompts/INSTRUCTION_TEMERIVTSY.txt) - Example for Temerivtsy villages
-- [`INSTRUCTION_VERBIVKA_Ф487О1Д545_рожд.txt`](prompts/INSTRUCTION_VERBIVKA_Ф487О1Д545_рожд.txt) - Example for Verbivka births
-- [`VOVKIVTSY_Ф487О1Д25_рожд.txt`](prompts/VOVKIVTSY_Ф487О1Д25_рожд.txt) - Example for Vovkivtsy birth records
-- [`VOVKIVTSY_Ф487О1Д26_браки.txt`](prompts/VOVKIVTSY_Ф487О1Д26_браки.txt) - Example for Vovkivtsy marriage records
-- [`INSTRUCTION.txt`](prompts/INSTRUCTION.txt) - General template
+- [`NIWRA_f487o1s47.md`](prompts/NIWRA_f487o1s47.md) - Example for Niwra village birth records (1860-1876)
+- [`f487o1s545-Turilche.md`](prompts/f487o1s545-Turilche.md) - Example for Turilche village birth records (1888-1924)
 
 Customize the prompt with:
 - Village names specific to your metric book
