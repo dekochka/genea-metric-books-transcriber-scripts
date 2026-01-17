@@ -64,7 +64,7 @@ def load_config(config_path: str) -> dict:
     
     # Validate required keys
     required_keys = [
-        'prompt_file', 'project_id', 'drive_folder_id', 'folder_name',
+        'prompt_file', 'project_id', 'drive_folder_id',
         'archive_index', 'region', 'ocr_model_id', 'adc_file',
         'max_images', 'image_start_number',
         'image_count', 'batch_size_for_doc', 'retry_mode', 'retry_image_list'
@@ -115,11 +115,11 @@ def setup_logging(config: dict) -> tuple:
     # Generate timestamp for log files
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # Logging setup - create shorter log filename to avoid filesystem limits
-    folder_name = config['folder_name']
-    safe_folder_name = "".join(c for c in folder_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
-    safe_folder_name = safe_folder_name.replace(' ', '_')[:50]  # Limit to 50 chars
-    log_filename = os.path.join(LOGS_DIR, f"transcription_{safe_folder_name}_{timestamp}.log")
+    # Logging setup - use date-time-transcribe-session-folderid.log format
+    drive_folder_id = config['drive_folder_id']
+    # Use first 8 chars of folder ID for log filename
+    folder_id_short = drive_folder_id[:8] if len(drive_folder_id) >= 8 else drive_folder_id
+    log_filename = os.path.join(LOGS_DIR, f"{timestamp}-transcribe-session-{folder_id_short}.log")
     
     logging.basicConfig(
         level=logging.INFO,
@@ -344,6 +344,28 @@ def extract_image_number(filename):
     return None
 
 
+def get_folder_name(drive_service, drive_folder_id: str):
+    """
+    Fetch folder name from Google Drive API using folder ID.
+    
+    Args:
+        drive_service: Google Drive API service
+        drive_folder_id: Google Drive folder ID
+        
+    Returns:
+        Folder name string, or None if fetch fails
+    """
+    try:
+        folder_metadata = drive_service.files().get(
+            fileId=drive_folder_id,
+            fields='name'
+        ).execute()
+        return folder_metadata.get('name')
+    except Exception as e:
+        logging.warning(f"Could not fetch folder name from Drive API: {str(e)}")
+        return None
+
+
 def list_images(drive_service, config: dict):
     """
     Get list of images from Google Drive folder, sorted by filename.
@@ -361,7 +383,7 @@ def list_images(drive_service, config: dict):
     from datetime import datetime
     
     drive_folder_id = config['drive_folder_id']
-    folder_name = config['folder_name']
+    document_name = config.get('document_name', 'Unknown')
     max_images = config['max_images']
     retry_mode = config['retry_mode']
     retry_image_list = config['retry_image_list']
@@ -427,7 +449,7 @@ def list_images(drive_service, config: dict):
     
     # Limit to max_images
     all_images = all_images[:max_images]
-    logging.info(f"Found {len(all_images)} total images in folder '{folder_name}' (sorted by filename)")
+    logging.info(f"Found {len(all_images)} total images in folder (sorted by filename)")
     
     # RETRY MODE: If enabled, filter for specific failed images only
     if retry_mode:
@@ -677,10 +699,10 @@ def list_images(drive_service, config: dict):
     return filtered_images
 
 
-def download_image(drive_service, file_id, file_name, folder_name: str):
+def download_image(drive_service, file_id, file_name, document_name: str):
     import time
     download_start = time.time()
-    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{file_name}' from folder '{folder_name}'")
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{file_name}'")
     try:
         request = drive_service.files().get_media(fileId=file_id)
         fh = io.BytesIO()
@@ -921,7 +943,6 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
 def create_doc(docs_service, drive_service, title, config: dict):
     """Create a new Google Doc in the specified folder and return its ID."""
     drive_folder_id = config['drive_folder_id']
-    folder_name = config['folder_name']
     
     try:
         # First create the document
@@ -935,14 +956,13 @@ def create_doc(docs_service, drive_service, title, config: dict):
             fields='id, parents'
         ).execute()
         
-        logging.info(f"Created new Google Doc '{title}' in folder '{folder_name}' with ID: {doc_id}")
+        logging.info(f"Created new Google Doc '{title}' with ID: {doc_id}")
         return doc_id
     except Exception as e:
         logging.error(f"Error creating Google Doc: {str(e)}")
         # Check if it's a permission error
         if 'insufficientFilePermissions' in str(e) or '403' in str(e):
-            folder_name = config['folder_name']
-            logging.warning(f"Insufficient permissions to add document to folder '{folder_name}'")
+            logging.warning(f"Insufficient permissions to add document to folder")
             logging.warning(f"Document was created but could not be moved to the target folder")
             logging.info(f"Returning None to trigger local save fallback")
             return None
@@ -1026,7 +1046,7 @@ def create_overview_section(pages, config: dict, prompt_text: str, metrics=None,
         end_time: Optional datetime object for when transcription ended
     """
     drive_folder_id = config['drive_folder_id']
-    folder_name = config['folder_name']
+    document_name = config.get('document_name', 'Unknown')
     archive_index = config['archive_index']
     ocr_model_id = config['ocr_model_id']
     prompt_file = config['prompt_file']
@@ -1062,18 +1082,18 @@ def create_overview_section(pages, config: dict, prompt_text: str, metrics=None,
 
 The neural network makes many inaccuracies in translating names and surnames - use as an approximate translation of handwritten text and verify with the source!"""
     
-    # Create overview content with disclaimer first, then folder name as link text
+    # Create overview content with disclaimer first, then document name as link text
     overview_content = f"""TRANSCRIPTION RUN SUMMARY
 
 {disclaimer_text}
 
-Name: {folder_name}
-Folder Link: {folder_name}
+Name: {document_name}
+Folder Link: {document_name}
 """
     
     # Calculate folder link position (after "Folder Link: ")
     folder_link_start = overview_content.find("Folder Link: ") + len("Folder Link: ")
-    folder_link_end = folder_link_start + len(folder_name)
+    folder_link_end = folder_link_start + len(document_name)
     folder_link_info = (folder_link_start, folder_link_end, folder_url)
     
     # Add archive index if available
@@ -1497,7 +1517,7 @@ def save_transcription_locally(pages, doc_name, config: dict, prompt_text: str, 
     """
     Save transcription to a local text file when Google Doc creation fails.
     """
-    folder_name = config['folder_name']
+    document_name = config.get('document_name', 'Unknown')
     
     try:
         # Create output directory if it doesn't exist
@@ -1517,7 +1537,7 @@ def save_transcription_locally(pages, doc_name, config: dict, prompt_text: str, 
         with open(output_file, 'w', encoding='utf-8') as f:
             # Write document header
             run_date = datetime.now().strftime("%Y%m%d")
-            document_header = f"{folder_name} {run_date}"
+            document_header = f"{document_name} {run_date}"
             f.write(document_header + "\n\n")
             
             # Write overview
@@ -1563,10 +1583,10 @@ def write_to_doc(docs_service, doc_id, pages, config: dict, prompt_text: str, st
         end_time: Optional end time
         write_overview: If True, write overview section and document header (default: True)
     """
-    folder_name = config['folder_name']
+    document_name = config.get('document_name', 'Unknown')
     archive_index = config['archive_index']
     
-    logging.info(f"Preparing document content for folder '{folder_name}'...")
+    logging.info(f"Preparing document content...")
     if archive_index:
         logging.info(f"Using archive index: {archive_index}")
     
@@ -1583,7 +1603,7 @@ def write_to_doc(docs_service, doc_id, pages, config: dict, prompt_text: str, st
             
             # Prepare Header
             run_date = datetime.now().strftime("%Y%m%d")
-            document_header = f"{folder_name} {run_date}"
+            document_header = f"{document_name} {run_date}"
             
             # Insert Header
             header_requests = [
@@ -1881,7 +1901,6 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
     """Main function to process images and create transcription document."""
     # Extract config values for easier access
     project_id = config['project_id']
-    folder_name = config['folder_name']
     archive_index = config['archive_index']
     ocr_model_id = config['ocr_model_id']
     retry_mode = config['retry_mode']
@@ -1893,11 +1912,28 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
     adc_file = config['adc_file']
     
     try:
+        # Initialize services first (needed to fetch document_name if not provided)
+        creds = authenticate(adc_file)
+        drive_service, docs_service, genai_client = init_services(creds, config)
+
+        # Fetch folder name and set document_name if not provided
+        if 'document_name' not in config or not config.get('document_name'):
+            fetched_folder_name = get_folder_name(drive_service, config['drive_folder_id'])
+            if fetched_folder_name:
+                config['document_name'] = fetched_folder_name
+                logging.info(f"Fetched folder name from Drive API: '{fetched_folder_name}'")
+            else:
+                # Fallback to folder ID if fetch fails
+                config['document_name'] = f"Folder_{config['drive_folder_id'][:8]}"
+                logging.warning(f"Could not fetch folder name, using fallback: '{config['document_name']}'")
+        
+        document_name = config.get('document_name', 'Unknown')
+        
         # Log session start
         ai_logger.info(f"=== Transcription Session Started ===")
         ai_logger.info(f"Session timestamp: {datetime.now().isoformat()}")
         ai_logger.info(f"Project ID: {project_id}")
-        ai_logger.info(f"Folder: {folder_name}")
+        ai_logger.info(f"Document: {document_name}")
         ai_logger.info(f"Archive Index: {archive_index if archive_index else 'None'}")
         ai_logger.info(f"Model: {ocr_model_id}")
         ai_logger.info(f"Retry mode: {retry_mode}")
@@ -1910,19 +1946,15 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
             ai_logger.info(f"Image count: {image_count}")
         ai_logger.info(f"Batch size for doc: {batch_size_for_doc}")
         ai_logger.info(f"=== Session Configuration ===\n")
-        
-        # Initialize services
-        creds = authenticate(adc_file)
-        drive_service, docs_service, genai_client = init_services(creds, config)
 
         images = list_images(drive_service, config)
         
         if not images:
             if retry_mode:
-                logging.error(f"No retry images found in folder '{folder_name}' from the retry_image_list")
+                logging.error(f"No retry images found from the retry_image_list")
                 ai_logger.error(f"No retry images found from list of {len(retry_image_list)} images")
             else:
-                logging.error(f"No images found in folder '{folder_name}' for the specified range (start: {image_start_number}, count: {image_count})")
+                logging.error(f"No images found for the specified range (start: {image_start_number}, count: {image_count})")
                 ai_logger.error(f"No images found for range {image_start_number} to {image_start_number + image_count - 1}")
             return
         
@@ -1975,7 +2007,7 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
                     try:
                         download_start = datetime.now()
                         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{image_name}'...")
-                        img_bytes = download_image(drive_service, img['id'], img['name'], folder_name)
+                        img_bytes = download_image(drive_service, img['id'], img['name'], document_name)
                         download_elapsed = (datetime.now() - download_start).total_seconds()
                         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' downloaded in {download_elapsed:.1f}s, starting transcription...")
                         
@@ -2051,7 +2083,7 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
                     if first_batch:
                         # Create document after first batch
                         run_date = datetime.now().strftime("%Y%m%d")
-                        doc_name = f"{folder_name} {run_date}"
+                        doc_name = f"{document_name} {run_date}"
                         
                         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed ({len(batch_transcribed_pages)} images). Creating Google Doc '{doc_name}'...")
                         ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed, creating document...")
@@ -2092,7 +2124,7 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
                             logging.warning(f"Cannot write batch {batch_num + 1} to document (doc creation failed). Saving locally...")
                             # Append to local file if it exists, or create new one
                             run_date = datetime.now().strftime("%Y%m%d")
-                            doc_name = f"{folder_name} {run_date}"
+                            doc_name = f"{document_name} {run_date}"
                             save_transcription_locally(batch_transcribed_pages, doc_name, config, prompt_text, logs_dir, None, None, None)
         
         except Exception as batch_error:
@@ -2232,7 +2264,7 @@ See config/config.yaml.example for a template.
         # Load configuration first (needed for logging setup)
         config = load_config(args.config_file)
         
-        # Set up logging (needs config for folder_name) - MUST be done before any logging calls
+        # Set up logging - MUST be done before any logging calls
         log_filename, ai_log_filename, ai_logger = setup_logging(config)
         
         # Now we can log

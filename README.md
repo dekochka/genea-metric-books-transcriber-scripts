@@ -291,12 +291,12 @@ Then edit `config/my-project.yaml` with your settings:
 
 ```yaml
 # Prompt configuration - point to your custom prompt file
-prompt_file: "INSTRUCTION.txt"
+prompt_file: "NIWRA_f487o1s47.md"
 
 # Google Cloud and Drive settings
 project_id: "ukr-transcribe-genea"  # or your project
 drive_folder_id: "<your_drive_folder_id>"
-folder_name: "<your_folder_name>"
+document_name: "<your_document_name>"  # Optional: if not provided, will be fetched from Google Drive folder name
 archive_index: "ф201оп4Aспр350"  # Condensed archive reference (e.g., "ф487оп1спр545")
                                   # Used for document headers and record links (format: ф[FOND]оп[OPIS]спр[DELO])
 region: "global"  # you can also try "us-central1"

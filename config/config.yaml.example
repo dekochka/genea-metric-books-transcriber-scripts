@@ -6,26 +6,27 @@
 # Set which prompt file to load from the `prompts` folder (without path).
 # The prompt file defines transcription instructions, village names, and common surnames.
 # Example: "f301-1439-WOJNILOW-1784-1829.md"
-prompt_file: "NIWRA_f487o1s47.md"
+prompt_file: "f487o1s545-Turilche.md"
 
 # ------------------------- GOOGLE CLOUD & DRIVE -------------------------
 # Google Cloud Project ID
 # Example: "ukr-transcribe-genea"
-project_id: "ukr-transcribe-genea"
+project_id: "ru-ocr-genea"
 
 # Google Drive folder ID containing the images to transcribe
 # Get this from the Drive folder URL: https://drive.google.com/drive/folders/FOLDER_ID
-drive_folder_id: "<your_drive_folder_id>"
+drive_folder_id: "1YHAeW5Yi8oeKqvQHHKHf8u0o_MpTKJPR"
 
-# Folder name for logging purposes (used in log filenames)
-# Should match or describe the Drive folder being processed
-folder_name: "<your_folder_name>"
+# Document name for transcribed document (optional)
+# If not provided, will be fetched from Google Drive folder name
+# Used for document title and headers
+# document_name: "<your_document_name>"
 
 # Archive index reference (condensed archive reference)
 # Format: ф[FOND]оп[OPIS]спр[DELO] or custom format like "f301-1438-"
 # Used for document headers and record links
 # Example: "ф487оп1спр545" or "f301-1438-"
-archive_index: "ф487-1-47-"
+archive_index: "ф487оп1спр545"
 
 # Vertex AI region
 # Options: "global", "us-central1", etc.
