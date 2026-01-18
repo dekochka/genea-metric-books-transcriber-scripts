@@ -1,0 +1,46 @@
+MIT License
+
+Copyright (c) 2025 Genea Metric Books Transcriber Scripts
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+DISCLAIMER:
+
+This software uses artificial intelligence (AI) models provided by third-party
+services (Google Vertex AI Gemini). The AI transcription results may contain
+errors, inaccuracies, or misinterpretations, especially with:
+- Handwritten text recognition
+- Historical document transcription
+- Name and surname translations
+- Date and number extraction
+
+Users are responsible for:
+- Verifying all transcription results against original source documents
+- Validating names, dates, and genealogical information
+- Using transcriptions as approximate translations only
+- Ensuring compliance with applicable laws and regulations
+
+The authors and contributors of this software assume no liability for:
+- Errors or inaccuracies in AI-generated transcriptions
+- Loss of data or information
+- Incorrect genealogical research based on transcriptions
+- Any consequences arising from the use of this software
+
+Use this software at your own risk. Always verify AI-generated transcriptions
+with original source documents.
