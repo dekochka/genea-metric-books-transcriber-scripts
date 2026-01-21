@@ -1,0 +1,24 @@
+# Test configuration for GOOGLECLOUD mode
+# Example configuration - update with your actual values for testing
+mode: "googlecloud"
+
+googlecloud:
+  project_id: "ukr-transcribe-genea"
+  drive_folder_id: "1YHAeW5Yi8oeKqvQHHKHf8u0o_MpTKJPR"
+  region: "global"
+  ocr_model_id: "gemini-3-flash-preview"
+  adc_file: "application_default_credentials.json"
+  document_name: "Test Document"
+  title_page_filename: "cover-title-page.jpg"
+
+# Shared configuration
+prompt_file: "f487o1s545-Turilche.md"
+archive_index: "ф487оп1спр545"
+image_start_number: 1
+image_count: 3
+batch_size_for_doc: 2
+max_images: 1000
+
+# Retry mode
+retry_mode: false
+retry_image_list: []

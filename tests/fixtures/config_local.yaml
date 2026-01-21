@@ -1,0 +1,16 @@
+# Test configuration for LOCAL mode
+# Points to test data sample directory
+mode: "local"
+
+local:
+  # API key can be set via GEMINI_API_KEY environment variable
+  api_key: "${GEMINI_API_KEY}"  # Use env var for testing
+  image_dir: "data_samples/test_input_sample"  # Test data location
+  output_dir: "tests/output"
+  ocr_model_id: "gemini-1.5-pro"
+
+# Shared configuration
+prompt_file: "f487o1s545-Turilche.md"
+archive_index: "ф487оп1спр545"
+image_start_number: 1
+image_count: 3  # Test with 3 images
