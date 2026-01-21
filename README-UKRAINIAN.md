@@ -137,11 +137,18 @@ Notes: Obstetrix non approbata Parasceva Demkiw.
 3. Або завантажте з https://www.python.org/downloads/macos/
 
 #### Перевірка встановлення:
-Відкрийте командний рядок (Terminal на macOS/Linux, Command Prompt на Windows) і введіть:
-```bash
-python3 --version
-```
+Відкрийте командний рядок (Terminal на macOS/Linux, PowerShell або Command Prompt на Windows) і введіть:
+- Windows:
+  ```powershell
+  python --version
+  ```
+- macOS/Linux:
+  ```bash
+  python3 --version
+  ```
 Повинно з'явитися щось на кшталт: `Python 3.10.0` або новіше.
+
+**Примітка для Windows**: Якщо `python` не працює, спробуйте `py` або `python3`. Якщо Python встановлено правильно, одна з цих команд має працювати.
 
 ### Крок 2: Створення проекту Google Cloud
 
@@ -169,15 +176,25 @@ python3 --version
    - macOS: `brew install google-cloud-sdk`
    - Linux: https://cloud.google.com/sdk/docs/install
 
-2. **Відкрийте Terminal/Command Prompt** і виконайте:
-   ```bash
-   gcloud auth application-default login --project=ВАШ_ПРОЕКТ_ID --scopes=https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/cloud-platform
-   ```
+2. **Відкрийте Terminal/PowerShell/Command Prompt** і виконайте:
+   - Windows (PowerShell або Command Prompt):
+     ```powershell
+     gcloud auth application-default login --project=ВАШ_ПРОЕКТ_ID --scopes=https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/cloud-platform
+     ```
+   - macOS/Linux (Terminal):
+     ```bash
+     gcloud auth application-default login --project=ВАШ_ПРОЕКТ_ID --scopes=https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/cloud-platform
+     ```
    Замініть `ВАШ_ПРОЕКТ_ID` на ID вашого проекту (наприклад: `ukr-transcribe-genea`)
 
 3. **Відкриється браузер** - увійдіть у свій Google акаунт і надайте дозволи
 
-4. **Файл `application_default_credentials.json`** буде створено автоматично в папці користувача
+4. **Файл `application_default_credentials.json`** буде створено автоматично. Розташування файлу:
+   - **Windows**: `C:\Users\ВАШЕ_ІМ'Я\AppData\Roaming\gcloud\application_default_credentials.json`
+     - Щоб знайти файл: натисніть `Win + R`, введіть `%APPDATA%\gcloud` і натисніть Enter
+   - **macOS/Linux**: `~/.config/gcloud/application_default_credentials.json`
+   
+   **Важливо**: Якщо ви побачили помилку "Цей додаток заблоковано" або "app not verified", див. розділ "Вирішення проблем" нижче.
 
 ### Крок 4: Підготовка папки Google Drive
 
@@ -190,43 +207,116 @@ python3 --version
    - То ID папки: `1YHAeW5Yi8oeKqvQHHKHf8u0o_MpTKJPR`
 4. **Надайте доступ**:
    - Натисніть правою кнопкою на папку → "Share" (Поділитися)
-   - Додайте свій Google акаунт як "Editor" (Редактор)
+   - **Якщо ви вже є власником папки** - додаткових дій не потрібно, ви вже маєте повний доступ
+   - **Якщо папку створив інший користувач** - додайте свій Google акаунт як "Editor" (Редактор)
 
 ### Крок 5: Завантаження та встановлення інструменту
 
-1. **Завантажте код**:
-   ```bash
-   git clone https://github.com/dekochka/genea-metric-books-transcriber-scripts.git
-   cd genea-metric-books-transcriber-scripts
-   ```
-   Або завантажте ZIP-архів з GitHub і розпакуйте
+**Де виконувати команди:**
+- **Windows**: Відкрийте PowerShell (натисніть `Win + X` → виберіть "Windows PowerShell" або "Terminal")
+  - Або натисніть `Win + R`, введіть `powershell` і натисніть Enter
+- **macOS**: Відкрийте Terminal (Програми → Утиліти → Terminal)
+- **Linux**: Відкрийте Terminal
+
+**Важливо**: 
+- Всі команди нижче виконуються в PowerShell/Terminal, **НЕ в Python**!
+- PowerShell/Terminal - це окрема програма для виконання команд, не Python
+
+1. **Завантажте код** (виберіть один з варіантів):
+
+   **Варіант А: За допомогою Git** (якщо встановлено Git):
+   - Windows (PowerShell):
+     ```powershell
+     git clone https://github.com/dekochka/genea-metric-books-transcriber-scripts.git
+     cd genea-metric-books-transcriber-scripts
+     ```
+   - macOS/Linux (Terminal):
+     ```bash
+     git clone https://github.com/dekochka/genea-metric-books-transcriber-scripts.git
+     cd genea-metric-books-transcriber-scripts
+     ```
+
+   **Варіант Б: Завантажити ZIP-архів** (якщо Git не встановлено):
+   1. Перейдіть на https://github.com/dekochka/genea-metric-books-transcriber-scripts
+   2. Натисніть кнопку "Code" (зелена кнопка) → "Download ZIP"
+   3. Розпакуйте ZIP-архів у зручне місце (наприклад, `C:\Users\ВАШЕ_ІМ'Я\Documents\` на Windows або `~/Documents/` на macOS/Linux)
+   4. Відкрийте PowerShell/Terminal і перейдіть до розпакованої папки:
+      - Windows (PowerShell):
+        ```powershell
+        cd C:\Users\ВАШЕ_ІМ'Я\Documents\genea-metric-books-transcriber-scripts
+        ```
+        (Замініть `ВАШЕ_ІМ'Я` на ваше ім'я користувача)
+      - macOS/Linux (Terminal):
+        ```bash
+        cd ~/Documents/genea-metric-books-transcriber-scripts
+        ```
 
 2. **Створіть віртуальне середовище Python**:
-   ```bash
-   python3 -m venv venv
-   ```
+   - Windows (PowerShell або Command Prompt):
+     ```powershell
+     python -m venv venv
+     ```
+   - macOS/Linux (Terminal):
+     ```bash
+     python3 -m venv venv
+     ```
 
 3. **Активуйте віртуальне середовище**:
-   - Windows:
-     ```bash
+   - Windows (PowerShell):
+     ```powershell
+     .\venv\Scripts\Activate.ps1
+     ```
+     **Якщо з'явилася помилка** "cannot be loaded because running scripts is disabled":
+     1. Закрийте PowerShell
+     2. Відкрийте PowerShell **як Адміністратор** (права кнопка миші → "Запустити від імені адміністратора")
+     3. Виконайте команду:
+        ```powershell
+        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+        ```
+     4. Натисніть `Y` (Yes) для підтвердження
+     5. Закрийте PowerShell і відкрийте знову (звичайним способом)
+     6. Спробуйте знову: `.\venv\Scripts\Activate.ps1`
+     
+     **Альтернатива**: Якщо не хочете змінювати політику виконання, використайте Command Prompt замість PowerShell:
+     ```cmd
      venv\Scripts\activate
      ```
-   - macOS/Linux:
+   - macOS/Linux (Terminal):
      ```bash
      source venv/bin/activate
      ```
+   
+   **Як перевірити, що віртуальне середовище активовано**: Перед рядком введення з'явиться `(venv)`:
+   ```
+   (venv) PS C:\Users\...>  (Windows)
+   (venv) user@computer:~$  (macOS/Linux)
+   ```
 
 4. **Встановіть необхідні бібліотеки**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+   - Windows (PowerShell/Command Prompt):
+     ```powershell
+     pip install -r requirements.txt
+     ```
+   - macOS/Linux (Terminal):
+     ```bash
+     pip install -r requirements.txt
+     ```
 
 ### Крок 6: Налаштування конфігурації
 
 1. **Скопіюйте файл конфігурації**:
-   ```bash
-   cp config/config.yaml.example config/my-project.yaml
-   ```
+   - Windows (PowerShell):
+     ```powershell
+     Copy-Item config\config.yaml.example config\my-project.yaml
+     ```
+     Або використайте:
+     ```powershell
+     copy config\config.yaml.example config\my-project.yaml
+     ```
+   - macOS/Linux (Terminal):
+     ```bash
+     cp config/config.yaml.example config/my-project.yaml
+     ```
 
 2. **Відкрийте файл `config/my-project.yaml`** у текстовому редакторі
 
@@ -264,28 +354,151 @@ python3 --version
    - Збережіть у папці `prompts/`
    - Вкажіть назву файлу в `prompt_file`
 
-5. **Перемістіть файл `application_default_credentials.json`**:
-   - Якщо ви використовували gcloud ADC, файл вже в правильному місці
-   - Якщо файл в іншому місці, скопіюйте його в кореневу папку проекту
+5. **Перемістіть файл `application_default_credentials.json`** (якщо потрібно):
+   - Якщо ви використовували gcloud ADC, файл вже в правильному місці і скрипт знайде його автоматично
+   - Якщо скрипт не знаходить файл, скопіюйте його в кореневу папку проекту:
+     - **Windows**: 
+       1. Знайдіть файл: `C:\Users\ВАШЕ_ІМ'Я\AppData\Roaming\gcloud\application_default_credentials.json`
+          - Натисніть `Win + R`, введіть `%APPDATA%\gcloud` і натисніть Enter
+       2. Скопіюйте файл `application_default_credentials.json`
+       3. Вставте в папку проекту (там, де знаходиться `transcribe.py`)
+     - **macOS/Linux**: 
+       1. Відкрийте Terminal
+       2. Виконайте:
+          ```bash
+          cp ~/.config/gcloud/application_default_credentials.json /шлях/до/проекту/
+          ```
+          (Замініть `/шлях/до/проекту/` на шлях до вашої папки проекту)
 
 ## Запуск та моніторинг
 
 ### Запуск транскрипції
 
+**Важливо**: Переконайтеся, що ви знаходитесь в папці проекту (там, де знаходиться файл `transcribe.py`)
+
 1. **Активуйте віртуальне середовище** (якщо ще не активовано):
-   - Windows: `venv\Scripts\activate`
-   - macOS/Linux: `source venv/bin/activate`
+   - Windows (PowerShell):
+     ```powershell
+     .\venv\Scripts\Activate.ps1
+     ```
+     **Якщо з'явилася помилка** "cannot be loaded because running scripts is disabled":
+     1. Закрийте PowerShell
+     2. Відкрийте PowerShell **як Адміністратор** (права кнопка миші → "Запустити від імені адміністратора")
+     3. Виконайте команду:
+        ```powershell
+        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+        ```
+     4. Натисніть `Y` (Yes) для підтвердження
+     5. Закрийте PowerShell і відкрийте знову (звичайним способом)
+     6. Спробуйте знову: `.\venv\Scripts\Activate.ps1`
+     
+     **Альтернатива**: Якщо не хочете змінювати політику виконання, використайте Command Prompt замість PowerShell:
+     ```cmd
+     venv\Scripts\activate
+     ```
+   - macOS/Linux (Terminal):
+     ```bash
+     source venv/bin/activate
+     ```
+   
+   **Перевірка**: Перед рядком введення має з'явитися `(venv)`
 
-2. **Запустіть скрипт**:
-   ```bash
-   python3 transcribe.py config/my-project.yaml
-   ```
+2. **Переконайтеся, що ви в папці проекту**:
+   - Windows (PowerShell):
+     ```powershell
+     cd C:\Users\ВАШЕ_ІМ'Я\Documents\genea-metric-books-transcriber-scripts
+     ```
+     (Замініть шлях на ваш реальний шлях до проекту)
+   - macOS/Linux (Terminal):
+     ```bash
+     cd ~/Documents/genea-metric-books-transcriber-scripts
+     ```
+     (Або інший шлях, де ви розпакували проект)
 
-3. **Скрипт почне роботу**:
+3. **Запустіть скрипт**:
+   - Windows (PowerShell):
+     ```powershell
+     python transcribe.py config\my-project.yaml
+     ```
+     Або якщо `python` не працює:
+     ```powershell
+     py transcribe.py config\my-project.yaml
+     ```
+     Або:
+     ```powershell
+     python3 transcribe.py config\my-project.yaml
+     ```
+   - macOS/Linux (Terminal):
+     ```bash
+     python3 transcribe.py config/my-project.yaml
+     ```
+   
+   **Примітка**: Замініть `my-project.yaml` на назву вашого файлу конфігурації
+
+4. **Скрипт почне роботу**:
    - Завантажить список зображень з Google Drive
    - Почне обробку зображень по черзі
    - Створить Google Doc після першої партії зображень
    - Продовжить додавати транскрипції до документа
+   
+   **Якщо виникла помилка** - перевірте:
+   - Чи активовано віртуальне середовище (має бути `(venv)` перед рядком)
+   - Чи ви знаходитесь в правильній папці (там, де `transcribe.py`)
+   - Чи правильно вказано шлях до файлу конфігурації
+     ```powershell
+     Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+     ```
+     Або використайте Command Prompt:
+     ```cmd
+     venv\Scripts\activate
+     ```
+   - macOS/Linux (Terminal):
+     ```bash
+     source venv/bin/activate
+     ```
+
+2. **Переконайтеся, що ви в папці проекту**:
+   - Windows (PowerShell):
+     ```powershell
+     cd C:\Users\ВАШЕ_ІМ'Я\Documents\genea-metric-books-transcriber-scripts
+     ```
+     (Замініть шлях на ваш реальний шлях до проекту)
+   - macOS/Linux (Terminal):
+     ```bash
+     cd ~/Documents/genea-metric-books-transcriber-scripts
+     ```
+     (Або інший шлях, де ви розпакували проект)
+
+3. **Запустіть скрипт**:
+   - Windows (PowerShell):
+     ```powershell
+     python transcribe.py config\my-project.yaml
+     ```
+     Або якщо `python` не працює:
+     ```powershell
+     py transcribe.py config\my-project.yaml
+     ```
+     Або:
+     ```powershell
+     python3 transcribe.py config\my-project.yaml
+     ```
+   - macOS/Linux (Terminal):
+     ```bash
+     python3 transcribe.py config/my-project.yaml
+     ```
+   
+   **Примітка**: Замініть `my-project.yaml` на назву вашого файлу конфігурації
+
+4. **Скрипт почне роботу**:
+   - Завантажить список зображень з Google Drive
+   - Почне обробку зображень по черзі
+   - Створить Google Doc після першої партії зображень
+   - Продовжить додавати транскрипції до документа
+   
+   **Якщо виникла помилка** - перевірте:
+   - Чи активовано віртуальне середовище (має бути `(venv)` перед рядком)
+   - Чи ви знаходитесь в правильній папці (там, де `transcribe.py`)
+   - Чи правильно вказано шлях до файлу конфігурації
 
 ### Моніторинг процесу
 
@@ -350,18 +563,65 @@ python3 --version
 **Причина**: Неправильний шлях до файлу конфігурації
 
 **Рішення**: Перевірте, що файл конфігурації знаходиться в папці `config/` і ви правильно вказали шлях:
-```bash
-python3 transcribe.py config/my-project.yaml
-```
+- Windows (PowerShell):
+  ```powershell
+  python transcribe.py config\my-project.yaml
+  ```
+- macOS/Linux (Terminal):
+  ```bash
+  python3 transcribe.py config/my-project.yaml
+  ```
 
-### Помилка: "403 access_denied" або "app not verified"
+### Помилка: "403 access_denied" або "app not verified" або "Цей додаток заблоковано"
 
-**Причина**: Проблеми з аутентифікацією
+**Причина**: Google блокує доступ OAuth-додатку, який не верифікований або не має необхідних дозволів
 
-**Рішення**: 
-1. Переконайтеся, що ви виконали `gcloud auth application-default login`
-2. Перевірте, що файл `application_default_credentials.json` знаходиться в кореневій папці проекту
-3. Переконайтеся, що ваш проект Google Cloud має увімкнені всі необхідні API
+**Чому це відбувається:**
+- OAuth-додаток не пройшов верифікацію Google (для публічних додатків)
+- Ваш обліковий запис не додано як тестовий користувач
+- Додаток намагається отримати доступ до конфіденційної інформації
+
+**Рішення 1 (Рекомендовано): Використати gcloud ADC метод**
+
+Цей метод не потребує OAuth-клієнта і працює безпосередньо з вашим Google акаунтом:
+
+1. **Встановіть Google Cloud SDK** (якщо ще не встановлено):
+   - Windows: https://cloud.google.com/sdk/docs/install
+   - macOS: `brew install google-cloud-sdk`
+   - Linux: https://cloud.google.com/sdk/docs/install
+
+2. **Відкрийте PowerShell/Terminal** і виконайте:
+   - Windows (PowerShell):
+     ```powershell
+     gcloud auth application-default login --project=ВАШ_ПРОЕКТ_ID --scopes=https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/cloud-platform
+     ```
+   - macOS/Linux (Terminal):
+     ```bash
+     gcloud auth application-default login --project=ВАШ_ПРОЕКТ_ID --scopes=https://www.googleapis.com/auth/drive,https://www.googleapis.com/auth/documents,https://www.googleapis.com/auth/cloud-platform
+     ```
+   Замініть `ВАШ_ПРОЕКТ_ID` на ID вашого проекту (наприклад: `ukr-transcribe-genea`)
+
+3. **Відкриється браузер** - увійдіть у свій Google акаунт і надайте дозволи
+
+4. **Файл `application_default_credentials.json`** буде створено автоматично:
+   - **Windows**: `C:\Users\ВАШЕ_ІМ'Я\AppData\Roaming\gcloud\application_default_credentials.json`
+   - **macOS/Linux**: `~/.config/gcloud/application_default_credentials.json`
+
+5. **Переконайтеся**, що файл знаходиться в правильному місці (див. Крок 3.4 вище)
+
+**Рішення 2: Додати себе як тестового користувача** (якщо використовуєте OAuth)
+
+Якщо ви все ж таки хочете використовувати OAuth-клієнт:
+
+1. Перейдіть до https://console.cloud.google.com/
+2. Виберіть ваш проект
+3. Перейдіть до **APIs & Services** → **OAuth consent screen**
+4. У розділі **Test users** натисніть **+ ADD USERS**
+5. Додайте свій email-адресу Google
+6. Збережіть зміни
+7. Спробуйте авторизуватися знову
+
+**Важливо**: Метод gcloud ADC (Рішення 1) є найпростішим і найбезпечнішим способом, оскільки не потребує створення OAuth-клієнта та верифікації додатку.
 
 ### Помилка: "No images found"
 
@@ -398,9 +658,14 @@ python3 transcribe.py config/my-project.yaml
 
 1. **Знайдіть файл логу** у папці `logs/` (назва містить дату та час)
 2. **Запустіть скрипт відновлення**:
-   ```bash
-   python3 recovery_script.py logs/YYYYMMDD_HHMMSS-ai-responses.log --doc-title "transcription_recovered"
-   ```
+   - Windows (PowerShell):
+     ```powershell
+     python recovery_script.py logs\YYYYMMDD_HHMMSS-ai-responses.log --doc-title "transcription_recovered"
+     ```
+   - macOS/Linux (Terminal):
+     ```bash
+     python3 recovery_script.py logs/YYYYMMDD_HHMMSS-ai-responses.log --doc-title "transcription_recovered"
+     ```
 3. **Скрипт створить новий Google Doc** з усіма транскрипціями з логу
 
 ## Поради для кращих результатів
