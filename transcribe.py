@@ -29,7 +29,9 @@ import base64
 import json
 import traceback
 import yaml
+from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Any
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
@@ -344,6 +346,394 @@ def setup_logging(config: dict) -> tuple:
     
     return log_filename, ai_log_filename, ai_logger
 
+
+# ------------------------- MODE ABSTRACTION LAYER - STRATEGY PATTERN -------------------------
+
+class AuthenticationStrategy(ABC):
+    """Abstract base class for authentication strategies."""
+    
+    @abstractmethod
+    def authenticate(self) -> Any:
+        """
+        Authenticate and return credentials/client.
+        
+        Returns:
+            Authentication object (API key string for local, Credentials for googlecloud)
+        """
+        pass
+    
+    @abstractmethod
+    def validate(self) -> bool:
+        """
+        Validate authentication is working.
+        
+        Returns:
+            True if authentication is valid, False otherwise
+        """
+        pass
+
+
+class LocalAuthStrategy(AuthenticationStrategy):
+    """API key authentication for local mode (skeleton implementation)."""
+    
+    def __init__(self, api_key: str = None):
+        """
+        Initialize local authentication strategy.
+        
+        Args:
+            api_key: Gemini API key (can also come from GEMINI_API_KEY env var)
+        """
+        self.api_key = api_key or os.getenv('GEMINI_API_KEY')
+        if not self.api_key:
+            raise ValueError("API key required (config or GEMINI_API_KEY env var)")
+    
+    def authenticate(self) -> str:
+        """Return API key for Gemini Developer API."""
+        return self.api_key
+    
+    def validate(self) -> bool:
+        """Validate API key format (basic check)."""
+        return bool(self.api_key and len(self.api_key) > 10)
+
+
+class GoogleCloudAuthStrategy(AuthenticationStrategy):
+    """OAuth2/ADC authentication for Google Cloud mode (skeleton implementation)."""
+    
+    def __init__(self, adc_file: str):
+        """
+        Initialize Google Cloud authentication strategy.
+        
+        Args:
+            adc_file: Path to Application Default Credentials file
+        """
+        self.adc_file = adc_file
+    
+    def authenticate(self) -> Credentials:
+        """Authenticate using ADC file (delegates to existing authenticate() function)."""
+        # Will delegate to existing authenticate() function in Phase 4
+        return authenticate(self.adc_file)
+    
+    def validate(self) -> bool:
+        """Validate credentials file exists."""
+        return os.path.exists(self.adc_file)
+
+
+class ImageSourceStrategy(ABC):
+    """Abstract base class for image source strategies."""
+    
+    @abstractmethod
+    def list_images(self, config: dict) -> list[dict]:
+        """
+        List available images.
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            List of image metadata dictionaries with 'name', 'id', 'webViewLink' keys
+        """
+        pass
+    
+    @abstractmethod
+    def get_image_bytes(self, image_info: dict) -> bytes:
+        """
+        Get image bytes.
+        
+        Args:
+            image_info: Image metadata dictionary
+            
+        Returns:
+            Image bytes
+        """
+        pass
+    
+    @abstractmethod
+    def get_image_url(self, image_info: dict) -> str:
+        """
+        Get image URL/link for output.
+        
+        Args:
+            image_info: Image metadata dictionary
+            
+        Returns:
+            URL or file path string
+        """
+        pass
+
+
+class LocalImageSource(ImageSourceStrategy):
+    """Local file system image source (skeleton implementation)."""
+    
+    def __init__(self, image_dir: str):
+        """
+        Initialize local image source.
+        
+        Args:
+            image_dir: Path to directory containing images
+        """
+        self.image_dir = image_dir
+        if not os.path.isdir(image_dir):
+            raise ValueError(f"Image directory does not exist: {image_dir}")
+    
+    def list_images(self, config: dict) -> list[dict]:
+        """List images from local directory (to be implemented in Phase 3)."""
+        # TODO: Phase 3 - Implement local image listing
+        raise NotImplementedError("LocalImageSource.list_images() will be implemented in Phase 3")
+    
+    def get_image_bytes(self, image_info: dict) -> bytes:
+        """Read image from local file system (to be implemented in Phase 3)."""
+        # TODO: Phase 3 - Implement local image reading
+        raise NotImplementedError("LocalImageSource.get_image_bytes() will be implemented in Phase 3")
+    
+    def get_image_url(self, image_info: dict) -> str:
+        """Return local file path (to be implemented in Phase 3)."""
+        # TODO: Phase 3 - Implement URL generation
+        raise NotImplementedError("LocalImageSource.get_image_url() will be implemented in Phase 3")
+
+
+class DriveImageSource(ImageSourceStrategy):
+    """Google Drive image source (skeleton implementation)."""
+    
+    def __init__(self, drive_service, drive_folder_id: str):
+        """
+        Initialize Drive image source.
+        
+        Args:
+            drive_service: Google Drive API service
+            drive_folder_id: Drive folder ID containing images
+        """
+        self.drive_service = drive_service
+        self.drive_folder_id = drive_folder_id
+    
+    def list_images(self, config: dict) -> list[dict]:
+        """List images from Google Drive (delegates to existing function)."""
+        # Will delegate to existing list_images() function in Phase 4
+        return list_images(self.drive_service, config)
+    
+    def get_image_bytes(self, image_info: dict) -> bytes:
+        """Download image from Drive (delegates to existing function)."""
+        # Will delegate to existing download_image() function in Phase 4
+        document_name = config.get('document_name', 'Unknown')
+        return download_image(
+            self.drive_service,
+            image_info['id'],
+            image_info['name'],
+            document_name
+        )
+    
+    def get_image_url(self, image_info: dict) -> str:
+        """Return Drive web view link."""
+        return image_info.get('webViewLink', '')
+
+
+class AIClientStrategy(ABC):
+    """Abstract base class for AI client strategies."""
+    
+    @abstractmethod
+    def transcribe(self, image_bytes: bytes, filename: str, prompt: str) -> tuple[str, float, dict]:
+        """
+        Transcribe image using AI model.
+        
+        Args:
+            image_bytes: Image file bytes
+            filename: Image filename (for logging)
+            prompt: Transcription prompt text
+            
+        Returns:
+            Tuple of (transcription_text, elapsed_time, usage_metadata)
+        """
+        pass
+
+
+class GeminiDevClient(AIClientStrategy):
+    """Gemini Developer API client (skeleton implementation)."""
+    
+    def __init__(self, api_key: str, model_id: str = "gemini-1.5-pro"):
+        """
+        Initialize Gemini Developer API client.
+        
+        Args:
+            api_key: Gemini API key
+            model_id: Model ID to use
+        """
+        self.api_key = api_key
+        self.model_id = model_id
+    
+    def transcribe(self, image_bytes: bytes, filename: str, prompt: str) -> tuple[str, float, dict]:
+        """Transcribe using Gemini Developer API (to be implemented in Phase 3)."""
+        # TODO: Phase 3 - Implement Gemini Developer API transcription
+        raise NotImplementedError("GeminiDevClient.transcribe() will be implemented in Phase 3")
+
+
+class VertexAIClient(AIClientStrategy):
+    """Vertex AI client (skeleton implementation)."""
+    
+    def __init__(self, genai_client, model_id: str):
+        """
+        Initialize Vertex AI client.
+        
+        Args:
+            genai_client: Initialized genai.Client
+            model_id: Model ID to use
+        """
+        self.genai_client = genai_client
+        self.model_id = model_id
+    
+    def transcribe(self, image_bytes: bytes, filename: str, prompt: str) -> tuple[str, float, dict]:
+        """Transcribe using Vertex AI (delegates to existing function)."""
+        # Will delegate to existing transcribe_image() function in Phase 4
+        return transcribe_image(self.genai_client, image_bytes, filename, prompt, self.model_id)
+
+
+class OutputStrategy(ABC):
+    """Abstract base class for output strategies."""
+    
+    @abstractmethod
+    def initialize(self, config: dict) -> Any:
+        """
+        Initialize output destination.
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            Output identifier (doc_id for Google Docs, log_path for local)
+        """
+        pass
+    
+    @abstractmethod
+    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
+        """
+        Write batch of transcriptions.
+        
+        Args:
+            pages: List of page dictionaries with transcription data
+            batch_num: Batch number (1-based)
+            is_first: True if this is the first batch
+        """
+        pass
+    
+    @abstractmethod
+    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
+        """
+        Finalize output (update overview, close files, etc.).
+        
+        Args:
+            all_pages: All transcribed pages
+            metrics: Session metrics dictionary
+        """
+        pass
+
+
+class LogFileOutput(OutputStrategy):
+    """Log file output for local mode (skeleton implementation)."""
+    
+    def __init__(self, output_dir: str, ai_logger):
+        """
+        Initialize log file output.
+        
+        Args:
+            output_dir: Directory for output log files
+            ai_logger: Logger instance for AI responses
+        """
+        self.output_dir = output_dir
+        self.ai_logger = ai_logger
+        os.makedirs(output_dir, exist_ok=True)
+    
+    def initialize(self, config: dict) -> str:
+        """Initialize log file (to be implemented in Phase 3)."""
+        # TODO: Phase 3 - Implement log file initialization
+        raise NotImplementedError("LogFileOutput.initialize() will be implemented in Phase 3")
+    
+    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
+        """Write batch to log file (to be implemented in Phase 3)."""
+        # TODO: Phase 3 - Implement batch writing
+        raise NotImplementedError("LogFileOutput.write_batch() will be implemented in Phase 3")
+    
+    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
+        """Finalize log file (to be implemented in Phase 3)."""
+        # TODO: Phase 3 - Implement finalization
+        raise NotImplementedError("LogFileOutput.finalize() will be implemented in Phase 3")
+
+
+class GoogleDocsOutput(OutputStrategy):
+    """Google Docs output (skeleton implementation)."""
+    
+    def __init__(self, docs_service, drive_service):
+        """
+        Initialize Google Docs output.
+        
+        Args:
+            docs_service: Google Docs API service
+            drive_service: Google Drive API service
+        """
+        self.docs_service = docs_service
+        self.drive_service = drive_service
+    
+    def initialize(self, config: dict) -> str:
+        """Create Google Doc (delegates to existing function)."""
+        # Will delegate to existing create_doc() function in Phase 4
+        run_date = datetime.now().strftime("%Y%m%d")
+        document_name = config.get('document_name', 'Unknown')
+        doc_name = f"{document_name} {run_date}"
+        return create_doc(self.docs_service, self.drive_service, doc_name, config)
+    
+    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
+        """Write batch to Google Doc (to be implemented in Phase 4)."""
+        # TODO: Phase 4 - Implement delegation to existing write_to_doc()
+        raise NotImplementedError("GoogleDocsOutput.write_batch() will be implemented in Phase 4")
+    
+    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
+        """Update overview section (to be implemented in Phase 4)."""
+        # TODO: Phase 4 - Implement delegation to existing update_overview_section()
+        raise NotImplementedError("GoogleDocsOutput.finalize() will be implemented in Phase 4")
+
+
+class ModeFactory:
+    """Factory for creating mode-specific components."""
+    
+    @staticmethod
+    def create_handlers(mode: str, config: dict) -> dict:
+        """
+        Create all mode-specific handlers.
+        
+        Args:
+            mode: Mode string ('local' or 'googlecloud')
+            config: Configuration dictionary (normalized)
+            
+        Returns:
+            Dictionary containing all handlers:
+            - auth: AuthenticationStrategy
+            - image_source: ImageSourceStrategy
+            - ai_client: AIClientStrategy
+            - output: OutputStrategy
+            - drive_service: Drive service (googlecloud) or None (local)
+            - docs_service: Docs service (googlecloud) or None (local)
+            
+        Raises:
+            ValueError: If mode is unknown
+        """
+        if mode == 'local':
+            return ModeFactory._create_local_handlers(config)
+        elif mode == 'googlecloud':
+            return ModeFactory._create_googlecloud_handlers(config)
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
+    
+    @staticmethod
+    def _create_local_handlers(config: dict) -> dict:
+        """Create handlers for local mode (to be implemented in Phase 3)."""
+        # TODO: Phase 3 - Implement local mode handler creation
+        raise NotImplementedError("ModeFactory._create_local_handlers() will be implemented in Phase 3")
+    
+    @staticmethod
+    def _create_googlecloud_handlers(config: dict) -> dict:
+        """Create handlers for Google Cloud mode (to be implemented in Phase 4)."""
+        # TODO: Phase 4 - Implement Google Cloud mode handler creation
+        raise NotImplementedError("ModeFactory._create_googlecloud_handlers() will be implemented in Phase 4")
+
+
+# ------------------------- EXISTING AUTHENTICATION & SERVICES -------------------------
 
 def authenticate(adc_file: str):
     """
