@@ -40,18 +40,18 @@ from google.genai import types
 
 def load_config(config_path: str) -> dict:
     """
-    Load configuration from YAML file.
+    Load configuration from YAML file with mode detection and validation.
     
     Args:
         config_path: Path to the YAML configuration file
         
     Returns:
-        Dictionary containing configuration values
+        Dictionary containing configuration values (normalized)
         
     Raises:
         FileNotFoundError: If config file doesn't exist
         yaml.YAMLError: If config file is invalid YAML
-        KeyError: If required configuration keys are missing
+        ValueError: If configuration validation fails
     """
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
@@ -62,19 +62,212 @@ def load_config(config_path: str) -> dict:
     if config is None:
         raise ValueError(f"Configuration file is empty: {config_path}")
     
-    # Validate required keys
-    required_keys = [
-        'prompt_file', 'project_id', 'drive_folder_id',
-        'archive_index', 'region', 'ocr_model_id', 'adc_file',
-        'max_images', 'image_start_number',
-        'image_count', 'batch_size_for_doc', 'retry_mode', 'retry_image_list'
-    ]
+    # Detect mode
+    mode = detect_mode(config)
     
-    missing_keys = [key for key in required_keys if key not in config]
-    if missing_keys:
-        raise KeyError(f"Missing required configuration keys: {', '.join(missing_keys)}")
+    # Normalize config (convert legacy to nested structure)
+    config = normalize_config(config, mode)
+    
+    # Validate configuration
+    is_valid, errors = validate_config(config, mode)
+    if not is_valid:
+        raise ValueError(f"Configuration validation failed: {', '.join(errors)}")
     
     return config
+
+
+def detect_mode(config: dict) -> str:
+    """
+    Detect mode from configuration.
+    
+    Detection order:
+    1. Explicit mode field → use it
+    2. Legacy config (project_id/drive_folder_id at root) → googlecloud
+    3. local section present → local
+    4. Default → googlecloud (backward compatibility)
+    
+    Args:
+        config: Configuration dictionary
+        
+    Returns:
+        Mode string: 'local' or 'googlecloud'
+        
+    Raises:
+        ValueError: If explicit mode value is invalid
+    """
+    # Check for explicit mode field
+    if 'mode' in config:
+        mode = config['mode'].lower()
+        if mode not in ['local', 'googlecloud']:
+            raise ValueError(f"Invalid mode value: '{mode}'. Must be 'local' or 'googlecloud'")
+        return mode
+    
+    # Legacy detection: check for Google Cloud specific fields at root level
+    if 'project_id' in config or 'drive_folder_id' in config:
+        return 'googlecloud'
+    
+    # Check for local section
+    if 'local' in config:
+        return 'local'
+    
+    # Default for backward compatibility
+    return 'googlecloud'
+
+
+def normalize_config(config: dict, mode: str) -> dict:
+    """
+    Normalize configuration to internal format.
+    
+    Converts legacy flat structure to nested structure for googlecloud mode.
+    Ensures all required fields are present with defaults.
+    
+    Args:
+        config: Configuration dictionary (may be legacy format)
+        mode: Detected mode ('local' or 'googlecloud')
+        
+    Returns:
+        Normalized configuration dictionary
+    """
+    normalized = config.copy()
+    
+    if mode == 'googlecloud':
+        # If googlecloud section doesn't exist, create it from legacy flat structure
+        if 'googlecloud' not in normalized:
+            normalized['googlecloud'] = {}
+            gc_config = normalized['googlecloud']
+            
+            # Move Google Cloud specific fields to nested structure
+            if 'project_id' in normalized:
+                gc_config['project_id'] = normalized.pop('project_id')
+            if 'drive_folder_id' in normalized:
+                gc_config['drive_folder_id'] = normalized.pop('drive_folder_id')
+            if 'region' in normalized:
+                gc_config['region'] = normalized.pop('region', 'global')
+            if 'ocr_model_id' in normalized:
+                gc_config['ocr_model_id'] = normalized.pop('ocr_model_id')
+            if 'adc_file' in normalized:
+                gc_config['adc_file'] = normalized.pop('adc_file')
+            if 'document_name' in normalized:
+                gc_config['document_name'] = normalized.pop('document_name')
+            if 'title_page_filename' in normalized:
+                gc_config['title_page_filename'] = normalized.pop('title_page_filename')
+        else:
+            # Ensure googlecloud section has defaults
+            gc_config = normalized['googlecloud']
+            if 'region' not in gc_config:
+                gc_config['region'] = 'global'
+    
+    # Set defaults for shared fields
+    if 'retry_mode' not in normalized:
+        normalized['retry_mode'] = False
+    if 'retry_image_list' not in normalized:
+        normalized['retry_image_list'] = []
+    
+    return normalized
+
+
+def validate_config(config: dict, mode: str) -> tuple[bool, list[str]]:
+    """
+    Validate configuration based on mode.
+    
+    Args:
+        config: Configuration dictionary
+        mode: Mode string ('local' or 'googlecloud')
+        
+    Returns:
+        Tuple of (is_valid, error_messages)
+    """
+    errors = []
+    
+    # Shared required fields
+    if 'prompt_file' not in config:
+        errors.append("prompt_file is required")
+    
+    if 'archive_index' not in config:
+        errors.append("archive_index is required")
+    
+    # Shared optional fields with validation
+    if 'image_start_number' in config:
+        if not isinstance(config['image_start_number'], int) or config['image_start_number'] < 1:
+            errors.append("image_start_number must be a positive integer")
+    
+    if 'image_count' in config:
+        if not isinstance(config['image_count'], int) or config['image_count'] < 1:
+            errors.append("image_count must be a positive integer")
+    
+    # Mode-specific validation
+    if mode == 'local':
+        if 'local' not in config:
+            errors.append("local mode requires 'local' configuration section")
+        else:
+            local_config = config['local']
+            
+            # API key validation (can be in config or env var)
+            api_key = local_config.get('api_key') or os.getenv('GEMINI_API_KEY')
+            if not api_key:
+                errors.append("local mode requires api_key in config or GEMINI_API_KEY environment variable")
+            elif isinstance(api_key, str) and len(api_key) < 10:
+                errors.append("api_key appears to be invalid (too short)")
+            
+            # Image directory validation
+            if 'image_dir' not in local_config:
+                errors.append("local mode requires image_dir")
+            else:
+                image_dir = local_config['image_dir']
+                if not os.path.isdir(image_dir):
+                    errors.append(f"image_dir does not exist or is not a directory: {image_dir}")
+            
+            # Output directory validation (optional, will be created if missing)
+            if 'output_dir' in local_config:
+                output_dir = local_config['output_dir']
+                # Check if parent directory exists
+                parent_dir = os.path.dirname(os.path.abspath(output_dir))
+                if parent_dir and not os.path.isdir(parent_dir):
+                    errors.append(f"output_dir parent directory does not exist: {parent_dir}")
+    
+    elif mode == 'googlecloud':
+        if 'googlecloud' not in config:
+            errors.append("googlecloud mode requires 'googlecloud' configuration section")
+        else:
+            gc_config = config['googlecloud']
+            
+            # Required fields
+            required_fields = {
+                'project_id': 'project_id',
+                'drive_folder_id': 'drive_folder_id',
+                'region': 'region',
+                'ocr_model_id': 'ocr_model_id',
+                'adc_file': 'adc_file'
+            }
+            
+            for field, field_name in required_fields.items():
+                if field not in gc_config:
+                    errors.append(f"googlecloud mode requires {field_name}")
+            
+            # ADC file validation
+            if 'adc_file' in gc_config:
+                adc_file = gc_config['adc_file']
+                if not os.path.exists(adc_file):
+                    errors.append(f"adc_file does not exist: {adc_file}")
+            
+            # Drive folder ID format validation (basic check)
+            if 'drive_folder_id' in gc_config:
+                folder_id = gc_config['drive_folder_id']
+                if not isinstance(folder_id, str) or len(folder_id) < 10:
+                    errors.append("drive_folder_id appears to be invalid")
+            
+            # Optional fields with defaults
+            if 'max_images' not in config:
+                config['max_images'] = 1000
+            elif not isinstance(config['max_images'], int) or config['max_images'] < 1:
+                errors.append("max_images must be a positive integer")
+            
+            if 'batch_size_for_doc' not in config:
+                config['batch_size_for_doc'] = 10
+            elif not isinstance(config['batch_size_for_doc'], int) or config['batch_size_for_doc'] < 1:
+                errors.append("batch_size_for_doc must be a positive integer")
+    
+    return len(errors) == 0, errors
 
 
 def load_prompt_text(prompt_file: str) -> str:
@@ -102,7 +295,7 @@ def setup_logging(config: dict) -> tuple:
     Set up logging based on configuration.
     
     Args:
-        config: Configuration dictionary
+        config: Configuration dictionary (normalized, with mode detected)
         
     Returns:
         Tuple of (log_filename, ai_log_filename, ai_logger)
@@ -115,11 +308,21 @@ def setup_logging(config: dict) -> tuple:
     # Generate timestamp for log files
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # Logging setup - use date-time-transcribe-session-folderid.log format
-    drive_folder_id = config['drive_folder_id']
-    # Use first 8 chars of folder ID for log filename
-    folder_id_short = drive_folder_id[:8] if len(drive_folder_id) >= 8 else drive_folder_id
-    log_filename = os.path.join(LOGS_DIR, f"{timestamp}-transcribe-session-{folder_id_short}.log")
+    # Detect mode for log filename
+    mode = detect_mode(config)
+    
+    # Logging setup - use date-time-transcribe-session-{identifier}.log format
+    if mode == 'googlecloud':
+        # Use drive folder ID for Google Cloud mode
+        drive_folder_id = config.get('googlecloud', {}).get('drive_folder_id', 'unknown')
+        folder_id_short = drive_folder_id[:8] if len(drive_folder_id) >= 8 else drive_folder_id
+        log_filename = os.path.join(LOGS_DIR, f"{timestamp}-transcribe-session-{folder_id_short}.log")
+    else:
+        # Use image directory name for local mode
+        image_dir = config.get('local', {}).get('image_dir', 'local')
+        dir_name = os.path.basename(os.path.abspath(image_dir))
+        dir_name_short = dir_name[:20] if len(dir_name) > 20 else dir_name
+        log_filename = os.path.join(LOGS_DIR, f"{timestamp}-transcribe-session-{dir_name_short}.log")
     
     logging.basicConfig(
         level=logging.INFO,

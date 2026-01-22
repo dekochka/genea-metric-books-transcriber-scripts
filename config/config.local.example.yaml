@@ -1,0 +1,76 @@
+# Genealogical Record Transcription Tool - LOCAL Mode Configuration
+# Copy this file to config.yaml (or any name) and customize for your project
+# Then run: python transcribe.py config/your_config.yaml
+
+# ------------------------- MODE SELECTION -------------------------
+# Set mode to "local" for local file system processing
+mode: "local"
+
+# ------------------------- LOCAL MODE CONFIGURATION -------------------------
+local:
+  # API key for Gemini Developer API
+  # Can also be set via GEMINI_API_KEY environment variable (recommended for security)
+  # Get your API key from: https://aistudio.google.com/app/apikey
+  api_key: "your-api-key-here"  # or use GEMINI_API_KEY env var
+  
+  # Local directory containing images to transcribe
+  # Use absolute or relative path from project root
+  # Example pointing to test data: "data_samples/test_input_sample"
+  image_dir: "data_samples/test_input_sample"
+  
+  # Output directory for log files (optional, default: "logs")
+  # Log files will contain transcriptions and session metadata
+  output_dir: "logs"
+  
+  # OCR Model ID (optional, default: "gemini-1.5-pro")
+  # Available models: "gemini-1.5-pro", "gemini-1.5-flash", etc.
+  ocr_model_id: "gemini-1.5-pro"
+
+# ------------------------- SHARED CONFIGURATION -------------------------
+# These settings apply to both LOCAL and GOOGLECLOUD modes
+
+# Prompt file (required)
+# Set which prompt file to load from the `prompts` folder (without path).
+# The prompt file defines transcription instructions, village names, and common surnames.
+# Example: "f487o1s545-Turilche.md"
+prompt_file: "f487o1s545-Turilche.md"
+
+# Archive index reference (condensed archive reference)
+# Format: ф[FOND]оп[OPIS]спр[DELO] or custom format like "f301-1438-"
+# Used for document headers and record links
+# Example: "ф487оп1спр545" or "f301-1438-"
+archive_index: "ф487оп1спр545"
+
+# ------------------------- PROCESSING SETTINGS -------------------------
+# Starting image number - refers to the NUMBER IN THE FILENAME
+# (e.g., 1 for image00001.jpg or 1.jpg)
+# NOT the position in sequence. Extract number from filename pattern
+# Set to 1 to start from the first image
+image_start_number: 1
+
+# Number of images to process starting from image_start_number
+# Example: if image_start_number=1 and image_count=3,
+# will process image00001.jpg, image00002.jpg, image00003.jpg
+image_count: 3
+
+# ------------------------- RETRY MODE -------------------------
+# Set to true to retry specific failed images
+# When true, only images in retry_image_list will be processed
+retry_mode: false
+
+# List of image filenames to retry (only used when retry_mode is true)
+# Add filenames of images that failed previously
+retry_image_list: []
+  # Example: Image that failed with timeout
+  # - "image00005.jpg"
+
+# ------------------------- NOTES -------------------------
+# - LOCAL mode processes images from local file system
+# - No Google Cloud setup required - just need Gemini API key
+# - Output is written to log files in the output_dir
+# - Test data is available in data_samples/test_input_sample/
+# - Files must follow one of these patterns:
+#   * image (N).jpg where N is a number (e.g., image (7).jpg)
+#   * imageXXXXX.jpg where XXXXX is a 5-digit number (e.g., image00101.jpg)
+#   * XXXXX.jpg where XXXXX is a number (e.g., 52.jpg, 102.jpg)
+#   * image - YYYY-MM-DDTHHMMSS.mmm.jpg (timestamp format)

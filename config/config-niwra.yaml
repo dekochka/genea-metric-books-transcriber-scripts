@@ -1,53 +1,31 @@
 # Genealogical Record Transcription Tool - Configuration File
 # Copy this file to config.yaml (or any name) and customize for your project
 # Then run: python transcribe.py config/your_config.yaml
-#
-# This is a LEGACY format example (backward compatible).
-# For new configurations, use config.googlecloud.example.yaml or config.local.example.yaml
-# which use the new nested structure with explicit mode selection.
-
-# ------------------------- MODE SELECTION (OPTIONAL) -------------------------
-# Mode selection: "local" or "googlecloud"
-# If not specified, will auto-detect from configuration:
-# - If project_id/drive_folder_id present → googlecloud
-# - If local section present → local
-# - Default → googlecloud (backward compatibility)
-# mode: "googlecloud"
 
 # ------------------------- PROMPTS -------------------------
 # Set which prompt file to load from the `prompts` folder (without path).
 # The prompt file defines transcription instructions, village names, and common surnames.
-# Example: "f301-1439-WOJNILOW-1784-1829.md"
-prompt_file: "f487o1s545-Turilche.md"
+# Example: "INSTRUCTION.txt", "f301-1439-WOJNILOW-1784-1829.md"
+prompt_file: "NIWRA_f487o1s47.md"
 
-# ------------------------- GOOGLE CLOUD & DRIVE (LEGACY FORMAT) -------------------------
-# Note: This legacy flat format is still supported for backward compatibility.
-# New configs should use the nested format (see config.googlecloud.example.yaml)
-
+# ------------------------- GOOGLE CLOUD & DRIVE -------------------------
 # Google Cloud Project ID
-# Example: "ukr-transcribe-genea"
+# Example: "ukr-transcribe-genea" or "ru-ocr-genea"
 project_id: "ru-ocr-genea"
 
 # Google Drive folder ID containing the images to transcribe
 # Get this from the Drive folder URL: https://drive.google.com/drive/folders/FOLDER_ID
-drive_folder_id: "1YHAeW5Yi8oeKqvQHHKHf8u0o_MpTKJPR"
+drive_folder_id: "1P8CUcS84wd4n1az47rEThM6FOyuIqHzH"
 
-# Document name for transcribed document (optional)
-# If not provided, will be fetched from Google Drive folder name
-# Used for document title and headers
-# document_name: "<your_document_name>"
-
-# Title page image filename (optional)
-# Name of image file in the Drive folder to insert as title page image
-# Will be inserted under the document header on the first page
-# Example: "title_page.jpg" or "cover_image.jpg"
-title_page_filename: "image00001.jpg"
+# Folder name for logging purposes (used in log filenames)
+# Should match or describe the Drive folder being processed
+folder_name: "ф487-1-47 1860-1876 с.Нивра Борщивского повиту - TEST"
 
 # Archive index reference (condensed archive reference)
 # Format: ф[FOND]оп[OPIS]спр[DELO] or custom format like "f301-1438-"
 # Used for document headers and record links
 # Example: "ф487оп1спр545" or "f301-1438-"
-archive_index: "ф487оп1спр545"
+archive_index: "ф487-1-47-"
 
 # Vertex AI region
 # Options: "global", "us-central1", etc.
@@ -63,17 +41,22 @@ ocr_model_id: "gemini-3-flash-preview"
 adc_file: "application_default_credentials.json"
 
 # ------------------------- PROCESSING SETTINGS -------------------------
+# Maximum number of images to fetch from Google Drive
+# The script will fetch up to this many images, then filter based on
+# image_start_number and image_count parameters
+max_images: 1000
+
 # Starting image number - refers to the NUMBER IN THE FILENAME
 # (e.g., 474 for 004932851_00474.jpeg)
 # NOT the position in sequence. Extract number from filename pattern
 # (e.g., 101 for image00101.jpg or 101.jpg)
 # Set to 1 to start from the first image
-image_start_number: 1
+image_start_number: 5
 
 # Number of images to process starting from image_start_number
 # Example: if image_start_number=101 and image_count=5,
 # will process image00101.jpg through image00105.jpg
-image_count: 100
+image_count: 3
 
 # Number of images to transcribe before creating/writing to Google Doc
 # (for resilience - script creates doc after first batch, then appends
@@ -81,11 +64,6 @@ image_count: 100
 # batch is lost - resume with new image_start_number)
 # Recommended: 2-10 depending on image complexity
 batch_size_for_doc: 2
-
-# Maximum number of images to fetch from Google Drive
-# The script will fetch up to this many images, then filter based on
-# image_start_number and image_count parameters
-max_images: 1000
 
 # ------------------------- RETRY MODE -------------------------
 # Set to true to retry specific failed images

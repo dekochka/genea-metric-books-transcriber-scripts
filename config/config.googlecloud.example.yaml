@@ -1,66 +1,59 @@
-# Genealogical Record Transcription Tool - Configuration File
+# Genealogical Record Transcription Tool - GOOGLECLOUD Mode Configuration
 # Copy this file to config.yaml (or any name) and customize for your project
 # Then run: python transcribe.py config/your_config.yaml
-#
-# This is a LEGACY format example (backward compatible).
-# For new configurations, use config.googlecloud.example.yaml or config.local.example.yaml
-# which use the new nested structure with explicit mode selection.
 
-# ------------------------- MODE SELECTION (OPTIONAL) -------------------------
-# Mode selection: "local" or "googlecloud"
-# If not specified, will auto-detect from configuration:
-# - If project_id/drive_folder_id present → googlecloud
-# - If local section present → local
-# - Default → googlecloud (backward compatibility)
-# mode: "googlecloud"
+# ------------------------- MODE SELECTION -------------------------
+# Set mode to "googlecloud" for Google Cloud processing (explicit)
+mode: "googlecloud"
 
-# ------------------------- PROMPTS -------------------------
+# ------------------------- GOOGLECLOUD MODE CONFIGURATION -------------------------
+googlecloud:
+  # Google Cloud Project ID
+  # Example: "ukr-transcribe-genea"
+  project_id: "ru-ocr-genea"
+  
+  # Google Drive folder ID containing the images to transcribe
+  # Get this from the Drive folder URL: https://drive.google.com/drive/folders/FOLDER_ID
+  drive_folder_id: "1YHAeW5Yi8oeKqvQHHKHf8u0o_MpTKJPR"
+  
+  # Vertex AI region
+  # Options: "global", "us-central1", etc.
+  region: "global"
+  
+  # OCR Model ID for Gemini
+  # Examples: "gemini-3-flash-preview", "gemini-2.5-pro", etc.
+  ocr_model_id: "gemini-3-flash-preview"
+  
+  # Application Default Credentials file path
+  # ADC file with refresh token for OAuth2 authentication
+  # Should be in the project root directory
+  adc_file: "application_default_credentials.json"
+  
+  # Document name for transcribed document (optional)
+  # If not provided, will be fetched from Google Drive folder name
+  # Used for document title and headers
+  # document_name: "<your_document_name>"
+  
+  # Title page image filename (optional)
+  # Name of image file in the Drive folder to insert as title page image
+  # Will be inserted under the document header on the first page
+  # Example: "title_page.jpg" or "cover_image.jpg"
+  title_page_filename: "image00001.jpg"
+
+# ------------------------- SHARED CONFIGURATION -------------------------
+# These settings apply to both LOCAL and GOOGLECLOUD modes
+
+# Prompt file (required)
 # Set which prompt file to load from the `prompts` folder (without path).
 # The prompt file defines transcription instructions, village names, and common surnames.
-# Example: "f301-1439-WOJNILOW-1784-1829.md"
+# Example: "f487o1s545-Turilche.md"
 prompt_file: "f487o1s545-Turilche.md"
-
-# ------------------------- GOOGLE CLOUD & DRIVE (LEGACY FORMAT) -------------------------
-# Note: This legacy flat format is still supported for backward compatibility.
-# New configs should use the nested format (see config.googlecloud.example.yaml)
-
-# Google Cloud Project ID
-# Example: "ukr-transcribe-genea"
-project_id: "ru-ocr-genea"
-
-# Google Drive folder ID containing the images to transcribe
-# Get this from the Drive folder URL: https://drive.google.com/drive/folders/FOLDER_ID
-drive_folder_id: "1YHAeW5Yi8oeKqvQHHKHf8u0o_MpTKJPR"
-
-# Document name for transcribed document (optional)
-# If not provided, will be fetched from Google Drive folder name
-# Used for document title and headers
-# document_name: "<your_document_name>"
-
-# Title page image filename (optional)
-# Name of image file in the Drive folder to insert as title page image
-# Will be inserted under the document header on the first page
-# Example: "title_page.jpg" or "cover_image.jpg"
-title_page_filename: "image00001.jpg"
 
 # Archive index reference (condensed archive reference)
 # Format: ф[FOND]оп[OPIS]спр[DELO] or custom format like "f301-1438-"
 # Used for document headers and record links
 # Example: "ф487оп1спр545" or "f301-1438-"
 archive_index: "ф487оп1спр545"
-
-# Vertex AI region
-# Options: "global", "us-central1", etc.
-region: "global"
-
-# OCR Model ID for Gemini
-# Examples: "gemini-3-flash-preview", "gemini-2.5-pro", etc.
-ocr_model_id: "gemini-3-flash-preview"
-
-# Application Default Credentials file path
-# ADC file with refresh token for OAuth2 authentication
-# Should be in the project root directory
-adc_file: "application_default_credentials.json"
 
 # ------------------------- PROCESSING SETTINGS -------------------------
 # Starting image number - refers to the NUMBER IN THE FILENAME

@@ -12,7 +12,7 @@
 | Phase | Name | Status | Branch | PR | Completion Date |
 |-------|------|--------|--------|----|-----------------|
 | 0 | Preparation & Setup | 🟢 Complete | `simplify-installation` | - | January 2025 |
-| 1 | Configuration & Mode Detection | ⚪ Not Started | - | - | - |
+| 1 | Configuration & Mode Detection | 🟡 In Progress | `simplify-installation` | - | - |
 | 2 | Strategy Interfaces & Base Classes | ⚪ Not Started | - | - | - |
 | 3 | LOCAL Mode Implementation | ⚪ Not Started | - | - | - |
 | 4 | GOOGLECLOUD Mode Refactoring | ⚪ Not Started | - | - | - |
@@ -68,14 +68,39 @@
 
 ## Phase 1: Configuration & Mode Detection
 
-**Status:** ⚪ Not Started
+**Branch:** `simplify-installation`  
+**Status:** 🟡 In Progress  
+**Started:** January 2025
 
 ### Tasks
 
-- [ ] **Task 1.1:** Extend Configuration Loading
-- [ ] **Task 1.2:** Implement Configuration Validation
-- [ ] **Task 1.3:** Create Configuration Examples
+- [x] **Task 1.1:** Extend Configuration Loading
+  - Status: ✅ Complete
+  - Added `detect_mode()` function with auto-detection logic
+  - Added `normalize_config()` function for legacy config conversion
+  - Updated `load_config()` to use mode detection and validation
+  - Updated `setup_logging()` to handle both modes
+  - Maintains backward compatibility with legacy configs
+
+- [x] **Task 1.2:** Implement Configuration Validation
+  - Status: ✅ Complete
+  - Added `validate_config()` function with mode-specific validation
+  - Validates required fields per mode
+  - Validates file/directory existence
+  - Validates API key format (local mode)
+  - Validates credentials file existence (googlecloud mode)
+  - Provides clear error messages
+
+- [x] **Task 1.3:** Create Configuration Examples
+  - Status: ✅ Complete
+  - Created `config/config.local.example.yaml` with test data reference
+  - Created `config/config.googlecloud.example.yaml` with nested structure
+  - Updated `config/config.yaml.example` with mode field and legacy format notes
+  - All examples include comprehensive comments
+
 - [ ] **Task 1.4:** Update Configuration Schema Documentation
+  - Status: ⚪ Not Started
+  - Will update README.md with dual-mode configuration documentation
 
 ---
 
