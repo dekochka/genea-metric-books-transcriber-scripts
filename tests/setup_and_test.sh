@@ -1,7 +1,16 @@
 #!/bin/bash
 # Setup script to install dependencies and run tests
+# Run this script from the project root or from the tests folder
 
 set -e  # Exit on error
+
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# Get project root (parent of tests folder)
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Change to project root
+cd "$PROJECT_ROOT"
 
 echo "=========================================="
 echo "Setting up test environment"

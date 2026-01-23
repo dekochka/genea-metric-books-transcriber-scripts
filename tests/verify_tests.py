@@ -6,8 +6,12 @@ This doesn't run the tests, but verifies they can be imported.
 import sys
 import os
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Get project root (parent directory of tests folder)
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, project_root)
+
+# Change to project root for relative paths
+os.chdir(project_root)
 
 test_files = [
     'tests/unit/test_auth_strategies.py',
