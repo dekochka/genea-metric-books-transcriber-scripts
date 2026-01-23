@@ -897,7 +897,25 @@ class GeminiDevClient(AIClientStrategy):
                 if api_call_elapsed > 60:
                     logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: API call took {api_call_elapsed:.1f}s (>60s) for '{filename}'")
                 
-                text = response.text if response.text else "[No transcription text received]"
+                # Extract text from response - try response.text first, then candidates
+                text = None
+                if hasattr(response, 'text') and response.text:
+                    text = response.text
+                elif hasattr(response, 'candidates') and response.candidates:
+                    # Try to extract text from first candidate
+                    candidate = response.candidates[0]
+                    if hasattr(candidate, 'content') and candidate.content:
+                        if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                            # Extract text from parts
+                            text_parts = []
+                            for part in candidate.content.parts:
+                                if hasattr(part, 'text') and part.text:
+                                    text_parts.append(part.text)
+                            if text_parts:
+                                text = '\n'.join(text_parts)
+                
+                if not text:
+                    text = "[No transcription text received]"
                 
                 # Extract usage metadata if available
                 usage_metadata = {}
@@ -3469,6 +3487,7 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
     """
     image_source = handlers['image_source']
     ai_client = handlers['ai_client']
+    output = handlers.get('output')  # Get output handler for incremental writing
     
     transcribed_pages = []
     usage_metadata_list = []
@@ -3548,6 +3567,13 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {global_idx}/{total_images}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
             ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
             
+            # Write transcription incrementally to log file
+            if output:
+                try:
+                    output.write_batch([transcribed_pages[-1]], batch_num=global_idx, is_first=(global_idx == 1))
+                except Exception as e:
+                    logging.warning(f"Failed to write transcription incrementally: {e}")
+            
             # Log progress
             progress_pct = (global_idx / total_images) * 100
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {global_idx}/{total_images} images ({progress_pct:.1f}%)")
@@ -3557,6 +3583,36 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
             image_end_time = datetime.now()
             image_total_elapsed = (image_end_time - image_start_time).total_seconds()
             error_type = type(e).__name__
+            
+            # Check if this is a 503 Service Unavailable error
+            error_str = str(e)
+            is_503_error = 'status 503' in error_str or '503' in error_str
+            
+            if is_503_error and output:
+                # Write user-friendly 503 error message to transcription log
+                current_img_num = extract_image_number(image_name) or global_idx
+                friendly_message = ("[SERVICE TEMPORARILY UNAVAILABLE]\n\n"
+                    "The Gemini API service is currently unavailable (HTTP 503). "
+                    "This is a temporary issue on Google's side, not a problem with your configuration.\n\n"
+                    "What to do next:\n"
+                    "1. Wait 5-10 minutes for the service to recover\n"
+                    "2. Check Google Cloud Status page: https://status.cloud.google.com/\n"
+                    "3. Retry the transcription by running the script again\n"
+                    "4. If the issue persists, try again later\n\n"
+                    f"To resume from this image when the service is available:\n"
+                    f"- Update your config: image_start_number = {current_img_num}\n"
+                    "- Then run the script again\n\n"
+                    f"Error details: {error_str}")
+                try:
+                    image_url = image_source.get_image_url(img_info)
+                    output.write_batch([{
+                        'name': image_name,
+                        'webViewLink': image_url,
+                        'text': friendly_message
+                    }], batch_num=global_idx, is_first=(global_idx == 1))
+                    logging.info(f"Wrote 503 error message to transcription log for {image_name}")
+                except Exception as write_error:
+                    logging.warning(f"Failed to write 503 error message to log: {write_error}")
             
             error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL ERROR transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
             logging.error(error_msg)
@@ -3589,14 +3645,42 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
             ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image (current image filename number: {current_image_number})")
             ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
             
-            # Add error message as text
+            # Check if this is a 503 Service Unavailable error
+            error_str = str(e)
+            is_503_error = 'status 503' in error_str or '503' in error_str
+            
+            # Add error message as text - use friendly message for 503 errors
             image_url = image_source.get_image_url(img_info)
+            if is_503_error:
+                friendly_message = ("[SERVICE TEMPORARILY UNAVAILABLE]\n\n"
+                    "The Gemini API service is currently unavailable (HTTP 503). "
+                    "This is a temporary issue on Google's side, not a problem with your configuration.\n\n"
+                    "What to do next:\n"
+                    "1. Wait 5-10 minutes for the service to recover\n"
+                    "2. Check Google Cloud Status page: https://status.cloud.google.com/\n"
+                    "3. Retry the transcription by running the script again\n"
+                    "4. If the issue persists, try again later\n\n"
+                    f"To resume from this image when the service is available:\n"
+                    f"- Update your config: image_start_number = {next_image_number}\n"
+                    "- Then run the script again\n\n"
+                    f"Error details: {error_str}")
+                error_text = friendly_message
+            else:
+                error_text = f"[Error during transcription: {str(e)}]"
+            
             transcribed_pages.append({
                 'name': image_name,
                 'webViewLink': image_url,
-                'text': f"[Error during transcription: {str(e)}]"
+                'text': error_text
             })
-            # Add None for metrics on error
+            
+            # Write to log file immediately if 503 error
+            if is_503_error and output:
+                try:
+                    output.write_batch([transcribed_pages[-1]], batch_num=global_idx, is_first=(global_idx == 1))
+                    logging.info(f"Wrote 503 error message to transcription log for {image_name}")
+                except Exception as write_error:
+                    logging.warning(f"Failed to write 503 error message to log: {write_error}")
             timing_list.append(None)
             usage_metadata_list.append(None)
     
@@ -3984,10 +4068,8 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
             end_time = datetime.now()
             metrics = {}  # Can be enhanced to extract from process_all_local
             
-            # Write all transcribed pages to the log file
-            if transcribed_pages:
-                output.write_batch(transcribed_pages, batch_num=1, is_first=True)
-                logging.info(f"Wrote {len(transcribed_pages)} transcriptions to log file")
+            # Note: Transcriptions are already written incrementally in process_all_local
+            # Just finalize the output (no need to write again)
             output.finalize(transcribed_pages, metrics)
             logging.info(f"Output finalized for LOCAL mode")
         
