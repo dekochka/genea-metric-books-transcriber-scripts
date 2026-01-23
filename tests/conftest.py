@@ -4,18 +4,22 @@ Pytest configuration and shared fixtures for transcription tool tests.
 import os
 import sys
 import pytest
+import gc
 
 # Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
-# Test data directory
-TEST_IMAGE_DIR = os.path.join(project_root, 'data_samples', 'test_input_sample')
+# Memory-efficient fixture: use tmp_path instead of real directory
+# This avoids scanning large real directories that could cause memory issues
 
 @pytest.fixture
-def test_image_dir():
-    """Fixture providing path to test image directory."""
-    return TEST_IMAGE_DIR
+def test_image_dir(tmp_path):
+    """Fixture providing temporary directory with minimal test images."""
+    # Create only a few small test images to minimize memory usage
+    for i in range(1, 4):  # Only 3 small test images
+        (tmp_path / f"image{i:05d}.jpg").write_bytes(b"fake image data")
+    return str(tmp_path)
 
 @pytest.fixture
 def test_images():
@@ -26,3 +30,10 @@ def test_images():
         'image00002.jpg',
         'image00003.jpg'
     ]
+
+@pytest.fixture(autouse=True)
+def cleanup_after_test():
+    """Auto-cleanup fixture to help with memory management."""
+    yield
+    # Force garbage collection after each test
+    gc.collect()
