@@ -11,7 +11,7 @@ local:
   # API key for Gemini Developer API
   # Can also be set via GEMINI_API_KEY environment variable (recommended for security)
   # Get your API key from: https://aistudio.google.com/app/apikey
-  api_key: "your-api-key-here"  # or use GEMINI_API_KEY env var
+  api_key: "AIzaSyCsKd80rZNuHZqyjuSxYMpVXMW4d-tfSFQ"  # or use GEMINI_API_KEY env var
   
   # Local directory containing images to transcribe
   # Use absolute or relative path from project root

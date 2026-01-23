@@ -37,6 +37,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google import genai
 from google.genai import types
+from google.genai.errors import ClientError
 
 # ------------------------- CONFIGURATION LOADING -------------------------
 
@@ -807,13 +808,13 @@ class AIClientStrategy(ABC):
 class GeminiDevClient(AIClientStrategy):
     """Gemini Developer API client."""
     
-    def __init__(self, api_key: str, model_id: str = "gemini-1.5-pro"):
+    def __init__(self, api_key: str, model_id: str = "gemini-3-flash-preview"):
         """
         Initialize Gemini Developer API client.
         
         Args:
             api_key: Gemini API key
-            model_id: Model ID to use (default: gemini-1.5-pro)
+            model_id: Model ID to use (default: gemini-3-flash-preview)
         """
         self.api_key = api_key
         self.model_id = model_id
@@ -927,6 +928,65 @@ class GeminiDevClient(AIClientStrategy):
                     logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] All {max_retries} attempts failed for '{filename}' after {total_elapsed:.1f}s: {error_type}: {str(e)}")
                     return f"[Error during transcription: {str(e)}]", None, None
                     
+            except ClientError as e:
+                # Handle API errors (400, 401, 403, etc.) - don't retry, fail immediately
+                attempt_elapsed = time.time() - attempt_start_time
+                total_elapsed = time.time() - function_start_time
+                
+                # Get status code from exception - ClientError has status_code attribute
+                status_code = getattr(e, 'status_code', None)
+                error_str = str(e)
+                
+                # If status_code not available, extract from exception string (format: "400 INVALID_ARGUMENT")
+                if status_code is None:
+                    # Parse from string like "400 INVALID_ARGUMENT. {...}"
+                    import re
+                    match = re.match(r'(\d+)', error_str)
+                    if match:
+                        status_code = int(match.group(1))
+                    else:
+                        status_code = None
+                
+                # Check for API key errors: status 400 with API key indicators
+                # Primary check: status code 400
+                # Secondary check: error message contains API key related text
+                is_api_key_error = False
+                if status_code == 400:
+                    # Check error message/reason for API key issues
+                    if 'API key' in error_str or 'API_KEY' in error_str or 'API_KEY_INVALID' in error_str:
+                        is_api_key_error = True
+                    # Also check response JSON if available
+                    elif hasattr(e, 'response') and isinstance(e.response, dict):
+                        error_info = e.response.get('error', {})
+                        if isinstance(error_info, dict):
+                            details = error_info.get('details', [])
+                            for detail in details:
+                                if isinstance(detail, dict) and detail.get('reason') == 'API_KEY_INVALID':
+                                    is_api_key_error = True
+                                    break
+                
+                if is_api_key_error:
+                    error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Invalid API key error (status 400) for '{filename}' after {attempt_elapsed:.1f}s"
+                    logging.error(error_msg)
+                    logging.error(f"Error details: {error_str}")
+                    logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                    # Raise immediately - don't return error string, let it propagate
+                    raise ValueError(f"Invalid API key (status 400): {error_str}") from e
+                
+                # For other ClientErrors with status codes (400, 401, 403, etc.), don't retry - fail immediately
+                if status_code is not None:
+                    error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] API error (status {status_code}) for '{filename}' after {attempt_elapsed:.1f}s: {error_str}"
+                    logging.error(error_msg)
+                    logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                    # Raise immediately for non-retryable errors
+                    raise RuntimeError(f"API error (status {status_code}): {error_str}") from e
+                else:
+                    # If we can't determine status code, treat as unexpected error
+                    error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] API error for '{filename}' after {attempt_elapsed:.1f}s: {error_str}"
+                    logging.error(error_msg)
+                    logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                    raise RuntimeError(f"API error: {error_str}") from e
+                
             except Exception as e:
                 attempt_elapsed = time.time() - attempt_start_time
                 total_elapsed = time.time() - function_start_time
@@ -1269,7 +1329,7 @@ class ModeFactory:
         image_source = LocalImageSource(local_config['image_dir'])
         
         # Create AI client strategy
-        model_id = local_config.get('ocr_model_id', 'gemini-1.5-pro')
+        model_id = local_config.get('ocr_model_id', 'gemini-3-flash-preview')
         ai_client = GeminiDevClient(api_key, model_id)
         
         # Create output strategy
@@ -3411,9 +3471,26 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
             text, elapsed_time, usage_metadata = ai_client.transcribe(img_bytes, image_name, prompt_text)
             transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
             
-            # Ensure text is not None
+            # Check for error responses from transcribe()
             if text is None:
                 text = "[No transcription text received]"
+            elif isinstance(text, str) and text.startswith("[Error during transcription:"):
+                # Critical error - stop execution
+                error_msg = text
+                image_end_time = datetime.now()
+                image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                
+                logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] ✗ Failed to transcribe image {global_idx}/{total_images}: '{image_name}' after {transcription_elapsed:.1f}s")
+                logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {error_msg}")
+                
+                # Check if it's an API key error - stop immediately
+                if "API key" in error_msg or "API_KEY" in error_msg or "INVALID_ARGUMENT" in error_msg:
+                    logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL: Invalid API key detected. Stopping execution.")
+                    logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Please check your API key in the configuration file or GEMINI_API_KEY environment variable.")
+                    raise ValueError(f"Invalid API key: {error_msg}")
+                
+                # For other errors, raise exception to stop processing
+                raise RuntimeError(f"Transcription failed for {image_name}: {error_msg}")
             
             # Get image URL for output
             image_url = image_source.get_image_url(img_info)
@@ -3439,6 +3516,20 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
             progress_pct = (global_idx / total_images) * 100
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {global_idx}/{total_images} images ({progress_pct:.1f}%)")
             
+        except (ValueError, RuntimeError) as e:
+            # Critical errors (API key, etc.) - stop execution immediately
+            image_end_time = datetime.now()
+            image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+            error_type = type(e).__name__
+            
+            error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL ERROR transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
+            logging.error(error_msg)
+            logging.error(f"Full traceback:\n{traceback.format_exc()}")
+            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL ERROR processing {image_name}: {error_type}: {str(e)}")
+            ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
+            
+            # Re-raise to stop execution
+            raise
         except Exception as e:
             image_end_time = datetime.now()
             image_total_elapsed = (image_end_time - image_start_time).total_seconds()
@@ -3795,7 +3886,7 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
             document_name = normalized_config.get('googlecloud', {}).get('document_name', 'Unknown')
         else:  # local mode
             project_id = 'LOCAL'
-            ocr_model_id = normalized_config.get('local', {}).get('ocr_model_id', 'gemini-1.5-pro')
+            ocr_model_id = normalized_config.get('local', {}).get('ocr_model_id', 'gemini-3-flash-preview')
             batch_size_for_doc = None  # Not used in local mode
             document_name = normalized_config.get('local', {}).get('image_dir', 'Unknown')
         
