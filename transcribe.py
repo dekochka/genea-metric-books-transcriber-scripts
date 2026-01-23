@@ -728,37 +728,60 @@ class LocalImageSource(ImageSourceStrategy):
 
 
 class DriveImageSource(ImageSourceStrategy):
-    """Google Drive image source (skeleton implementation)."""
+    """Google Drive image source."""
     
-    def __init__(self, drive_service, drive_folder_id: str):
+    def __init__(self, drive_service, drive_folder_id: str, document_name: str = "Unknown"):
         """
         Initialize Drive image source.
         
         Args:
             drive_service: Google Drive API service
             drive_folder_id: Drive folder ID containing images
+            document_name: Document name for logging (optional)
         """
         self.drive_service = drive_service
         self.drive_folder_id = drive_folder_id
+        self.document_name = document_name
     
     def list_images(self, config: dict) -> list[dict]:
-        """List images from Google Drive (delegates to existing function)."""
-        # Will delegate to existing list_images() function in Phase 4
+        """
+        List images from Google Drive (delegates to existing function).
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            List of image metadata dictionaries
+        """
         return list_images(self.drive_service, config)
     
     def get_image_bytes(self, image_info: dict) -> bytes:
-        """Download image from Drive (delegates to existing function)."""
-        # Will delegate to existing download_image() function in Phase 4
-        document_name = config.get('document_name', 'Unknown')
+        """
+        Download image from Drive (delegates to existing function).
+        
+        Args:
+            image_info: Image metadata dictionary with 'id' and 'name'
+            
+        Returns:
+            Image bytes
+        """
         return download_image(
             self.drive_service,
             image_info['id'],
             image_info['name'],
-            document_name
+            self.document_name
         )
     
     def get_image_url(self, image_info: dict) -> str:
-        """Return Drive web view link."""
+        """
+        Return Drive web view link.
+        
+        Args:
+            image_info: Image metadata dictionary
+            
+        Returns:
+            Web view link
+        """
         return image_info.get('webViewLink', '')
 
 
@@ -1084,36 +1107,108 @@ class LogFileOutput(OutputStrategy):
 
 
 class GoogleDocsOutput(OutputStrategy):
-    """Google Docs output (skeleton implementation)."""
+    """Google Docs output."""
     
-    def __init__(self, docs_service, drive_service):
+    def __init__(self, docs_service, drive_service, genai_client, config: dict, prompt_text: str):
         """
         Initialize Google Docs output.
         
         Args:
             docs_service: Google Docs API service
             drive_service: Google Drive API service
+            genai_client: Vertex AI Gemini client
+            config: Configuration dictionary
+            prompt_text: Transcription prompt text
         """
         self.docs_service = docs_service
         self.drive_service = drive_service
+        self.genai_client = genai_client
+        self.config = config
+        self.prompt_text = prompt_text
+        self.doc_id = None
+        self.start_time = None
+        self.end_time = None
     
     def initialize(self, config: dict) -> str:
-        """Create Google Doc (delegates to existing function)."""
-        # Will delegate to existing create_doc() function in Phase 4
+        """
+        Create Google Doc (delegates to existing function).
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            Document ID
+        """
         run_date = datetime.now().strftime("%Y%m%d")
         document_name = config.get('document_name', 'Unknown')
         doc_name = f"{document_name} {run_date}"
-        return create_doc(self.docs_service, self.drive_service, doc_name, config)
+        self.doc_id = create_doc(self.docs_service, self.drive_service, doc_name, config)
+        self.start_time = datetime.now()
+        logging.info(f"Created Google Doc with ID: {self.doc_id}")
+        return self.doc_id
     
     def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
-        """Write batch to Google Doc (to be implemented in Phase 4)."""
-        # TODO: Phase 4 - Implement delegation to existing write_to_doc()
-        raise NotImplementedError("GoogleDocsOutput.write_batch() will be implemented in Phase 4")
+        """
+        Write batch to Google Doc (delegates to existing write_to_doc()).
+        
+        Args:
+            pages: List of page dictionaries with transcription data
+            batch_num: Batch number (1-based)
+            is_first: True if this is the first batch
+        """
+        if not self.doc_id:
+            raise ValueError("Document not initialized. Call initialize() first.")
+        
+        # Calculate start index (skip already written pages)
+        start_idx = (batch_num - 1) * len(pages)
+        
+        # For first batch, include overview; for subsequent batches, skip overview
+        write_overview = is_first
+        
+        # Delegate to existing write_to_doc() function
+        write_to_doc(
+            self.docs_service,
+            self.drive_service,
+            self.doc_id,
+            pages,
+            self.config,
+            self.prompt_text,
+            start_idx=0,  # Process all pages in this batch
+            metrics=None,  # Metrics will be updated in finalize()
+            start_time=self.start_time,
+            end_time=None,  # End time not known yet
+            write_overview=write_overview,
+            genai_client=self.genai_client
+        )
+        
+        logging.info(f"Wrote batch {batch_num} ({len(pages)} pages) to Google Doc")
     
     def finalize(self, all_pages: list[dict], metrics: dict) -> None:
-        """Update overview section (to be implemented in Phase 4)."""
-        # TODO: Phase 4 - Implement delegation to existing update_overview_section()
-        raise NotImplementedError("GoogleDocsOutput.finalize() will be implemented in Phase 4")
+        """
+        Update overview section (delegates to existing update_overview_section()).
+        
+        Args:
+            all_pages: All transcribed pages
+            metrics: Session metrics dictionary
+        """
+        if not self.doc_id:
+            raise ValueError("Document not initialized. Call initialize() first.")
+        
+        self.end_time = datetime.now()
+        
+        # Delegate to existing update_overview_section() function
+        update_overview_section(
+            self.docs_service,
+            self.doc_id,
+            all_pages,
+            self.config,
+            self.prompt_text,
+            metrics=metrics,
+            start_time=self.start_time,
+            end_time=self.end_time
+        )
+        
+        logging.info(f"Finalized Google Doc with overview update")
 
 
 class ModeFactory:
@@ -1189,9 +1284,64 @@ class ModeFactory:
     
     @staticmethod
     def _create_googlecloud_handlers(config: dict) -> dict:
-        """Create handlers for Google Cloud mode (to be implemented in Phase 4)."""
-        # TODO: Phase 4 - Implement Google Cloud mode handler creation
-        raise NotImplementedError("ModeFactory._create_googlecloud_handlers() will be implemented in Phase 4")
+        """
+        Create handlers for Google Cloud mode.
+        
+        Args:
+            config: Configuration dictionary (normalized, with 'googlecloud' section)
+            
+        Returns:
+            Dictionary containing all handlers for Google Cloud mode
+        """
+        googlecloud_config = config['googlecloud']
+        
+        # Create authentication strategy and authenticate
+        auth = GoogleCloudAuthStrategy(googlecloud_config['adc_file'])
+        creds = auth.authenticate()
+        
+        # Initialize Google Cloud services
+        drive_service, docs_service, genai_client = init_services(creds, googlecloud_config)
+        
+        # Create image source strategy
+        image_source = DriveImageSource(
+            drive_service,
+            googlecloud_config['drive_folder_id'],
+            document_name=googlecloud_config.get('document_name', 'Unknown')
+        )
+        
+        # Create AI client strategy
+        model_id = googlecloud_config.get('ocr_model_id', 'gemini-1.5-pro')
+        ai_client = VertexAIClient(genai_client, model_id)
+        
+        # Load prompt text for output strategy
+        prompt_file = config.get('prompt_file', 'prompt.txt')
+        try:
+            with open(prompt_file, 'r', encoding='utf-8') as f:
+                prompt_text = f.read()
+        except Exception as e:
+            logging.error(f"Error reading prompt file '{prompt_file}': {str(e)}")
+            prompt_text = ""  # Fallback to empty prompt
+        
+        # Create output strategy
+        output = GoogleDocsOutput(
+            docs_service,
+            drive_service,
+            genai_client,
+            googlecloud_config,
+            prompt_text
+        )
+        
+        logging.info(f"Created GOOGLECLOUD mode handlers: project_id={googlecloud_config.get('project_id')}, drive_folder={googlecloud_config['drive_folder_id']}, model={model_id}")
+        
+        return {
+            'auth': auth,
+            'image_source': image_source,
+            'ai_client': ai_client,
+            'output': output,
+            'drive_service': drive_service,
+            'docs_service': docs_service,
+            'genai_client': genai_client
+        }
 
 
 # ------------------------- EXISTING AUTHENTICATION & SERVICES -------------------------
