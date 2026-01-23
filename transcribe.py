@@ -1456,56 +1456,6 @@ class MarkdownOutput(OutputStrategy):
 
 
 
-class MarkdownOutput(OutputStrategy):
-    """Markdown output for local mode."""
-    
-    def __init__(self, target_dir: str, config: dict, prompt_text: str):
-        """Initialize Markdown output."""
-        self.target_dir = target_dir
-        self.config = config
-        self.prompt_text = prompt_text
-        self.temp_body_file = None
-        self.final_file_path = None
-        os.makedirs(target_dir, exist_ok=True)
-    
-    def initialize(self, config: dict, prompt_text: str = None) -> str:
-        """Initialize markdown file."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        archive_index = config.get('archive_index', 'transcription')
-        self.final_file_path = os.path.join(self.target_dir, f"{archive_index}_{timestamp}.md")
-        self.temp_body_file = os.path.join(self.target_dir, f"temp_body_{timestamp}.md")
-        open(self.temp_body_file, 'w', encoding='utf-8').close()
-        logging.info(f"Initialized Markdown output: {self.final_file_path}")
-        return self.final_file_path
-    
-    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
-        """Write batch to temp markdown file."""
-        if not self.temp_body_file:
-            raise ValueError("Markdown output not initialized")
-        with open(self.temp_body_file, 'a', encoding='utf-8') as f:
-            for page in pages:
-                f.write(f"\n---\n\n## {page['name']}\n\n")
-                link = page.get('webViewLink', page.get('path', ''))
-                if link:
-                    f.write(f"**Source:** [{page['name']}]({link})\n\n")
-                f.write(f"{page.get('text', '')}\n")
-    
-    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
-        """Finalize markdown file with overview at top."""
-        if not self.final_file_path:
-            raise ValueError("Markdown output not initialized")
-        overview = create_local_overview_section(all_pages, self.config, self.prompt_text, metrics=metrics, start_time=None, end_time=None)
-        with open(self.final_file_path, 'w', encoding='utf-8') as final:
-            archive_index = self.config.get('archive_index', 'Transcription')
-            final.write(f"# {archive_index}\n\n")
-            final.write(f"## Session Overview\n\n```text\n{overview}\n```\n\n")
-            if os.path.exists(self.temp_body_file):
-                with open(self.temp_body_file, 'r', encoding='utf-8') as temp:
-                    final.write(temp.read())
-                os.remove(self.temp_body_file)
-        logging.info(f"Finalized Markdown output: {self.final_file_path}")
-
-
 class WordOutput(OutputStrategy):
     """Microsoft Word output for local mode."""
     
@@ -1625,13 +1575,23 @@ class ModeFactory:
         # Create multiple output strategies (log, markdown, word)
         log_output = LogFileOutput(output_dir, ai_logger)
         md_output = MarkdownOutput(image_dir, config, None)  # prompt_text will be passed in initialize
-        word_output = WordOutput(image_dir, config, None)  # prompt_text will be passed in initialize
+        
+        strategies = [log_output, md_output]
+        output_formats = [f"Log ({output_dir}/)", f"Markdown ({image_dir}/)"]
+        
+        # Add Word output only if python-docx is available
+        if DOCX_AVAILABLE:
+            word_output = WordOutput(image_dir, config, None)  # prompt_text will be passed in initialize
+            strategies.append(word_output)
+            output_formats.append(f"Word ({image_dir}/)")
+        else:
+            logging.warning("python-docx not installed. Word output disabled. Install with: pip install python-docx>=0.8.11")
         
         # Wrap all strategies in CompositeOutput
-        output = CompositeOutput([log_output, md_output, word_output])
+        output = CompositeOutput(strategies)
         
         logging.info(f"Created LOCAL mode handlers: image_dir={image_dir}, output_dir={output_dir}, model={model_id}")
-        logging.info(f"Output formats: Log (logs/), Markdown ({image_dir}/), Word ({image_dir}/)")
+        logging.info(f"Output formats: {', '.join(output_formats)}")
         
         return {
             'auth': auth,
