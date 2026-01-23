@@ -462,7 +462,7 @@ class ImageSourceStrategy(ABC):
 
 
 class LocalImageSource(ImageSourceStrategy):
-    """Local file system image source (skeleton implementation)."""
+    """Local file system image source."""
     
     def __init__(self, image_dir: str):
         """
@@ -476,19 +476,255 @@ class LocalImageSource(ImageSourceStrategy):
             raise ValueError(f"Image directory does not exist: {image_dir}")
     
     def list_images(self, config: dict) -> list[dict]:
-        """List images from local directory (to be implemented in Phase 3)."""
-        # TODO: Phase 3 - Implement local image listing
-        raise NotImplementedError("LocalImageSource.list_images() will be implemented in Phase 3")
+        """
+        List images from local directory with filtering.
+        
+        Reuses the same filtering logic as Drive-based list_images(),
+        supporting all filename patterns and image_start_number/image_count filtering.
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            List of image metadata dictionaries with 'name', 'path', 'id', 'webViewLink'
+        """
+        import glob
+        import re
+        
+        retry_mode = config.get('retry_mode', False)
+        retry_image_list = config.get('retry_image_list', [])
+        image_start_number = config.get('image_start_number', 1)
+        image_count = config.get('image_count', 1000)
+        
+        # Supported extensions (case-insensitive)
+        extensions = ['*.jpg', '*.jpeg', '*.JPG', '*.JPEG']
+        all_image_paths = []
+        
+        for ext in extensions:
+            pattern = os.path.join(self.image_dir, ext)
+            all_image_paths.extend(glob.glob(pattern))
+        
+        # Sort by filename
+        all_image_paths.sort()
+        
+        logging.info(f"Found {len(all_image_paths)} total images in local directory (sorted by filename)")
+        
+        # Convert to dict format compatible with existing code
+        all_images = []
+        for img_path in all_image_paths:
+            filename = os.path.basename(img_path)
+            all_images.append({
+                'name': filename,
+                'path': img_path,
+                'id': img_path,  # Use path as ID for local mode
+                'webViewLink': f"file://{os.path.abspath(img_path)}"  # Local file URL
+            })
+        
+        # RETRY MODE: If enabled, filter for specific failed images only
+        if retry_mode:
+            logging.info(f"RETRY MODE ENABLED: Looking for {len(retry_image_list)} specific failed images")
+            retry_images = []
+            
+            # Find matching images (exact filename match)
+            retry_names = set(retry_image_list)
+            for img in all_images:
+                if img['name'] in retry_names:
+                    retry_images.append(img)
+            
+            logging.info(f"Found {len(retry_images)} retry images out of {len(retry_image_list)} requested")
+            if retry_images:
+                retry_filenames = [img['name'] for img in retry_images]
+                logging.info(f"Retry images found: {retry_filenames}")
+            else:
+                logging.warning("No retry images found! Check the retry_image_list names in config.")
+            
+            return retry_images
+        
+        # NORMAL MODE: Apply same filtering logic as Drive-based list_images()
+        numbered_images = []
+        timestamp_images = []
+        
+        # Helper: case-insensitive check for JPEG extension
+        def has_jpeg_extension(filename: str) -> bool:
+            lower = filename.lower()
+            return lower.endswith('.jpg') or lower.endswith('.jpeg')
+        
+        # Regex patterns (same as Drive implementation)
+        timestamp_pattern = re.compile(r'^image - (\d{4}-\d{2}-\d{2}T\d{6}\.\d{3})\.(?:jpg|jpeg)$', re.IGNORECASE)
+        img_date_pattern = re.compile(r'^IMG_\d{8}_(\d+)\.(?:jpg|jpeg)$', re.IGNORECASE)
+        
+        for img in all_images:
+            filename = img['name']
+            number = None
+            
+            # Check for timestamp pattern first
+            timestamp_match = timestamp_pattern.match(filename)
+            if timestamp_match:
+                timestamp_images.append(img)
+                continue
+            
+            # Check for IMG_YYYYMMDD_XXXX.jpg pattern
+            img_date_match = img_date_pattern.match(filename)
+            if img_date_match:
+                try:
+                    number = int(img_date_match.group(1))
+                except ValueError:
+                    continue
+            
+            # Check if filename matches the pattern image (N).jpg/jpeg
+            elif filename.startswith('image (') and (filename.lower().endswith(').jpg') or filename.lower().endswith(').jpeg')):
+                try:
+                    start_idx = filename.find('(') + 1
+                    end_idx = filename.find(')')
+                    number_str = filename[start_idx:end_idx]
+                    number = int(number_str)
+                except (ValueError, IndexError):
+                    continue
+            
+            # Check if filename matches the pattern imageXXXXX.jpg/jpeg
+            elif filename.startswith('image') and has_jpeg_extension(filename) and '(' not in filename and ' - ' not in filename and '_' not in filename:
+                try:
+                    ext_len = 5 if filename.lower().endswith('.jpeg') else 4
+                    number_str = filename[5:-ext_len]
+                    number = int(number_str)
+                except ValueError:
+                    continue
+            
+            # Check if filename matches the pattern XXXXX.jpg/jpeg
+            elif has_jpeg_extension(filename) and not filename.startswith('image') and '_' not in filename:
+                try:
+                    ext_len = 5 if filename.lower().endswith('.jpeg') else 4
+                    number_str = filename[:-ext_len]
+                    number = int(number_str)
+                except ValueError:
+                    continue
+            
+            # Check if filename matches the pattern PREFIX_XXXXX.jpg/jpeg
+            elif has_jpeg_extension(filename) and '_' in filename:
+                try:
+                    ext_len = 5 if filename.lower().endswith('.jpeg') else 4
+                    base_no_ext = filename[:-ext_len]
+                    underscore_idx = base_no_ext.rfind('_')
+                    if underscore_idx != -1:
+                        suffix = base_no_ext[underscore_idx + 1:]
+                        if suffix.isdigit():
+                            number = int(suffix)
+                except Exception:
+                    continue
+            
+            # If we found a valid number, check if it's in the desired range
+            if number is not None:
+                if image_start_number <= number < image_start_number + image_count:
+                    numbered_images.append(img)
+        
+        # Handle numbered images (same logic as Drive implementation)
+        filtered_images = []
+        
+        if numbered_images:
+            start_filename_pattern1 = f"image ({image_start_number}).jpg"
+            end_filename_pattern1 = f"image ({image_start_number + image_count - 1}).jpg"
+            start_filename_pattern2 = f"image{image_start_number:05d}.jpg"
+            end_filename_pattern2 = f"image{image_start_number + image_count - 1:05d}.jpg"
+            start_filename_pattern3 = f"{image_start_number}.jpg"
+            end_filename_pattern3 = f"{image_start_number + image_count - 1}.jpg"
+            
+            logging.info(f"Filtering numbered images from {start_filename_pattern1} to {end_filename_pattern1} OR {start_filename_pattern2} to {end_filename_pattern2} OR {start_filename_pattern3} to {end_filename_pattern3}")
+            
+            # Sort numbered images numerically
+            def extract_number_for_sorting(img):
+                filename = img['name']
+                lower = filename.lower()
+                if filename.startswith('image (') and (lower.endswith(').jpg') or lower.endswith(').jpeg')):
+                    start_idx = filename.find('(') + 1
+                    end_idx = filename.find(')')
+                    number_str = filename[start_idx:end_idx]
+                elif filename.startswith('image') and has_jpeg_extension(filename) and '(' not in filename and ' - ' not in filename and '_' not in filename:
+                    ext_len = 5 if lower.endswith('.jpeg') else 4
+                    number_str = filename[5:-ext_len]
+                elif has_jpeg_extension(filename) and '_' in filename:
+                    ext_len = 5 if lower.endswith('.jpeg') else 4
+                    base_no_ext = filename[:-ext_len]
+                    underscore_idx = base_no_ext.rfind('_')
+                    number_str = base_no_ext[underscore_idx + 1:]
+                else:
+                    ext_len = 5 if lower.endswith('.jpeg') else 4
+                    number_str = filename[:-ext_len]
+                return int(number_str)
+            
+            numbered_images.sort(key=extract_number_for_sorting)
+            filtered_images.extend(numbered_images)
+        
+        # Handle timestamp images
+        if timestamp_images:
+            logging.info(f"Found {len(timestamp_images)} timestamp-based images")
+            
+            # Sort timestamp images chronologically
+            def extract_timestamp_for_sorting(img):
+                filename = img['name']
+                match = timestamp_pattern.match(filename)
+                if match:
+                    timestamp_str = match.group(1)
+                    try:
+                        from datetime import datetime
+                        formatted_timestamp = f"{timestamp_str[:11]}{timestamp_str[11:13]}:{timestamp_str[13:15]}:{timestamp_str[15:]}"
+                        return datetime.fromisoformat(formatted_timestamp)
+                    except ValueError:
+                        return datetime.min
+                return datetime.min
+            
+            timestamp_images.sort(key=extract_timestamp_for_sorting)
+            
+            # For timestamp images, treat image_start_number as starting position
+            start_pos = max(1, image_start_number) - 1
+            end_pos = min(len(timestamp_images), start_pos + image_count)
+            
+            selected_timestamp_images = timestamp_images[start_pos:end_pos]
+            filtered_images.extend(selected_timestamp_images)
+            
+            if selected_timestamp_images:
+                logging.info(f"Selected {len(selected_timestamp_images)} timestamp images from position {image_start_number} to {start_pos + len(selected_timestamp_images)}")
+        
+        # Fallback: if no images selected, use position-based selection
+        if not filtered_images and all_images:
+            start_pos = max(1, image_start_number) - 1
+            end_pos = min(len(all_images), start_pos + image_count)
+            fallback_selected = all_images[start_pos:end_pos]
+            if fallback_selected:
+                logging.info(f"No numeric/timestamp matches; falling back to position selection: items {image_start_number} to {image_start_number + len(fallback_selected) - 1}")
+                filtered_images = fallback_selected
+        
+        logging.info(f"Selected {len(filtered_images)} total images for processing")
+        
+        if filtered_images:
+            filenames = [img['name'] for img in filtered_images]
+            logging.info(f"Final selected files: {filenames}")
+        
+        return filtered_images
     
     def get_image_bytes(self, image_info: dict) -> bytes:
-        """Read image from local file system (to be implemented in Phase 3)."""
-        # TODO: Phase 3 - Implement local image reading
-        raise NotImplementedError("LocalImageSource.get_image_bytes() will be implemented in Phase 3")
+        """
+        Read image from local file system.
+        
+        Args:
+            image_info: Image metadata dictionary with 'path' key
+            
+        Returns:
+            Image bytes
+        """
+        with open(image_info['path'], 'rb') as f:
+            return f.read()
     
     def get_image_url(self, image_info: dict) -> str:
-        """Return local file path (to be implemented in Phase 3)."""
-        # TODO: Phase 3 - Implement URL generation
-        raise NotImplementedError("LocalImageSource.get_image_url() will be implemented in Phase 3")
+        """
+        Return local file path.
+        
+        Args:
+            image_info: Image metadata dictionary with 'path' key
+            
+        Returns:
+            Local file path
+        """
+        return image_info['path']
 
 
 class DriveImageSource(ImageSourceStrategy):
@@ -546,7 +782,7 @@ class AIClientStrategy(ABC):
 
 
 class GeminiDevClient(AIClientStrategy):
-    """Gemini Developer API client (skeleton implementation)."""
+    """Gemini Developer API client."""
     
     def __init__(self, api_key: str, model_id: str = "gemini-1.5-pro"):
         """
@@ -554,15 +790,129 @@ class GeminiDevClient(AIClientStrategy):
         
         Args:
             api_key: Gemini API key
-            model_id: Model ID to use
+            model_id: Model ID to use (default: gemini-1.5-pro)
         """
         self.api_key = api_key
         self.model_id = model_id
+        # Initialize Gemini client for Developer API (not Vertex AI)
+        self.client = genai.Client(api_key=api_key)
+        logging.info(f"Gemini Developer API client initialized with model {model_id}")
     
     def transcribe(self, image_bytes: bytes, filename: str, prompt: str) -> tuple[str, float, dict]:
-        """Transcribe using Gemini Developer API (to be implemented in Phase 3)."""
-        # TODO: Phase 3 - Implement Gemini Developer API transcription
-        raise NotImplementedError("GeminiDevClient.transcribe() will be implemented in Phase 3")
+        """
+        Transcribe image using Gemini Developer API.
+        
+        Args:
+            image_bytes: Image file bytes
+            filename: Image filename (for logging)
+            prompt: Transcription prompt text
+            
+        Returns:
+            Tuple of (transcription_text, elapsed_time, usage_metadata)
+        """
+        import time
+        
+        function_start_time = time.time()
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription for image '{filename}' (size: {len(image_bytes)} bytes)")
+        
+        # Create image part
+        image_part = types.Part.from_bytes(
+            data=image_bytes,
+            mime_type="image/jpeg"
+        )
+        
+        # Create content with prompt and image
+        content = types.Content(
+            role="user",
+            parts=[
+                types.Part.from_text(text=prompt),
+                image_part
+            ]
+        )
+        
+        # Configure generation parameters (matching Vertex AI configuration)
+        generate_content_config = types.GenerateContentConfig(
+            temperature=0.1,
+            top_p=0.8,
+            seed=0,
+            max_output_tokens=65535,
+            system_instruction=[types.Part.from_text(text=prompt)],
+            thinking_config=types.ThinkingConfig(
+                thinking_budget=5000,
+            ),
+        )
+        
+        max_retries = 3
+        retry_delay = 30  # seconds
+        timeout_seconds_list = [60, 120, 300]  # 1 min, 2 min, 5 min
+        
+        for attempt in range(max_retries):
+            attempt_start_time = time.time()
+            timeout_seconds = timeout_seconds_list[attempt]
+            
+            try:
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} for image '{filename}' (timeout: {timeout_seconds/60:.1f} min)")
+                
+                # Make API call
+                api_call_start = time.time()
+                response = self.client.models.generate_content(
+                    model=self.model_id,
+                    contents=[content],
+                    config=generate_content_config
+                )
+                
+                api_call_elapsed = time.time() - api_call_start
+                elapsed_time = time.time() - attempt_start_time
+                total_elapsed = time.time() - function_start_time
+                
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Gemini API response received in {api_call_elapsed:.1f}s (attempt total: {elapsed_time:.1f}s, function total: {total_elapsed:.1f}s) for '{filename}'")
+                
+                # Log warning if API call took unusually long
+                if api_call_elapsed > 60:
+                    logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: API call took {api_call_elapsed:.1f}s (>60s) for '{filename}'")
+                
+                text = response.text if response.text else "[No transcription text received]"
+                
+                # Extract usage metadata if available
+                usage_metadata = {}
+                if hasattr(response, 'usage_metadata'):
+                    usage_metadata = {
+                        'prompt_tokens': getattr(response.usage_metadata, 'prompt_token_count', 0),
+                        'completion_tokens': getattr(response.usage_metadata, 'candidates_token_count', 0),
+                        'total_tokens': getattr(response.usage_metadata, 'total_token_count', 0),
+                        'cached_tokens': getattr(response.usage_metadata, 'cached_content_token_count', 0)
+                    }
+                
+                function_total_elapsed = time.time() - function_start_time
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Transcription completed for '{filename}' in {function_total_elapsed:.1f}s total")
+                
+                return text, elapsed_time, usage_metadata
+                
+            except (TimeoutError, ConnectionError, OSError) as e:
+                attempt_elapsed = time.time() - attempt_start_time
+                total_elapsed = time.time() - function_start_time
+                error_type = type(e).__name__
+                
+                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} failed for '{filename}' after {attempt_elapsed:.1f}s (total: {total_elapsed:.1f}s): {error_type}: {str(e)}"
+                logging.warning(error_msg)
+                
+                if attempt < max_retries - 1:
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] All {max_retries} attempts failed for '{filename}' after {total_elapsed:.1f}s: {error_type}: {str(e)}")
+                    return f"[Error during transcription: {str(e)}]", None, None
+                    
+            except Exception as e:
+                attempt_elapsed = time.time() - attempt_start_time
+                total_elapsed = time.time() - function_start_time
+                error_type = type(e).__name__
+                
+                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Unexpected error in Gemini API transcription for '{filename}' after {attempt_elapsed:.1f}s: {error_type}: {str(e)}"
+                logging.error(error_msg)
+                logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                return f"[Error during transcription: {str(e)}]", None, None
 
 
 class VertexAIClient(AIClientStrategy):
@@ -626,7 +976,7 @@ class OutputStrategy(ABC):
 
 
 class LogFileOutput(OutputStrategy):
-    """Log file output for local mode (skeleton implementation)."""
+    """Log file output for local mode."""
     
     def __init__(self, output_dir: str, ai_logger):
         """
@@ -638,22 +988,99 @@ class LogFileOutput(OutputStrategy):
         """
         self.output_dir = output_dir
         self.ai_logger = ai_logger
+        self.log_file_path = None
         os.makedirs(output_dir, exist_ok=True)
     
     def initialize(self, config: dict) -> str:
-        """Initialize log file (to be implemented in Phase 3)."""
-        # TODO: Phase 3 - Implement log file initialization
-        raise NotImplementedError("LogFileOutput.initialize() will be implemented in Phase 3")
+        """
+        Initialize log file for transcription output.
+        
+        Creates a timestamped log file and writes session metadata.
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            Log file path
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_index = config.get('archive_index', 'transcription')
+        self.log_file_path = os.path.join(
+            self.output_dir,
+            f"{timestamp}-{archive_index}-transcription.log"
+        )
+        
+        # Write session header to log file
+        with open(self.log_file_path, 'w', encoding='utf-8') as f:
+            f.write("=" * 80 + "\n")
+            f.write("TRANSCRIPTION SESSION - LOCAL MODE\n")
+            f.write("=" * 80 + "\n")
+            f.write(f"Session started: {datetime.now().isoformat()}\n")
+            f.write(f"Archive index: {config.get('archive_index', 'N/A')}\n")
+            f.write(f"Image directory: {config.get('local', {}).get('image_dir', 'N/A')}\n")
+            f.write(f"Model: {config.get('local', {}).get('ocr_model_id', 'N/A')}\n")
+            f.write(f"Image range: {config.get('image_start_number', 'N/A')} to {config.get('image_start_number', 0) + config.get('image_count', 0) - 1}\n")
+            f.write("=" * 80 + "\n\n")
+        
+        logging.info(f"Created transcription log file: {self.log_file_path}")
+        return self.log_file_path
     
     def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
-        """Write batch to log file (to be implemented in Phase 3)."""
-        # TODO: Phase 3 - Implement batch writing
-        raise NotImplementedError("LogFileOutput.write_batch() will be implemented in Phase 3")
+        """
+        Write batch of transcriptions to log file.
+        
+        Args:
+            pages: List of page dictionaries with transcription data
+            batch_num: Batch number (1-based)
+            is_first: True if this is the first batch
+        """
+        if not self.log_file_path:
+            raise ValueError("Log file not initialized. Call initialize() first.")
+        
+        with open(self.log_file_path, 'a', encoding='utf-8') as f:
+            if is_first:
+                f.write("\n" + "=" * 80 + "\n")
+                f.write("TRANSCRIPTIONS\n")
+                f.write("=" * 80 + "\n\n")
+            
+            for page in pages:
+                f.write("-" * 80 + "\n")
+                f.write(f"Image: {page['name']}\n")
+                f.write(f"Source: {page.get('webViewLink', page.get('path', ''))}\n")
+                f.write("-" * 80 + "\n")
+                f.write(f"{page['text']}\n")
+                f.write("\n")
+        
+        logging.info(f"Wrote batch {batch_num} ({len(pages)} pages) to log file")
     
     def finalize(self, all_pages: list[dict], metrics: dict) -> None:
-        """Finalize log file (to be implemented in Phase 3)."""
-        # TODO: Phase 3 - Implement finalization
-        raise NotImplementedError("LogFileOutput.finalize() will be implemented in Phase 3")
+        """
+        Finalize log file with session summary.
+        
+        Args:
+            all_pages: All transcribed pages
+            metrics: Session metrics dictionary
+        """
+        if not self.log_file_path:
+            raise ValueError("Log file not initialized. Call initialize() first.")
+        
+        with open(self.log_file_path, 'a', encoding='utf-8') as f:
+            f.write("\n" + "=" * 80 + "\n")
+            f.write("SESSION SUMMARY\n")
+            f.write("=" * 80 + "\n")
+            f.write(f"Session completed: {datetime.now().isoformat()}\n")
+            f.write(f"Total images processed: {len(all_pages)}\n")
+            f.write(f"Successful transcriptions: {len([p for p in all_pages if p.get('text') and not p['text'].startswith('[Error')])}\n")
+            f.write(f"Failed transcriptions: {len([p for p in all_pages if not p.get('text') or p['text'].startswith('[Error')])}\n")
+            
+            if metrics:
+                f.write("\nMetrics:\n")
+                for key, value in metrics.items():
+                    f.write(f"  {key}: {value}\n")
+            
+            f.write("=" * 80 + "\n")
+        
+        logging.info(f"Finalized transcription log file: {self.log_file_path}")
 
 
 class GoogleDocsOutput(OutputStrategy):
@@ -722,9 +1149,43 @@ class ModeFactory:
     
     @staticmethod
     def _create_local_handlers(config: dict) -> dict:
-        """Create handlers for local mode (to be implemented in Phase 3)."""
-        # TODO: Phase 3 - Implement local mode handler creation
-        raise NotImplementedError("ModeFactory._create_local_handlers() will be implemented in Phase 3")
+        """
+        Create handlers for local mode.
+        
+        Args:
+            config: Configuration dictionary (normalized, with 'local' section)
+            
+        Returns:
+            Dictionary containing all handlers for local mode
+        """
+        local_config = config['local']
+        
+        # Create authentication strategy
+        auth = LocalAuthStrategy(local_config.get('api_key'))
+        api_key = auth.authenticate()
+        
+        # Create image source strategy
+        image_source = LocalImageSource(local_config['image_dir'])
+        
+        # Create AI client strategy
+        model_id = local_config.get('ocr_model_id', 'gemini-1.5-pro')
+        ai_client = GeminiDevClient(api_key, model_id)
+        
+        # Create output strategy
+        output_dir = local_config.get('output_dir', 'logs')
+        ai_logger = logging.getLogger('ai_responses')
+        output = LogFileOutput(output_dir, ai_logger)
+        
+        logging.info(f"Created LOCAL mode handlers: image_dir={local_config['image_dir']}, output_dir={output_dir}, model={model_id}")
+        
+        return {
+            'auth': auth,
+            'image_source': image_source,
+            'ai_client': ai_client,
+            'output': output,
+            'drive_service': None,
+            'docs_service': None
+        }
     
     @staticmethod
     def _create_googlecloud_handlers(config: dict) -> dict:
