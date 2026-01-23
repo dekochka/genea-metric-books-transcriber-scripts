@@ -20,6 +20,10 @@ local:
   
   # Output directory for log files (optional, default: "logs")
   # Log files will contain transcriptions and session metadata
+  # Note: LOCAL mode now generates THREE output files:
+  #   1. Log file (.log) - saved to output_dir (e.g., logs/)
+  #   2. Markdown file (.md) - saved to image_dir (source folder)
+  #   3. Word file (.docx) - saved to image_dir (source folder)
   output_dir: "logs"
   
   # OCR Model ID (optional, default: "gemini-3-flash-preview")

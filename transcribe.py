@@ -39,6 +39,18 @@ from google import genai
 from google.genai import types
 from google.genai.errors import ClientError
 
+# Try to import python-docx for Word output
+try:
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+    Document = None
+    print("WARNING: python-docx not installed. Word output will not be available.")
+    print("Install with: pip install python-docx>=0.8.11")
+
 # ------------------------- CONFIGURATION LOADING -------------------------
 
 def load_config(config_path: str) -> dict:
@@ -1329,6 +1341,226 @@ class GoogleDocsOutput(OutputStrategy):
         
         logging.info(f"Finalized Google Doc with overview update")
 
+class CompositeOutput(OutputStrategy):
+    """Composite output strategy that delegates to multiple output strategies."""
+    
+    def __init__(self, strategies: list):
+        """
+        Initialize composite output with multiple strategies.
+        
+        Args:
+            strategies: List of OutputStrategy instances
+        """
+        self.strategies = strategies
+    
+    def initialize(self, config: dict, prompt_text: str = None) -> list:
+        """Initialize all strategies and return list of output IDs."""
+        output_ids = []
+        for strategy in self.strategies:
+            try:
+                output_id = strategy.initialize(config, prompt_text)
+                output_ids.append(output_id)
+            except Exception as e:
+                logging.error(f"Error initializing output strategy {strategy.__class__.__name__}: {e}")
+        return output_ids
+    
+    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
+        """Write batch to all strategies."""
+        for strategy in self.strategies:
+            try:
+                strategy.write_batch(pages, batch_num, is_first)
+            except Exception as e:
+                logging.error(f"Error writing batch to {strategy.__class__.__name__}: {e}")
+    
+    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
+        """Finalize all strategies."""
+        for strategy in self.strategies:
+            try:
+                strategy.finalize(all_pages, metrics)
+            except Exception as e:
+                logging.error(f"Error finalizing {strategy.__class__.__name__}: {e}")
+
+
+class MarkdownOutput(OutputStrategy):
+    """Markdown output for local mode."""
+    
+    def __init__(self, target_dir: str, config: dict, prompt_text: str):
+        """
+        Initialize Markdown output.
+        
+        Args:
+            target_dir: Directory where markdown file will be saved (image_dir)
+            config: Configuration dictionary
+            prompt_text: Transcription prompt text
+        """
+        self.target_dir = target_dir
+        self.config = config
+        self.prompt_text = prompt_text
+        self.temp_body_file = None
+        self.final_file_path = None
+        os.makedirs(target_dir, exist_ok=True)
+    
+    def initialize(self, config: dict, prompt_text: str = None) -> str:
+        """Initialize markdown file."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_index = config.get('archive_index', 'transcription')
+        self.final_file_path = os.path.join(self.target_dir, f"{archive_index}_{timestamp}.md")
+        self.temp_body_file = os.path.join(self.target_dir, f"temp_body_{timestamp}.md")
+        
+        # Create empty temp file
+        open(self.temp_body_file, 'w', encoding='utf-8').close()
+        
+        logging.info(f"Initialized Markdown output: {self.final_file_path}")
+        return self.final_file_path
+    
+    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
+        """Write batch to temp markdown file."""
+        if not self.temp_body_file:
+            raise ValueError("Markdown output not initialized")
+        
+        with open(self.temp_body_file, 'a', encoding='utf-8') as f:
+            for page in pages:
+                f.write(f"\n---\n\n## {page['name']}\n\n")
+                link = page.get('webViewLink', page.get('path', ''))
+                if link:
+                    f.write(f"**Source:** [{page['name']}]({link})\n\n")
+                f.write(f"{page.get('text', '')}\n")
+    
+    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
+        """Finalize markdown file with overview at top."""
+        if not self.final_file_path:
+            raise ValueError("Markdown output not initialized")
+        
+        # Generate overview
+        overview = create_local_overview_section(
+            all_pages, self.config, self.prompt_text, 
+            metrics=metrics, start_time=None, end_time=None
+        )
+        
+        # Write final file
+        with open(self.final_file_path, 'w', encoding='utf-8') as final:
+            archive_index = self.config.get('archive_index', 'Transcription')
+            final.write(f"# {archive_index}\n\n")
+            final.write(f"## Session Overview\n\n```text\n{overview}\n```\n\n")
+            
+            # Append temp body content
+            if os.path.exists(self.temp_body_file):
+                with open(self.temp_body_file, 'r', encoding='utf-8') as temp:
+                    final.write(temp.read())
+                os.remove(self.temp_body_file)
+        
+        logging.info(f"Finalized Markdown output: {self.final_file_path}")
+
+
+
+
+
+
+class MarkdownOutput(OutputStrategy):
+    """Markdown output for local mode."""
+    
+    def __init__(self, target_dir: str, config: dict, prompt_text: str):
+        """Initialize Markdown output."""
+        self.target_dir = target_dir
+        self.config = config
+        self.prompt_text = prompt_text
+        self.temp_body_file = None
+        self.final_file_path = None
+        os.makedirs(target_dir, exist_ok=True)
+    
+    def initialize(self, config: dict, prompt_text: str = None) -> str:
+        """Initialize markdown file."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_index = config.get('archive_index', 'transcription')
+        self.final_file_path = os.path.join(self.target_dir, f"{archive_index}_{timestamp}.md")
+        self.temp_body_file = os.path.join(self.target_dir, f"temp_body_{timestamp}.md")
+        open(self.temp_body_file, 'w', encoding='utf-8').close()
+        logging.info(f"Initialized Markdown output: {self.final_file_path}")
+        return self.final_file_path
+    
+    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
+        """Write batch to temp markdown file."""
+        if not self.temp_body_file:
+            raise ValueError("Markdown output not initialized")
+        with open(self.temp_body_file, 'a', encoding='utf-8') as f:
+            for page in pages:
+                f.write(f"\n---\n\n## {page['name']}\n\n")
+                link = page.get('webViewLink', page.get('path', ''))
+                if link:
+                    f.write(f"**Source:** [{page['name']}]({link})\n\n")
+                f.write(f"{page.get('text', '')}\n")
+    
+    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
+        """Finalize markdown file with overview at top."""
+        if not self.final_file_path:
+            raise ValueError("Markdown output not initialized")
+        overview = create_local_overview_section(all_pages, self.config, self.prompt_text, metrics=metrics, start_time=None, end_time=None)
+        with open(self.final_file_path, 'w', encoding='utf-8') as final:
+            archive_index = self.config.get('archive_index', 'Transcription')
+            final.write(f"# {archive_index}\n\n")
+            final.write(f"## Session Overview\n\n```text\n{overview}\n```\n\n")
+            if os.path.exists(self.temp_body_file):
+                with open(self.temp_body_file, 'r', encoding='utf-8') as temp:
+                    final.write(temp.read())
+                os.remove(self.temp_body_file)
+        logging.info(f"Finalized Markdown output: {self.final_file_path}")
+
+
+class WordOutput(OutputStrategy):
+    """Microsoft Word output for local mode."""
+    
+    def __init__(self, target_dir: str, config: dict, prompt_text: str):
+        """Initialize Word output."""
+        if not DOCX_AVAILABLE:
+            raise ImportError("python-docx is required for Word output. Install with: pip install python-docx>=0.8.11")
+        self.target_dir = target_dir
+        self.config = config
+        self.prompt_text = prompt_text
+        self.doc = None
+        self.doc_path = None
+        self.overview_placeholder = None
+        os.makedirs(target_dir, exist_ok=True)
+    
+    def initialize(self, config: dict, prompt_text: str = None) -> str:
+        """Initialize Word document."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_index = config.get('archive_index', 'transcription')
+        self.doc_path = os.path.join(self.target_dir, f"{archive_index}_{timestamp}.docx")
+        self.doc = Document()
+        self.doc.add_heading(archive_index, level=1)
+        self.overview_placeholder = self.doc.add_paragraph("[OVERVIEW_PLACEHOLDER]")
+        self.doc.save(self.doc_path)
+        logging.info(f"Initialized Word output: {self.doc_path}")
+        return self.doc_path
+    
+    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
+        """Write batch to Word document."""
+        if not self.doc:
+            raise ValueError("Word output not initialized")
+        for page in pages:
+            self.doc.add_heading(page['name'], level=2)
+            link = page.get('webViewLink', page.get('path', ''))
+            if link:
+                p = self.doc.add_paragraph()
+                p.add_run('Source: ').bold = True
+                p.add_run(link)
+                self.doc.add_paragraph()
+            self.doc.add_paragraph(page.get('text', ''))
+            self.doc.add_paragraph('_' * 80)
+        self.doc.save(self.doc_path)
+    
+    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
+        """Finalize Word document with overview."""
+        if not self.doc or not self.overview_placeholder:
+            raise ValueError("Word output not initialized")
+        overview = create_local_overview_section(all_pages, self.config, self.prompt_text, metrics=metrics, start_time=None, end_time=None)
+        self.overview_placeholder.clear()
+        run = self.overview_placeholder.add_run(overview)
+        run.font.name = 'Courier New'
+        run.font.size = Pt(9)
+        self.doc.save(self.doc_path)
+        logging.info(f"Finalized Word output: {self.doc_path}")
+
 
 class ModeFactory:
     """Factory for creating mode-specific components."""
@@ -1384,14 +1616,22 @@ class ModeFactory:
         # Create output strategy (need ai_logger first for AI client)
         output_dir = local_config.get('output_dir', 'logs')
         ai_logger = logging.getLogger('ai_responses')
+        image_dir = local_config['image_dir']
         
         # Create AI client strategy (pass ai_logger for response logging)
         model_id = local_config.get('ocr_model_id', 'gemini-3-flash-preview')
         ai_client = GeminiDevClient(api_key, model_id, ai_logger)
         
-        output = LogFileOutput(output_dir, ai_logger)
+        # Create multiple output strategies (log, markdown, word)
+        log_output = LogFileOutput(output_dir, ai_logger)
+        md_output = MarkdownOutput(image_dir, config, None)  # prompt_text will be passed in initialize
+        word_output = WordOutput(image_dir, config, None)  # prompt_text will be passed in initialize
         
-        logging.info(f"Created LOCAL mode handlers: image_dir={local_config['image_dir']}, output_dir={output_dir}, model={model_id}")
+        # Wrap all strategies in CompositeOutput
+        output = CompositeOutput([log_output, md_output, word_output])
+        
+        logging.info(f"Created LOCAL mode handlers: image_dir={image_dir}, output_dir={output_dir}, model={model_id}")
+        logging.info(f"Output formats: Log (logs/), Markdown ({image_dir}/), Word ({image_dir}/)")
         
         return {
             'auth': auth,
@@ -2721,6 +2961,100 @@ Estimated Cost Per Page: N/A
     }
     
     return overview_content, formatting_info
+
+
+def create_local_overview_section(pages, config: dict, prompt_text: str, metrics=None, start_time=None, end_time=None):
+    """
+    Create overview section for local mode (simplified version without Google Drive links).
+    
+    Args:
+        pages: List of page dictionaries with 'name', 'webViewLink', 'text'
+        config: Configuration dictionary
+        prompt_text: The prompt text used for transcription
+        metrics: Optional dictionary with calculated metrics
+        start_time: Optional datetime for session start
+        end_time: Optional datetime for session end
+        
+    Returns:
+        String with overview content
+    """
+    archive_index = config.get('archive_index', 'Unknown')
+    ocr_model_id = config.get('local', {}).get('ocr_model_id', 'gemini-3-flash-preview')
+    prompt_file = config.get('prompt_file', 'Unknown')
+    image_dir = config.get('local', {}).get('image_dir', 'Unknown')
+    
+    # Count successful and failed transcriptions
+    successful_pages = [p for p in pages if p.get('text') and not p['text'].startswith('[Error')]
+    failed_pages = [p for p in pages if not p.get('text') or p['text'].startswith('[Error')]
+    
+    # Get file range
+    if pages:
+        start_file = pages[0]['name']
+        end_file = pages[-1]['name']
+        file_count = len(pages)
+    else:
+        start_file = "N/A"
+        end_file = "N/A"
+        file_count = 0
+    
+    # Disclaimer text
+    disclaimer_text = """Нейросеть допускает много неточностей в переводе имен и фамилий - использовать как приблизительный перевод рукописного текста и перепроверять с источником!
+
+Нейромережа допускає багато неточностей у перекладі імен та прізвищ - використовувати як приблизний переклад рукописного тексту та перевіряти з джерелом!
+
+The neural network makes many inaccuracies in translating names and surnames - use as an approximate translation of handwritten text and verify with the source!"""
+    
+    overview_content = f"""TRANSCRIPTION RUN SUMMARY
+
+{disclaimer_text}
+
+Archive Index: {archive_index}
+Image Directory: {image_dir}
+"""
+    
+    # Add time info
+    if start_time:
+        overview_content += f"Time Start: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+    if end_time:
+        overview_content += f"Time End: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+    
+    overview_content += f"""Model: {ocr_model_id}
+Prompt File: {prompt_file}
+
+Files Processed:
+Count: {file_count}
+Start: {start_file}
+End: {end_file}
+
+Images with Errors ({len(failed_pages)}):
+"""
+    
+    if failed_pages:
+        for page in failed_pages:
+            overview_content += f"- {page['name']}\n"
+    else:
+        overview_content += "None\n"
+    
+    # Add metrics
+    if metrics:
+        overview_content += f"""
+Metrics:
+Total Time: {metrics.get('total_time', 0):.1f} seconds
+Average Time per Page: {metrics.get('avg_time_per_page', 0):.2f} seconds
+"""
+        if 'total_input_tokens' in metrics:
+            overview_content += f"Total Input Tokens: {metrics['total_input_tokens']:,}\n"
+            overview_content += f"Total Output Tokens: {metrics['total_output_tokens']:,}\n"
+    
+    overview_content += f"""
+Prompt Used:
+{prompt_text}
+
+{'='*50}
+
+"""
+    
+    return overview_content
 
 
 def update_overview_section(docs_service, doc_id, pages, config: dict, prompt_text: str, metrics=None, start_time=None, end_time=None):
