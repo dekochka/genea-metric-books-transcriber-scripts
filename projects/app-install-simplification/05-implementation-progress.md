@@ -233,13 +233,33 @@
 
 ## Phase 5: Main Function Refactoring
 
-**Status:** ⚪ Not Started
+**Branch:** `simplify-installation`  
+**Status:** 🟢 Complete  
+**Started:** January 2025  
+**Completed:** January 2025
 
 ### Tasks
 
-- [ ] **Task 5.1:** Create Shared Processing Logic
-- [ ] **Task 5.2:** Refactor Main Function
-- [ ] **Task 5.3:** Update Entry Point
+- [x] **Task 5.1:** Create Shared Processing Logic
+  - Status: ✅ Complete
+  - Created `process_all_local()` function for LOCAL mode (simpler processing, no batching)
+  - Created `process_batches_googlecloud()` function for GOOGLECLOUD mode (extracted existing batch processing logic)
+  - Both functions use strategy handlers from ModeFactory
+  - Proper error handling and resume information included
+
+- [x] **Task 5.2:** Refactor Main Function
+  - Status: ✅ Complete
+  - Refactored `main()` to use mode detection, validation, and ModeFactory
+  - Routes to appropriate processing function based on mode
+  - Uses strategies for all operations (image listing, output initialization/finalization)
+  - Maintains backward compatibility
+  - Proper exception handling with resume information
+
+- [x] **Task 5.3:** Update Entry Point
+  - Status: ✅ Complete
+  - Added mode detection logging in entry point
+  - Logs detected mode before processing starts
+  - Maintains existing argument parsing and error handling
 
 ---
 

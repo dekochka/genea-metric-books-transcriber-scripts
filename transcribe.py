@@ -1152,20 +1152,26 @@ class GoogleDocsOutput(OutputStrategy):
         Write batch to Google Doc (delegates to existing write_to_doc()).
         
         Args:
-            pages: List of page dictionaries with transcription data
+            pages: List of ALL page dictionaries with transcription data (accumulated so far)
             batch_num: Batch number (1-based)
             is_first: True if this is the first batch
         """
         if not self.doc_id:
             raise ValueError("Document not initialized. Call initialize() first.")
         
-        # Calculate start index (skip already written pages)
-        start_idx = (batch_num - 1) * len(pages)
+        # Calculate start index (number of pages already written)
+        batch_size = self.config.get('batch_size_for_doc', 10)
+        if is_first:
+            start_idx = 0
+        else:
+            # For subsequent batches, start_idx is the number of pages in previous batches
+            start_idx = (batch_num - 1) * batch_size
         
         # For first batch, include overview; for subsequent batches, skip overview
         write_overview = is_first
         
         # Delegate to existing write_to_doc() function
+        # Note: write_to_doc expects all pages and will write from start_idx onwards
         write_to_doc(
             self.docs_service,
             self.drive_service,
@@ -1173,7 +1179,7 @@ class GoogleDocsOutput(OutputStrategy):
             pages,
             self.config,
             self.prompt_text,
-            start_idx=0,  # Process all pages in this batch
+            start_idx=start_idx,
             metrics=None,  # Metrics will be updated in finalize()
             start_time=self.start_time,
             end_time=None,  # End time not known yet
@@ -1181,7 +1187,7 @@ class GoogleDocsOutput(OutputStrategy):
             genai_client=self.genai_client
         )
         
-        logging.info(f"Wrote batch {batch_num} ({len(pages)} pages) to Google Doc")
+        logging.info(f"Wrote batch {batch_num} (pages {start_idx} onwards) to Google Doc")
     
     def finalize(self, all_pages: list[dict], metrics: dict) -> None:
         """
@@ -3349,41 +3355,454 @@ def write_to_doc(docs_service, drive_service, doc_id, pages, config: dict, promp
         raise
 
 
-def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
-    """Main function to process images and create transcription document."""
-    # Extract config values for easier access
-    project_id = config['project_id']
-    archive_index = config['archive_index']
-    ocr_model_id = config['ocr_model_id']
-    retry_mode = config['retry_mode']
-    retry_image_list = config['retry_image_list']
-    max_images = config['max_images']
-    image_start_number = config['image_start_number']
-    image_count = config['image_count']
-    batch_size_for_doc = config['batch_size_for_doc']
-    adc_file = config['adc_file']
+# ------------------------- SHARED PROCESSING LOGIC -------------------------
+
+def process_all_local(images: list, handlers: dict, prompt_text: str, config: dict, ai_logger) -> list:
+    """
+    Process all images in local mode (simpler processing, no batching).
+    
+    Args:
+        images: List of image metadata dictionaries
+        handlers: Dictionary of strategy handlers (from ModeFactory)
+        prompt_text: Prompt text for transcription
+        config: Configuration dictionary
+        ai_logger: Logger for AI responses
+        
+    Returns:
+        List of transcribed pages with metadata
+    """
+    image_source = handlers['image_source']
+    ai_client = handlers['ai_client']
+    
+    transcribed_pages = []
+    usage_metadata_list = []
+    timing_list = []
+    start_time = datetime.now()
+    last_image_end_time = None
+    
+    total_images = len(images)
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription of {total_images} images in LOCAL mode...")
+    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting transcription of {total_images} images (LOCAL mode) ===")
+    
+    for global_idx, img_info in enumerate(images, 1):
+        image_start_time = datetime.now()
+        image_name = img_info['name']
+        
+        # Log gap detection
+        if last_image_end_time:
+            gap_seconds = (image_start_time - last_image_end_time).total_seconds()
+            if gap_seconds > 60:  # Log if gap is more than 1 minute
+                logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Large time gap detected: {gap_seconds:.1f} seconds ({gap_seconds/60:.1f} minutes) between previous image and '{image_name}'")
+                ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Time gap of {gap_seconds:.1f}s ({gap_seconds/60:.1f} min) before {image_name}")
+        
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Processing image {global_idx}/{total_images}: '{image_name}'")
+        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing image {global_idx}/{total_images}: {image_name} ===")
+        
+        try:
+            # Get image bytes
+            download_start = datetime.now()
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Loading image '{image_name}'...")
+            img_bytes = image_source.get_image_bytes(img_info)
+            download_elapsed = (datetime.now() - download_start).total_seconds()
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' loaded in {download_elapsed:.1f}s, starting transcription...")
+            
+            # Transcribe image
+            transcription_start = datetime.now()
+            text, elapsed_time, usage_metadata = ai_client.transcribe(img_bytes, image_name, prompt_text)
+            transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
+            
+            # Ensure text is not None
+            if text is None:
+                text = "[No transcription text received]"
+            
+            # Get image URL for output
+            image_url = image_source.get_image_url(img_info)
+            
+            transcribed_pages.append({
+                'name': image_name,
+                'webViewLink': image_url,
+                'text': text
+            })
+            
+            # Collect metrics
+            timing_list.append(elapsed_time)
+            usage_metadata_list.append(usage_metadata)
+            
+            image_end_time = datetime.now()
+            image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+            last_image_end_time = image_end_time
+            
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {global_idx}/{total_images}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
+            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
+            
+            # Log progress
+            progress_pct = (global_idx / total_images) * 100
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {global_idx}/{total_images} images ({progress_pct:.1f}%)")
+            
+        except Exception as e:
+            image_end_time = datetime.now()
+            image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+            last_image_end_time = image_end_time
+            error_type = type(e).__name__
+            
+            # Calculate next image number to start from in case of failure
+            current_image_number = extract_image_number(image_name)
+            if current_image_number is not None:
+                next_image_number = current_image_number + 1
+            else:
+                # Fallback: use position-based calculation
+                image_start_number = config.get('image_start_number', 1)
+                next_image_number = image_start_number + global_idx
+            
+            error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
+            logging.error(error_msg)
+            logging.error(f"Full traceback:\n{traceback.format_exc()}")
+            logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number} (filename number from '{image_name}')")
+            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
+            ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image (current image filename number: {current_image_number})")
+            ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
+            
+            # Add error message as text
+            image_url = image_source.get_image_url(img_info)
+            transcribed_pages.append({
+                'name': image_name,
+                'webViewLink': image_url,
+                'text': f"[Error during transcription: {str(e)}]"
+            })
+            # Add None for metrics on error
+            timing_list.append(None)
+            usage_metadata_list.append(None)
+    
+    # Record end time
+    end_time = datetime.now()
+    total_elapsed = (end_time - start_time).total_seconds()
+    
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Completed all images: {len(transcribed_pages)} images processed in {total_elapsed:.1f} seconds ({total_elapsed/60:.1f} minutes)")
+    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === All images transcription completed ===")
+    ai_logger.info(f"Total images: {len(transcribed_pages)}")
+    ai_logger.info(f"Total time: {total_elapsed:.1f}s ({total_elapsed/60:.1f} min)")
+    ai_logger.info(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    ai_logger.info(f"End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    return transcribed_pages
+
+
+def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, config: dict, ai_logger) -> list:
+    """
+    Process images in batches for Google Cloud mode (existing batch processing logic).
+    
+    Args:
+        images: List of image metadata dictionaries
+        handlers: Dictionary of strategy handlers (from ModeFactory)
+        prompt_text: Prompt text for transcription
+        config: Configuration dictionary
+        ai_logger: Logger for AI responses
+        
+    Returns:
+        List of transcribed pages with metadata
+    """
+    image_source = handlers['image_source']
+    ai_client = handlers['ai_client']
+    output = handlers['output']
+    docs_service = handlers['docs_service']
+    drive_service = handlers['drive_service']
+    genai_client = handlers.get('genai_client')
+    
+    batch_size_for_doc = config.get('batch_size_for_doc', 10)
+    document_name = config.get('document_name', 'Unknown')
+    image_start_number = config.get('image_start_number', 1)
+    
+    # Process images in batches for incremental document writing
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription of {len(images)} images in batches of {batch_size_for_doc}...")
+    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting batch transcription of {len(images)} images (batch size: {batch_size_for_doc}) ===")
+    start_time = datetime.now()
+    transcribed_pages = []
+    usage_metadata_list = []
+    timing_list = []
+    last_image_end_time = None
+    doc_id = None
+    doc_name = None
+    first_batch = True
+    
+    # Process images in batches
+    total_images = len(images)
+    num_batches = (total_images + batch_size_for_doc - 1) // batch_size_for_doc  # Ceiling division
     
     try:
-        # Initialize services first (needed to fetch document_name if not provided)
-        creds = authenticate(adc_file)
-        drive_service, docs_service, genai_client = init_services(creds, config)
-
-        # Fetch folder name and set document_name if not provided
-        if 'document_name' not in config or not config.get('document_name'):
-            fetched_folder_name = get_folder_name(drive_service, config['drive_folder_id'])
-            if fetched_folder_name:
-                config['document_name'] = fetched_folder_name
-                logging.info(f"Fetched folder name from Drive API: '{fetched_folder_name}'")
-            else:
-                # Fallback to folder ID if fetch fails
-                config['document_name'] = f"Folder_{config['drive_folder_id'][:8]}"
-                logging.warning(f"Could not fetch folder name, using fallback: '{config['document_name']}'")
+        for batch_num in range(num_batches):
+            batch_start_idx = batch_num * batch_size_for_doc
+            batch_end_idx = min(batch_start_idx + batch_size_for_doc, total_images)
+            batch_images = images[batch_start_idx:batch_end_idx]
+            batch_size = len(batch_images)
+            
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing batch {batch_num + 1}/{num_batches} (images {batch_start_idx + 1}-{batch_end_idx} of {total_images}) ===")
+            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch {batch_num + 1}/{num_batches}: Processing images {batch_start_idx + 1}-{batch_end_idx} ===")
+            
+            # Track batch-level transcribed pages and metrics
+            batch_transcribed_pages = []
+            batch_usage_metadata_list = []
+            batch_timing_list = []
+            
+            for batch_idx, img in enumerate(batch_images, 1):
+                global_idx = batch_start_idx + batch_idx
+                image_start_time = datetime.now()
+                image_name = img['name']
+                
+                # Log gap detection
+                if last_image_end_time:
+                    gap_seconds = (image_start_time - last_image_end_time).total_seconds()
+                    if gap_seconds > 60:  # Log if gap is more than 1 minute
+                        logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Large time gap detected: {gap_seconds:.1f} seconds ({gap_seconds/60:.1f} minutes) between previous image and '{image_name}'")
+                        ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Time gap of {gap_seconds:.1f}s ({gap_seconds/60:.1f} min) before {image_name}")
+                
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Processing image {global_idx}/{total_images} (batch {batch_num + 1}, item {batch_idx}/{batch_size}): '{image_name}'")
+                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing image {global_idx}/{total_images}: {image_name} ===")
+                
+                try:
+                    download_start = datetime.now()
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{image_name}'...")
+                    img_bytes = image_source.get_image_bytes(img)
+                    download_elapsed = (datetime.now() - download_start).total_seconds()
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' downloaded in {download_elapsed:.1f}s, starting transcription...")
+                    
+                    transcription_start = datetime.now()
+                    text, elapsed_time, usage_metadata = ai_client.transcribe(img_bytes, image_name, prompt_text)
+                    transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
+                    
+                    # Ensure text is not None
+                    if text is None:
+                        text = "[No transcription text received]"
+                    
+                    batch_transcribed_pages.append({
+                        'name': img['name'],
+                        'webViewLink': img['webViewLink'],
+                        'text': text
+                    })
+                    
+                    # Collect metrics
+                    batch_timing_list.append(elapsed_time)
+                    batch_usage_metadata_list.append(usage_metadata)
+                    
+                    image_end_time = datetime.now()
+                    image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                    last_image_end_time = image_end_time
+                    
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {global_idx}/{total_images}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
+                    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
+                    
+                    # Log progress
+                    progress_pct = (global_idx / total_images) * 100
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {global_idx}/{total_images} images ({progress_pct:.1f}%)")
+                    
+                except Exception as e:
+                    image_end_time = datetime.now()
+                    image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                    last_image_end_time = image_end_time
+                    error_type = type(e).__name__
+                    
+                    # Calculate next image number to start from in case of failure
+                    current_image_number = extract_image_number(image_name)
+                    if current_image_number is not None:
+                        next_image_number = current_image_number + 1
+                    else:
+                        # Fallback: if we can't extract number, use position-based calculation
+                        next_image_number = image_start_number + global_idx
+                    
+                    error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
+                    logging.error(error_msg)
+                    logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                    logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number} (filename number from '{image_name}')")
+                    ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
+                    ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image (current image filename number: {current_image_number})")
+                    ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
+                    
+                    # Add error message as text
+                    batch_transcribed_pages.append({
+                        'name': img['name'],
+                        'webViewLink': img['webViewLink'],
+                        'text': f"[Error during transcription: {str(e)}]"
+                    })
+                    # Add None for metrics on error
+                    batch_timing_list.append(None)
+                    batch_usage_metadata_list.append(None)
+            
+            # After batch is transcribed, write to document
+            if batch_transcribed_pages:
+                # Accumulate all transcribed pages and metrics
+                transcribed_pages.extend(batch_transcribed_pages)
+                usage_metadata_list.extend(batch_usage_metadata_list)
+                timing_list.extend(batch_timing_list)
+                
+                if first_batch:
+                    # Create document after first batch
+                    run_date = datetime.now().strftime("%Y%m%d")
+                    doc_name = f"{document_name} {run_date}"
+                    
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed ({len(batch_transcribed_pages)} images). Creating Google Doc '{doc_name}'...")
+                    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed, creating document...")
+                    
+                    # Calculate metrics for overview (will be updated later)
+                    batch_metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
+                    
+                    # Initialize output (creates document)
+                    doc_id = output.initialize(config)
+                    
+                    if doc_id is None:
+                        # Permission error - save locally instead
+                        logging.warning("Cannot create Google Doc due to insufficient permissions")
+                        logging.info("Saving transcription to local file instead...")
+                        local_file = save_transcription_locally(transcribed_pages, doc_name, config, prompt_text, "logs", batch_metrics, start_time, None)
+                        logging.info(f"✓ Transcription saved locally: {local_file}")
+                        logging.info(f"✓ Processed {len(transcribed_pages)} images successfully")
+                        # Continue processing but save locally for each batch
+                        first_batch = False
+                        continue
+                    else:
+                        # Write first batch with overview (pass all pages so far)
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing first batch ({len(batch_transcribed_pages)} images) to document with overview...")
+                        output.write_batch(transcribed_pages, 1, True)
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ First batch written to document")
+                        first_batch = False
+                else:
+                    # Append subsequent batches to existing document
+                    if doc_id:
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing batch {batch_num + 1} ({len(batch_transcribed_pages)} images) to document...")
+                        # Pass all transcribed pages so far (write_batch will calculate start_idx)
+                        output.write_batch(transcribed_pages, batch_num + 1, False)
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Batch {batch_num + 1} written to document")
+                    else:
+                        # Document creation failed earlier, save locally
+                        logging.warning(f"Cannot write batch {batch_num + 1} to document (doc creation failed). Saving locally...")
+                        # Append to local file if it exists, or create new one
+                        run_date = datetime.now().strftime("%Y%m%d")
+                        doc_name = f"{document_name} {run_date}"
+                        save_transcription_locally(batch_transcribed_pages, doc_name, config, prompt_text, "logs", None, None, None)
+    
+    except Exception as batch_error:
+        # Log error and resume information
+        error_type = type(batch_error).__name__
+        images_processed = len(transcribed_pages) if 'transcribed_pages' in locals() else 0
         
-        document_name = config.get('document_name', 'Unknown')
+        # Calculate next image number from the last successfully processed image
+        next_image_number = None
+        if images_processed > 0 and 'transcribed_pages' in locals():
+            last_image_name = transcribed_pages[-1]['name']
+            last_image_number = extract_image_number(last_image_name)
+            if last_image_number is not None:
+                next_image_number = last_image_number + 1
+            else:
+                # Fallback: use position-based calculation
+                next_image_number = image_start_number + images_processed
+        elif images_processed > 0:
+            # Fallback if we can't get the last image name
+            next_image_number = image_start_number + images_processed
+        
+        logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error processing batch: {error_type}: {str(batch_error)}")
+        logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
+        if next_image_number is not None:
+            last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
+            logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number}{last_image_info}")
+        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+        
+        ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch Processing Error ===")
+        ai_logger.error(f"Error type: {error_type}")
+        ai_logger.error(f"Error message: {str(batch_error)}")
+        ai_logger.error(f"Images processed before error: {images_processed}")
+        if next_image_number is not None:
+            ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image")
+        ai_logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        ai_logger.error(f"=== End Batch Processing Error ===")
+        
+        # Re-raise to be caught by outer exception handler
+        raise
+    
+    # Record end time
+    end_time = datetime.now()
+    batch_total_elapsed = (end_time - start_time).total_seconds()
+    
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Completed all batches: {len(transcribed_pages)} images processed in {batch_total_elapsed:.1f} seconds ({batch_total_elapsed/60:.1f} minutes)")
+    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === All batches transcription completed ===")
+    ai_logger.info(f"Total images: {len(transcribed_pages)}")
+    ai_logger.info(f"Total time: {batch_total_elapsed:.1f}s ({batch_total_elapsed/60:.1f} min)")
+    ai_logger.info(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    ai_logger.info(f"End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Calculate final metrics and finalize output
+    final_metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
+    
+    # Finalize output (update overview section)
+    if doc_id and len(transcribed_pages) > 0:
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Finalizing output with overview update...")
+        output.finalize(transcribed_pages, final_metrics)
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Output finalized successfully.")
+        logging.info(f"Final metrics: {final_metrics}")
+    
+    return transcribed_pages
+
+
+def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
+    """
+    Main function to process images and create transcription document.
+    Now supports dual-mode operation (LOCAL and GOOGLECLOUD) using strategy pattern.
+    """
+    try:
+        # Detect mode
+        mode = detect_mode(config)
+        logging.info(f"Detected mode: {mode.upper()}")
+        
+        # Normalize config to internal format
+        normalized_config = normalize_config(config, mode)
+        
+        # Validate config
+        is_valid, errors = validate_config(normalized_config, mode)
+        if not is_valid:
+            error_msg = f"Configuration errors: {', '.join(errors)}"
+            logging.error(error_msg)
+            raise ValueError(error_msg)
+        
+        # Create handlers using ModeFactory
+        handlers = ModeFactory.create_handlers(mode, normalized_config)
+        logging.info(f"Created handlers for {mode.upper()} mode")
+        
+        # Extract config values for logging (mode-agnostic)
+        archive_index = normalized_config.get('archive_index')
+        retry_mode = normalized_config.get('retry_mode', False)
+        retry_image_list = normalized_config.get('retry_image_list', [])
+        max_images = normalized_config.get('max_images')
+        image_start_number = normalized_config.get('image_start_number', 1)
+        image_count = normalized_config.get('image_count')
+        
+        # Mode-specific config extraction
+        if mode == 'googlecloud':
+            project_id = normalized_config.get('googlecloud', {}).get('project_id', 'Unknown')
+            ocr_model_id = normalized_config.get('googlecloud', {}).get('ocr_model_id', 'gemini-1.5-pro')
+            batch_size_for_doc = normalized_config.get('batch_size_for_doc', 10)
+            
+            # Fetch folder name and set document_name if not provided (Google Cloud only)
+            drive_service = handlers['drive_service']
+            if 'document_name' not in normalized_config.get('googlecloud', {}) or not normalized_config.get('googlecloud', {}).get('document_name'):
+                drive_folder_id = normalized_config.get('googlecloud', {}).get('drive_folder_id')
+                if drive_folder_id:
+                    fetched_folder_name = get_folder_name(drive_service, drive_folder_id)
+                    if fetched_folder_name:
+                        normalized_config['googlecloud']['document_name'] = fetched_folder_name
+                        logging.info(f"Fetched folder name from Drive API: '{fetched_folder_name}'")
+                    else:
+                        # Fallback to folder ID if fetch fails
+                        normalized_config['googlecloud']['document_name'] = f"Folder_{drive_folder_id[:8]}"
+                        logging.warning(f"Could not fetch folder name, using fallback: '{normalized_config['googlecloud']['document_name']}'")
+            
+            document_name = normalized_config.get('googlecloud', {}).get('document_name', 'Unknown')
+        else:  # local mode
+            project_id = 'LOCAL'
+            ocr_model_id = normalized_config.get('local', {}).get('ocr_model_id', 'gemini-1.5-pro')
+            batch_size_for_doc = None  # Not used in local mode
+            document_name = normalized_config.get('local', {}).get('image_dir', 'Unknown')
         
         # Log session start
         ai_logger.info(f"=== Transcription Session Started ===")
         ai_logger.info(f"Session timestamp: {datetime.now().isoformat()}")
+        ai_logger.info(f"Mode: {mode.upper()}")
         ai_logger.info(f"Project ID: {project_id}")
         ai_logger.info(f"Document: {document_name}")
         ai_logger.info(f"Archive Index: {archive_index if archive_index else 'None'}")
@@ -3396,10 +3815,13 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
             ai_logger.info(f"Max images: {max_images}")
             ai_logger.info(f"Image start number: {image_start_number}")
             ai_logger.info(f"Image count: {image_count}")
-        ai_logger.info(f"Batch size for doc: {batch_size_for_doc}")
+        if batch_size_for_doc:
+            ai_logger.info(f"Batch size for doc: {batch_size_for_doc}")
         ai_logger.info(f"=== Session Configuration ===\n")
 
-        images = list_images(drive_service, config)
+        # List images using image source strategy
+        image_source = handlers['image_source']
+        images = image_source.list_images(normalized_config)
         
         if not images:
             if retry_mode:
@@ -3410,26 +3832,77 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
                 ai_logger.error(f"No images found for range {image_start_number} to {image_start_number + image_count - 1}")
             return
         
-        # Process images in batches for incremental document writing
-        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription of {len(images)} images in batches of {batch_size_for_doc}...")
-        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting batch transcription of {len(images)} images (batch size: {batch_size_for_doc}) ===")
-        start_time = datetime.now()
-        transcribed_pages = []
-        usage_metadata_list = []
-        timing_list = []
-        last_image_end_time = None
-        doc_id = None
-        doc_name = None
-        first_batch = True
+        # Initialize output
+        output = handlers['output']
+        output_id = output.initialize(normalized_config)
+        logging.info(f"Output initialized: {output_id}")
         
-        # Process images in batches
-        total_images = len(images)
-        num_batches = (total_images + batch_size_for_doc - 1) // batch_size_for_doc  # Ceiling division
+        # Process images using mode-specific processing function
+        if mode == 'googlecloud':
+            transcribed_pages = process_batches_googlecloud(images, handlers, prompt_text, normalized_config, ai_logger)
+        else:  # local mode
+            transcribed_pages = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger)
         
-        try:
-            for batch_num in range(num_batches):
-                batch_start_idx = batch_num * batch_size_for_doc
-                batch_end_idx = min(batch_start_idx + batch_size_for_doc, total_images)
+        # Calculate metrics for finalization
+        # Note: process_batches_googlecloud already finalizes, but process_all_local doesn't
+        if mode == 'local':
+            # For local mode, we need to calculate metrics and finalize output
+            # Extract usage metadata and timing from transcribed_pages if available
+            # For now, we'll finalize with empty metrics (can be enhanced later)
+            start_time = datetime.now()  # Approximate - actual start time is in process_all_local
+            end_time = datetime.now()
+            metrics = {}  # Can be enhanced to extract from process_all_local
+            
+            output.finalize(transcribed_pages, metrics)
+            logging.info(f"Output finalized for LOCAL mode")
+        
+        # Log session completion
+        ai_logger.info(f"=== Transcription Session Completed ===")
+        ai_logger.info(f"Session end timestamp: {datetime.now().isoformat()}")
+        ai_logger.info(f"Total images processed: {len(transcribed_pages)}")
+        ai_logger.info(f"Successful transcriptions: {len([p for p in transcribed_pages if p['text'] and not p['text'].startswith('[Error')])}")
+        ai_logger.info(f"Failed transcriptions: {len([p for p in transcribed_pages if not p['text'] or p['text'].startswith('[Error')])}")
+        ai_logger.info(f"=== Session Summary ===\n")
+        
+    except Exception as e:
+        # Log session error with resume information
+        error_type = type(e).__name__
+        images_processed = len(transcribed_pages) if 'transcribed_pages' in locals() else 0
+        
+        # Calculate next image number from the last successfully processed image
+        next_image_number = None
+        if images_processed > 0 and 'transcribed_pages' in locals():
+            last_image_name = transcribed_pages[-1]['name']
+            last_image_number = extract_image_number(last_image_name)
+            if last_image_number is not None:
+                next_image_number = last_image_number + 1
+            else:
+                # Fallback: use position-based calculation
+                next_image_number = image_start_number + images_processed
+        elif images_processed > 0:
+            # Fallback if we can't get the last image name
+            next_image_number = image_start_number + images_processed
+        
+        ai_logger.error(f"=== Transcription Session Error ===")
+        ai_logger.error(f"Error timestamp: {datetime.now().isoformat()}")
+        ai_logger.error(f"Error type: {error_type}")
+        ai_logger.error(f"Error: {str(e)}")
+        ai_logger.error(f"Images processed before error: {images_processed}")
+        if next_image_number is not None:
+            last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
+            ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image{last_image_info}")
+        ai_logger.error(f"=== Session Error End ===\n")
+        
+        logging.error(f"Error in main: {error_type}: {str(e)}")
+        if next_image_number is not None:
+            last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
+            logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
+            logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number}{last_image_info}")
+        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+        raise
+
+
+if __name__ == '__main__':
                 batch_images = images[batch_start_idx:batch_end_idx]
                 batch_size = len(batch_images)
                 
@@ -3716,11 +4189,15 @@ See config/config.yaml.example for a template.
         # Load configuration first (needed for logging setup)
         config = load_config(args.config_file)
         
+        # Detect mode for logging purposes (before logging setup to determine log filename)
+        mode = detect_mode(config)
+        
         # Set up logging - MUST be done before any logging calls
         log_filename, ai_log_filename, ai_logger = setup_logging(config)
         
         # Now we can log
         logging.info(f"Configuration loaded from: {args.config_file}")
+        logging.info(f"Detected mode: {mode.upper()}")
         logging.info(f"Logging initialized. Main log: {log_filename}, AI log: {ai_log_filename}")
         
         # Load prompt text
