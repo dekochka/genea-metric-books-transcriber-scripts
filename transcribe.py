@@ -3984,6 +3984,10 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
             end_time = datetime.now()
             metrics = {}  # Can be enhanced to extract from process_all_local
             
+            # Write all transcribed pages to the log file
+            if transcribed_pages:
+                output.write_batch(transcribed_pages, batch_num=1, is_first=True)
+                logging.info(f"Wrote {len(transcribed_pages)} transcriptions to log file")
             output.finalize(transcribed_pages, metrics)
             logging.info(f"Output finalized for LOCAL mode")
         

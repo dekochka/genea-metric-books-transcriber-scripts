@@ -29,3 +29,6 @@ famsearch_page_sources/
 *.tmp
 *.bak
 
+
+# Local test configs with API keys
+config/test-local.yaml
