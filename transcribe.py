@@ -729,15 +729,17 @@ class LocalImageSource(ImageSourceStrategy):
     
     def get_image_url(self, image_info: dict) -> str:
         """
-        Return local file path.
+        Return local file path with normalized separators.
         
         Args:
             image_info: Image metadata dictionary with 'path' key
             
         Returns:
-            Local file path
+            Local file path with forward slashes (cross-platform compatible)
         """
-        return image_info['path']
+        # Normalize path separators to forward slashes for consistency across platforms
+        path = image_info['path']
+        return path.replace('\\', '/')
 
 
 class DriveImageSource(ImageSourceStrategy):
@@ -1126,6 +1128,7 @@ class LogFileOutput(OutputStrategy):
         self.output_dir = output_dir
         self.ai_logger = ai_logger
         self.log_file_path = None
+        self.written_images = set()  # Track written images to prevent duplicates
         os.makedirs(output_dir, exist_ok=True)
     
     def initialize(self, config: dict, prompt_text: str = None) -> str:
@@ -1185,13 +1188,26 @@ class LogFileOutput(OutputStrategy):
         if not self.log_file_path:
             raise ValueError("Log file not initialized. Call initialize() first.")
         
+        # Filter out already-written images to prevent duplicates
+        pages_to_write = []
+        for page in pages:
+            page_id = f"{page['name']}_{batch_num}"
+            if page_id not in self.written_images:
+                pages_to_write.append(page)
+                self.written_images.add(page_id)
+            else:
+                logging.warning(f"Skipping duplicate write for {page['name']} (batch {batch_num})")
+        
+        if not pages_to_write:
+            return  # Nothing new to write
+        
         with open(self.log_file_path, 'a', encoding='utf-8') as f:
             if is_first:
                 f.write("\n" + "=" * 80 + "\n")
                 f.write("TRANSCRIPTIONS\n")
                 f.write("=" * 80 + "\n\n")
             
-            for page in pages:
+            for page in pages_to_write:
                 f.write("-" * 80 + "\n")
                 f.write(f"Image: {page['name']}\n")
                 f.write(f"Source: {page.get('webViewLink', page.get('path', ''))}\n")
@@ -1199,7 +1215,7 @@ class LogFileOutput(OutputStrategy):
                 f.write(f"{page['text']}\n")
                 f.write("\n")
         
-        logging.info(f"Wrote batch {batch_num} ({len(pages)} pages) to log file")
+        logging.info(f"Wrote batch {batch_num} ({len(pages_to_write)} pages) to log file")
     
     def finalize(self, all_pages: list[dict], metrics: dict) -> None:
         """
