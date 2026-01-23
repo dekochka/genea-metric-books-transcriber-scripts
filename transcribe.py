@@ -808,16 +808,18 @@ class AIClientStrategy(ABC):
 class GeminiDevClient(AIClientStrategy):
     """Gemini Developer API client."""
     
-    def __init__(self, api_key: str, model_id: str = "gemini-3-flash-preview"):
+    def __init__(self, api_key: str, model_id: str = "gemini-3-flash-preview", ai_logger=None):
         """
         Initialize Gemini Developer API client.
         
         Args:
             api_key: Gemini API key
             model_id: Model ID to use (default: gemini-3-flash-preview)
+            ai_logger: Logger instance for AI responses (optional)
         """
         self.api_key = api_key
         self.model_id = model_id
+        self.ai_logger = ai_logger
         # Initialize Gemini client for Developer API (not Vertex AI)
         self.client = genai.Client(api_key=api_key)
         logging.info(f"Gemini Developer API client initialized with model {model_id}")
@@ -906,6 +908,28 @@ class GeminiDevClient(AIClientStrategy):
                         'total_tokens': getattr(response.usage_metadata, 'total_token_count', 0),
                         'cached_tokens': getattr(response.usage_metadata, 'cached_content_token_count', 0)
                     }
+                
+                # Log the full AI response to the AI responses log (similar to transcribe_image)
+                if self.ai_logger:
+                    self.ai_logger.info(f"=== AI Response for {filename} ===")
+                    self.ai_logger.info(f"Model: {self.model_id}")
+                    self.ai_logger.info(f"Request timestamp: {datetime.now().isoformat()}")
+                    self.ai_logger.info(f"Image size: {len(image_bytes)} bytes")
+                    self.ai_logger.info(f"Prompt length: {len(prompt)} characters")
+                    self.ai_logger.info(f"Response length: {len(text) if text else 0} characters")
+                    self.ai_logger.info(f"Processing time: {elapsed_time:.1f} seconds")
+                    
+                    # Log response metadata if available
+                    if hasattr(response, 'usage_metadata'):
+                        self.ai_logger.info(f"Usage metadata: {response.usage_metadata}")
+                    if hasattr(response, 'candidates') and response.candidates:
+                        self.ai_logger.info(f"Number of candidates: {len(response.candidates)}")
+                        if hasattr(response.candidates[0], 'finish_reason'):
+                            self.ai_logger.info(f"Finish reason: {response.candidates[0].finish_reason}")
+                    
+                    # Log full response text (prompt is logged only once at session start)
+                    self.ai_logger.info(f"Full response:\n{text}")
+                    self.ai_logger.info(f"=== End AI Response for {filename} ===\n")
                 
                 function_total_elapsed = time.time() - function_start_time
                 logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Transcription completed for '{filename}' in {function_total_elapsed:.1f}s total")
@@ -1074,7 +1098,7 @@ class LogFileOutput(OutputStrategy):
         self.log_file_path = None
         os.makedirs(output_dir, exist_ok=True)
     
-    def initialize(self, config: dict) -> str:
+    def initialize(self, config: dict, prompt_text: str = None) -> str:
         """
         Initialize log file for transcription output.
         
@@ -1082,6 +1106,7 @@ class LogFileOutput(OutputStrategy):
         
         Args:
             config: Configuration dictionary
+            prompt_text: Full prompt text used for transcription (optional)
             
         Returns:
             Log file path
@@ -1103,7 +1128,17 @@ class LogFileOutput(OutputStrategy):
             f.write(f"Image directory: {config.get('local', {}).get('image_dir', 'N/A')}\n")
             f.write(f"Model: {config.get('local', {}).get('ocr_model_id', 'N/A')}\n")
             f.write(f"Image range: {config.get('image_start_number', 'N/A')} to {config.get('image_start_number', 0) + config.get('image_count', 0) - 1}\n")
-            f.write("=" * 80 + "\n\n")
+            f.write("=" * 80 + "\n")
+            
+            # Add full prompt text if provided
+            if prompt_text:
+                f.write("\n" + "=" * 80 + "\n")
+                f.write("PROMPT TEXT USED FOR TRANSCRIPTION\n")
+                f.write("=" * 80 + "\n")
+                f.write(f"{prompt_text}\n")
+                f.write("=" * 80 + "\n\n")
+            
+            f.write("\n")
         
         logging.info(f"Created transcription log file: {self.log_file_path}")
         return self.log_file_path
@@ -1328,13 +1363,14 @@ class ModeFactory:
         # Create image source strategy
         image_source = LocalImageSource(local_config['image_dir'])
         
-        # Create AI client strategy
-        model_id = local_config.get('ocr_model_id', 'gemini-3-flash-preview')
-        ai_client = GeminiDevClient(api_key, model_id)
-        
-        # Create output strategy
+        # Create output strategy (need ai_logger first for AI client)
         output_dir = local_config.get('output_dir', 'logs')
         ai_logger = logging.getLogger('ai_responses')
+        
+        # Create AI client strategy (pass ai_logger for response logging)
+        model_id = local_config.get('ocr_model_id', 'gemini-3-flash-preview')
+        ai_client = GeminiDevClient(api_key, model_id, ai_logger)
+        
         output = LogFileOutput(output_dir, ai_logger)
         
         logging.info(f"Created LOCAL mode handlers: image_dir={local_config['image_dir']}, output_dir={output_dir}, model={model_id}")
@@ -3925,7 +3961,11 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
         
         # Initialize output
         output = handlers['output']
-        output_id = output.initialize(normalized_config)
+        # Pass prompt_text to initialize for LOCAL mode to include it in the log
+        if mode == 'local':
+            output_id = output.initialize(normalized_config, prompt_text)
+        else:
+            output_id = output.initialize(normalized_config)
         logging.info(f"Output initialized: {output_id}")
         
         # Process images using mode-specific processing function
