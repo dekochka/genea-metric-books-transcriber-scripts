@@ -1103,13 +1103,15 @@ class OutputStrategy(ABC):
         pass
     
     @abstractmethod
-    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None) -> None:
         """
         Finalize output (update overview, close files, etc.).
         
         Args:
             all_pages: All transcribed pages
             metrics: Session metrics dictionary
+            start_time: Session start datetime
+            end_time: Session end datetime
         """
         pass
 
@@ -1217,13 +1219,15 @@ class LogFileOutput(OutputStrategy):
         
         logging.info(f"Wrote batch {batch_num} ({len(pages_to_write)} pages) to log file")
     
-    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None) -> None:
         """
         Finalize log file with session summary.
         
         Args:
             all_pages: All transcribed pages
             metrics: Session metrics dictionary
+            start_time: Session start datetime
+            end_time: Session end datetime
         """
         if not self.log_file_path:
             raise ValueError("Log file not initialized. Call initialize() first.")
@@ -1330,18 +1334,22 @@ class GoogleDocsOutput(OutputStrategy):
         
         logging.info(f"Wrote batch {batch_num} (pages {start_idx} onwards) to Google Doc")
     
-    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None) -> None:
         """
         Update overview section (delegates to existing update_overview_section()).
         
         Args:
             all_pages: All transcribed pages
             metrics: Session metrics dictionary
+            start_time: Session start datetime (overrides self.start_time if provided)
+            end_time: Session end datetime (overrides self.end_time if provided)
         """
         if not self.doc_id:
             raise ValueError("Document not initialized. Call initialize() first.")
         
-        self.end_time = datetime.now()
+        # Use provided times or fall back to instance times
+        final_start_time = start_time or self.start_time
+        final_end_time = end_time or self.end_time or datetime.now()
         
         # Delegate to existing update_overview_section() function
         update_overview_section(
@@ -1351,8 +1359,8 @@ class GoogleDocsOutput(OutputStrategy):
             self.config,
             self.prompt_text,
             metrics=metrics,
-            start_time=self.start_time,
-            end_time=self.end_time
+            start_time=final_start_time,
+            end_time=final_end_time
         )
         
         logging.info(f"Finalized Google Doc with overview update")
@@ -1388,11 +1396,11 @@ class CompositeOutput(OutputStrategy):
             except Exception as e:
                 logging.error(f"Error writing batch to {strategy.__class__.__name__}: {e}")
     
-    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None) -> None:
         """Finalize all strategies."""
         for strategy in self.strategies:
             try:
-                strategy.finalize(all_pages, metrics)
+                strategy.finalize(all_pages, metrics, start_time, end_time)
             except Exception as e:
                 logging.error(f"Error finalizing {strategy.__class__.__name__}: {e}")
 
@@ -1440,9 +1448,15 @@ class MarkdownOutput(OutputStrategy):
                 link = page.get('webViewLink', page.get('path', ''))
                 if link:
                     f.write(f"**Source:** [{page['name']}]({link})\n\n")
-                f.write(f"{page.get('text', '')}\n")
+                # Preserve newlines by adding two spaces before newlines for markdown line breaks
+                text = page.get('text', '')
+                # Replace single newlines with two spaces + newline (markdown line break)
+                # but preserve paragraph breaks (double newlines)
+                text = text.replace('\n\n', '\n\n')  # Preserve paragraph breaks
+                text = text.replace('\n', '  \n')  # Convert single newlines to markdown line breaks
+                f.write(f"{text}\n")
     
-    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None) -> None:
         """Finalize markdown file with overview at top."""
         if not self.final_file_path:
             raise ValueError("Markdown output not initialized")
@@ -1450,7 +1464,7 @@ class MarkdownOutput(OutputStrategy):
         # Generate overview
         overview = create_local_overview_section(
             all_pages, self.config, self.prompt_text, 
-            metrics=metrics, start_time=None, end_time=None
+            metrics=metrics, start_time=start_time, end_time=end_time
         )
         
         # Write final file
@@ -1515,11 +1529,11 @@ class WordOutput(OutputStrategy):
             self.doc.add_paragraph('_' * 80)
         self.doc.save(self.doc_path)
     
-    def finalize(self, all_pages: list[dict], metrics: dict) -> None:
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None) -> None:
         """Finalize Word document with overview."""
         if not self.doc or not self.overview_placeholder:
             raise ValueError("Word output not initialized")
-        overview = create_local_overview_section(all_pages, self.config, self.prompt_text, metrics=metrics, start_time=None, end_time=None)
+        overview = create_local_overview_section(all_pages, self.config, self.prompt_text, metrics=metrics, start_time=start_time, end_time=end_time)
         self.overview_placeholder.clear()
         run = self.overview_placeholder.add_run(overview)
         run.font.name = 'Courier New'
@@ -2986,17 +3000,17 @@ The neural network makes many inaccuracies in translating names and surnames - u
 
 Archive Index: {archive_index}
 Image Directory: {image_dir}
+Model: {ocr_model_id}
+Prompt File: {prompt_file}
 """
     
-    # Add time info
+    # Add time info BEFORE Files Processed section
     if start_time:
         overview_content += f"Time Start: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
     if end_time:
         overview_content += f"Time End: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
     
-    overview_content += f"""Model: {ocr_model_id}
-Prompt File: {prompt_file}
-
+    overview_content += f"""
 Files Processed:
 Count: {file_count}
 Start: {start_file}
@@ -3781,7 +3795,7 @@ def write_to_doc(docs_service, drive_service, doc_id, pages, config: dict, promp
 
 # ------------------------- SHARED PROCESSING LOGIC -------------------------
 
-def process_all_local(images: list, handlers: dict, prompt_text: str, config: dict, ai_logger) -> list:
+def process_all_local(images: list, handlers: dict, prompt_text: str, config: dict, ai_logger) -> tuple:
     """
     Process all images in local mode (simpler processing, no batching).
     
@@ -3793,7 +3807,7 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
         ai_logger: Logger for AI responses
         
     Returns:
-        List of transcribed pages with metadata
+        Tuple of (transcribed_pages, start_time, end_time)
     """
     image_source = handlers['image_source']
     ai_client = handlers['ai_client']
@@ -4005,7 +4019,7 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
     ai_logger.info(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     ai_logger.info(f"End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     
-    return transcribed_pages
+    return transcribed_pages, start_time, end_time
 
 
 def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, config: dict, ai_logger) -> list:
@@ -4366,7 +4380,7 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
         if mode == 'googlecloud':
             transcribed_pages = process_batches_googlecloud(images, handlers, prompt_text, normalized_config, ai_logger)
         else:  # local mode
-            transcribed_pages = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger)
+            transcribed_pages, start_time, end_time = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger)
         
         # Calculate metrics for finalization
         # Note: process_batches_googlecloud already finalizes, but process_all_local doesn't
@@ -4374,13 +4388,11 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
             # For local mode, we need to calculate metrics and finalize output
             # Extract usage metadata and timing from transcribed_pages if available
             # For now, we'll finalize with empty metrics (can be enhanced later)
-            start_time = datetime.now()  # Approximate - actual start time is in process_all_local
-            end_time = datetime.now()
             metrics = {}  # Can be enhanced to extract from process_all_local
             
             # Note: Transcriptions are already written incrementally in process_all_local
             # Just finalize the output (no need to write again)
-            output.finalize(transcribed_pages, metrics)
+            output.finalize(transcribed_pages, metrics, start_time, end_time)
             logging.info(f"Output finalized for LOCAL mode")
         
         # Log session completion
