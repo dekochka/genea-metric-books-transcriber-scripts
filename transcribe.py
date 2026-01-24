@@ -1422,7 +1422,6 @@ class MarkdownOutput(OutputStrategy):
         self.prompt_text = prompt_text
         self.temp_body_file = None
         self.final_file_path = None
-        os.makedirs(target_dir, exist_ok=True)
     
     def initialize(self, config: dict, prompt_text: str = None) -> str:
         """Initialize markdown file."""
@@ -1499,7 +1498,6 @@ class WordOutput(OutputStrategy):
         self.doc = None
         self.doc_path = None
         self.overview_placeholder = None
-        os.makedirs(target_dir, exist_ok=True)
     
     def initialize(self, config: dict, prompt_text: str = None) -> str:
         """Initialize Word document."""
