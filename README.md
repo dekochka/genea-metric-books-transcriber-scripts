@@ -13,14 +13,14 @@ A specialized tool for transcribing handwritten genealogical records (birth, dea
 
 ### Quick Start
 
-**For LOCAL Mode (Simplest Setup):**
-1. Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
+**LOCAL Mode (Recommended - Simplest Setup):**
+1. Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey) - **No Google Cloud setup needed!**
 2. Set environment variable: `export GEMINI_API_KEY="your-key"`
 3. Copy example config: `cp config/config.local.example.yaml config/my-config.yaml`
 4. Edit config with your image directory path
 5. Run: `python3 transcribe.py config/my-config.yaml`
 
-**For GOOGLECLOUD Mode (Full Features):**
+**GOOGLECLOUD Mode (Advanced - Full Google Integration):**
 1. Set up Google Cloud project with required APIs
 2. Authenticate using gcloud ADC or OAuth
 3. Copy example config: `cp config/config.googlecloud.example.yaml config/my-config.yaml`
@@ -36,7 +36,7 @@ See [Configuration](#configuration) section for detailed setup instructions.
 - **Configurable Prompts**: Uses external prompt files for different record types (births, deaths, marriages)
 - **Batch Processing**: Process specific ranges of images with configurable start/count parameters
 - **Multiple Output Formats**: 
-  - **LOCAL Mode**: Log files with transcriptions and session metadata
+  - **LOCAL Mode**: Log files, Markdown files, and Word documents with transcriptions and session metadata (all saved in source image directory)
   - **GOOGLECLOUD Mode**: Google Docs with formatted transcriptions, metadata, headings, and source links
 - **Incremental Document Writing** (GOOGLECLOUD mode): Creates Google Doc after first batch, then appends subsequent batches incrementally for resilience
 - **Smart Error Recovery**: Automatic retries with exponential backoff, local file fallback, and resume information
@@ -45,6 +45,40 @@ See [Configuration](#configuration) section for detailed setup instructions.
 - **Rate Limiting**: Built-in protection against API quota exhaustion
 
 ### Example: Input → Output
+
+#### LOCAL Mode Output
+
+**Input: Local Image Directory** (Images of historical metric book records):
+
+The script processes images from a local directory containing scanned pages from historical metric books (birth, death, and marriage records).
+
+**Output: Multiple Formats** (All saved in the source image directory):
+
+1. **Markdown File** (`.md`): Structured markdown with formatted transcriptions
+   - Example: [`ф487оп1спр545_20260124_144542.md`](data_samples/test_input_sample/ф487оп1спр545_20260124_144542.md)
+   - Session overview with metadata
+   - Formatted transcriptions with proper newlines
+   - Source image links
+
+2. **Word Document** (`.docx`): Microsoft Word document with formatted transcriptions
+   - Example: [`ф487оп1спр545_20260124_144542.docx`](data_samples/test_input_sample/ф487оп1спр545_20260124_144542.docx)
+   - Bold text formatting for emphasized terms
+   - Page-numbered headers (e.g., ф487оп1спр545-стр1)
+   - Session metadata and overview
+
+3. **Log File** (`.log`): Detailed transcription log with session metadata (saved in `logs/` directory)
+
+**LOCAL Mode Output Example:**
+
+![LOCAL Mode Word Document Output](data_samples/gdrive_local_word_doc_after.jpg)
+
+The LOCAL mode creates formatted Word documents and Markdown files with:
+- Session overview with transcription metadata
+- Formatted transcriptions in Russian, Ukrainian, and Latin
+- Source image links
+- Page-numbered headers with archive references
+
+#### GOOGLECLOUD Mode Output
 
 **Input: Google Drive Folder** (Images of historical metric book records):
 
@@ -138,12 +172,26 @@ See the [Architecture Documentation](docs/ARCHITECTURE.md) for:
 1. Python 3.10+
 2. Install dependencies: `pip install -r requirements.txt`
 
-### LOCAL Mode Prerequisites
-1. **Gemini API Key**: Get your API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
-2. **Local Image Directory**: Prepare a directory with images to transcribe
-3. **No Google Cloud setup required** - just the API key!
+### LOCAL Mode Prerequisites (Recommended - Simplest Setup)
 
-### GOOGLECLOUD Mode Prerequisites
+**LOCAL mode is the easiest way to get started** - no Google Cloud setup required!
+
+1. **Gemini API Key**: Get your free API key from [Google AI Studio](https://aistudio.google.com/app/apikey)
+   - No credit card required for basic usage
+   - Free tier includes generous daily limits
+   - Takes less than 2 minutes to get started
+2. **Local Image Directory**: Prepare a directory with images to transcribe (JPG/JPEG files)
+3. **That's it!** No Google Cloud project, no OAuth setup, no complex configuration
+
+**Why choose LOCAL mode?**
+- ✅ Fastest setup (5-10 minutes vs 1-2 hours)
+- ✅ No Google Cloud project needed
+- ✅ No billing account required
+- ✅ Works offline after initial setup
+- ✅ Multiple output formats (Log, Markdown, Word)
+- ✅ Perfect for testing and small projects
+
+### GOOGLECLOUD Mode Prerequisites (Advanced - Full Google Integration)
 1. **Google Cloud project** (e.g., `ukr-transcribe-genea`) with APIs enabled:
    - Vertex AI API
    - Google Drive API
@@ -208,15 +256,19 @@ pip install -r requirements.txt
 
 The tool supports two operation modes:
 
-- **LOCAL Mode**: Process images from local file system, output to log files
-  - **Best for**: Quick testing, local processing, no Google Cloud setup
-  - **Setup**: Just need Gemini API key
-  - **Output**: Log files with transcriptions
+- **LOCAL Mode** (Recommended for most users): Process images from local file system
+  - **Best for**: Quick testing, local processing, getting started quickly
+  - **Setup**: Just need Gemini API key from Google AI Studio (no Google Cloud setup)
+  - **Output**: Log files, Markdown files, and Word documents (all saved in source image directory)
+  - **Time to setup**: 5-10 minutes
+  - **Cost**: Pay-per-use with free tier available
 
-- **GOOGLECLOUD Mode**: Process images from Google Drive, output to Google Docs
-  - **Best for**: Production use, collaborative workflows, Google integration
-  - **Setup**: Requires Google Cloud project and authentication
+- **GOOGLECLOUD Mode** (Advanced): Process images from Google Drive, output to Google Docs
+  - **Best for**: Production use, collaborative workflows, Google integration, large-scale projects
+  - **Setup**: Requires Google Cloud project, authentication, and API enablement
   - **Output**: Formatted Google Docs with links and metadata
+  - **Time to setup**: 1-2 hours
+  - **Cost**: Google Cloud billing (first $300 free for new users)
 
 The mode is automatically detected from your configuration, or you can explicitly set `mode: "local"` or `mode: "googlecloud"`.
 
@@ -374,17 +426,34 @@ The script will:
 
 ### LOCAL Mode Output
 
-- **Log files** in the output directory (default: `logs/`):
-  - `transcription_<timestamp>.log` - Main transcription log with:
-    - Session metadata (start time, mode, configuration)
-    - Transcriptions for each image with source file paths
-    - Session summary with metrics (total images, success count, errors)
-  - `logs/<timestamp>-ai-responses.log` - Full AI responses per image
+LOCAL mode generates **three output files** for every transcription session:
 
-Each transcription entry includes:
-- Image source path
-- Transcribed text
-- Processing metadata (timestamp, model used)
+1. **Log File** (saved in `logs/` directory):
+   - `YYYYMMDD_HHMMSS-{archive_index}-transcription.log` - Main transcription log with:
+     - Session metadata (start/end time, mode, configuration)
+     - Transcriptions for each image with source file paths
+     - Session summary with metrics (total images, success count, errors)
+     - Error information and resume instructions (if errors occur)
+   - `logs/YYYYMMDD_HHMMSS-ai-responses.log` - Full AI responses per image
+
+2. **Markdown File** (saved in source image directory):
+   - `{archive_index}_YYYYMMDD_HHMMSS.md` - Structured markdown file with:
+     - Session overview section with metadata
+     - Formatted transcriptions with proper newlines
+     - Source image links (relative paths)
+     - Example: [`ф487оп1спр545_20260124_144542.md`](data_samples/test_input_sample/ф487оп1спр545_20260124_144542.md)
+
+3. **Word Document** (saved in source image directory):
+   - `{archive_index}_YYYYMMDD_HHMMSS.docx` - Microsoft Word document with:
+     - Session overview with metadata
+     - Formatted transcriptions with bold text for emphasized terms
+     - Page-numbered headers (e.g., ф487оп1спр545-стр1)
+     - Example: [`ф487оп1спр545_20260124_144542.docx`](data_samples/test_input_sample/ф487оп1спр545_20260124_144542.docx)
+
+All output files are created simultaneously during transcription, allowing you to:
+- View transcriptions in your preferred format (Markdown or Word)
+- Share formatted documents easily
+- Keep detailed logs for reference
 
 ### GOOGLECLOUD Mode Output
 
@@ -404,14 +473,24 @@ Each transcription entry includes:
 
 The script includes comprehensive error handling with automatic retries and exponential backoff for API calls:
 
-### Vertex AI API Timeouts and Retries
+### LOCAL Mode API Timeouts and Retries (Gemini Developer API)
+- **Initial timeout**: 1 minute (60 seconds)
+- **Retry attempts**: 3 total attempts with exponential backoff
+- **Timeout progression**: 1 min → 2 min → 5 min
+- **Retry delay**: 30 seconds between attempts (doubles with each retry: 30s → 60s → 120s)
+- Handles `TimeoutError`, `ConnectionError`, `OSError`, and `ServerError` (503 Service Unavailable) with automatic retries
+- On errors, output files (Markdown, Word, Log) are still created with partial results and error information
+
+### GOOGLECLOUD Mode API Timeouts and Retries
+
+#### Vertex AI API Timeouts and Retries
 - **Initial timeout**: 1 minute (60 seconds)
 - **Retry attempts**: 3 total attempts with exponential backoff
 - **Timeout progression**: 1 min → 2 min → 5 min
 - **Retry delay**: 30 seconds between attempts (doubles with each retry)
 - Handles `TimeoutError`, `ConnectionError`, and `OSError` with automatic retries
 
-### Google Docs API Timeouts and Retries
+#### Google Docs API Timeouts and Retries
 - **Base timeout**: 5 minutes (300 seconds) configured for all Google Docs API calls
 - **Overview update retries**: 3 attempts with exponential backoff for updating the TRANSCRIPTION RUN SUMMARY section
 - **Timeout progression**: 1 min → 2 min → 5 min
