@@ -37,7 +37,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google import genai
 from google.genai import types
-from google.genai.errors import ClientError
+from google.genai.errors import ClientError, ServerError
 
 # Try to import python-docx for Word output
 try:
@@ -968,6 +968,44 @@ class GeminiDevClient(AIClientStrategy):
                 
                 return text, elapsed_time, usage_metadata
                 
+            except ServerError as e:
+                # Handle server errors (503, 500, etc.) - retry with exponential backoff
+                attempt_elapsed = time.time() - attempt_start_time
+                total_elapsed = time.time() - function_start_time
+                error_type = type(e).__name__
+                
+                # Get status code from exception
+                status_code = getattr(e, 'status_code', None)
+                error_str = str(e)
+                
+                # If status_code not available, extract from exception string (format: "503 UNAVAILABLE")
+                if status_code is None:
+                    import re
+                    match = re.match(r'(\d+)', error_str)
+                    if match:
+                        status_code = int(match.group(1))
+                    else:
+                        status_code = None
+                
+                # Retry 503 (Service Unavailable) and 500 (Internal Server Error) errors
+                is_retryable = status_code in (503, 500) if status_code else True  # Default to retryable if unknown
+                
+                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} failed for '{filename}' after {attempt_elapsed:.1f}s (total: {total_elapsed:.1f}s): {error_type} (status {status_code}): {str(e)}"
+                logging.warning(error_msg)
+                
+                if is_retryable and attempt < max_retries - 1:
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay}s... (exponential backoff)")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    if not is_retryable:
+                        logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Non-retryable server error (status {status_code}) for '{filename}' after {attempt_elapsed:.1f}s: {error_str}")
+                        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                        raise RuntimeError(f"Server error (status {status_code}): {error_str}") from e
+                    else:
+                        logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] All {max_retries} attempts failed for '{filename}' after {total_elapsed:.1f}s: {error_type} (status {status_code}): {str(e)}")
+                        return f"[Error during transcription: {str(e)}]", None, None
+                    
             except (TimeoutError, ConnectionError, OSError) as e:
                 attempt_elapsed = time.time() - attempt_start_time
                 total_elapsed = time.time() - function_start_time
@@ -977,7 +1015,7 @@ class GeminiDevClient(AIClientStrategy):
                 logging.warning(error_msg)
                 
                 if attempt < max_retries - 1:
-                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay}s...")
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay}s... (exponential backoff)")
                     time.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                 else:
