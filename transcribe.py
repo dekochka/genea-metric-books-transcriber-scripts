@@ -4224,8 +4224,6 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
     usage_metadata_list = []
     timing_list = []
     last_image_end_time = None
-    doc_id = None
-    doc_name = None
     first_batch = True
     
     # Process images in batches
@@ -4356,7 +4354,7 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
                     first_batch = False
                 else:
                     # Append subsequent batches to existing document
-                    if doc_id:
+                    if output.doc_id:
                         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing batch {batch_num + 1} ({len(batch_transcribed_pages)} images) to document...")
                         # Pass all transcribed pages so far (write_batch will calculate start_idx)
                         output.write_batch(transcribed_pages, batch_num + 1, False)
