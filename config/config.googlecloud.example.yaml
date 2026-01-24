@@ -10,7 +10,7 @@ mode: "googlecloud"
 googlecloud:
   # Google Cloud Project ID
   # Example: "ukr-transcribe-genea"
-  project_id: "ru-ocr-genea"
+  project_id: "ukr-transcribe-genea"
   
   # Google Drive folder ID containing the images to transcribe
   # Get this from the Drive folder URL: https://drive.google.com/drive/folders/FOLDER_ID

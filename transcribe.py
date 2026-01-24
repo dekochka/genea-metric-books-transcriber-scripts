@@ -1299,7 +1299,9 @@ class GoogleDocsOutput(OutputStrategy):
             Document ID
         """
         run_date = datetime.now().strftime("%Y%m%d")
-        document_name = config.get('document_name', 'Unknown')
+        # Handle both normalized (nested) and legacy (flat) config formats
+        googlecloud_config = config.get('googlecloud', {})
+        document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
         doc_name = f"{document_name} {run_date}"
         self.doc_id = create_doc(self.docs_service, self.drive_service, doc_name, config)
         self.start_time = datetime.now()
@@ -1745,11 +1747,12 @@ class ModeFactory:
             prompt_text = ""  # Fallback to empty prompt
         
         # Create output strategy
+        # Pass full config (not just googlecloud_config) to include shared fields like archive_index
         output = GoogleDocsOutput(
             docs_service,
             drive_service,
             genai_client,
-            googlecloud_config,
+            config,  # Pass full normalized config, not just googlecloud section
             prompt_text
         )
         
@@ -2008,13 +2011,24 @@ def list_images(drive_service, config: dict):
     import re
     from datetime import datetime
     
-    drive_folder_id = config['drive_folder_id']
-    document_name = config.get('document_name', 'Unknown')
-    max_images = config['max_images']
-    retry_mode = config['retry_mode']
-    retry_image_list = config['retry_image_list']
-    image_start_number = config['image_start_number']
-    image_count = config['image_count']
+    # Handle both normalized (nested) and legacy (flat) config formats
+    googlecloud_config = config.get('googlecloud', {})
+    
+    # Try nested format first, fall back to flat format for backward compatibility
+    drive_folder_id = googlecloud_config.get('drive_folder_id') or config.get('drive_folder_id')
+    if not drive_folder_id:
+        raise KeyError("'drive_folder_id' not found in config (checked googlecloud.drive_folder_id and top-level)")
+    
+    document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
+    max_images = config.get('max_images')
+    if max_images is None:
+        raise KeyError("'max_images' not found in config")
+    retry_mode = config.get('retry_mode', False)
+    retry_image_list = config.get('retry_image_list', [])
+    image_start_number = config.get('image_start_number', 1)
+    image_count = config.get('image_count')
+    if image_count is None:
+        raise KeyError("'image_count' not found in config")
     
     query = (
         f"mimeType='image/jpeg' and '{drive_folder_id}' in parents and trashed=false"
@@ -2767,7 +2781,11 @@ def insert_title_page_image_and_transcribe(docs_service, drive_service, doc_id: 
 
 def create_doc(docs_service, drive_service, title, config: dict):
     """Create a new Google Doc in the specified folder and return its ID."""
-    drive_folder_id = config['drive_folder_id']
+    # Handle both normalized (nested) and legacy (flat) config formats
+    googlecloud_config = config.get('googlecloud', {})
+    drive_folder_id = googlecloud_config.get('drive_folder_id') or config.get('drive_folder_id')
+    if not drive_folder_id:
+        raise KeyError("'drive_folder_id' not found in config (checked googlecloud.drive_folder_id and top-level)")
     
     try:
         # First create the document
@@ -2870,11 +2888,15 @@ def create_overview_section(pages, config: dict, prompt_text: str, metrics=None,
         start_time: Optional datetime object for when transcription started
         end_time: Optional datetime object for when transcription ended
     """
-    drive_folder_id = config['drive_folder_id']
-    document_name = config.get('document_name', 'Unknown')
-    archive_index = config['archive_index']
-    ocr_model_id = config['ocr_model_id']
-    prompt_file = config['prompt_file']
+    # Handle both normalized (nested) and legacy (flat) config formats
+    googlecloud_config = config.get('googlecloud', {})
+    drive_folder_id = googlecloud_config.get('drive_folder_id') or config.get('drive_folder_id')
+    if not drive_folder_id:
+        raise KeyError("'drive_folder_id' not found in config (checked googlecloud.drive_folder_id and top-level)")
+    document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
+    archive_index = config.get('archive_index')
+    ocr_model_id = googlecloud_config.get('ocr_model_id') or config.get('ocr_model_id')
+    prompt_file = config.get('prompt_file')
     
     # Get folder link from the first page
     folder_link = pages[0]['webViewLink'] if pages else ""
@@ -3148,7 +3170,7 @@ def update_overview_section(docs_service, doc_id, pages, config: dict, prompt_te
         start_time: Start time of the transcription run
         end_time: End time of the transcription run
     """
-    archive_index = config['archive_index']
+    archive_index = config.get('archive_index')  # Optional field
     import time
     from googleapiclient.errors import HttpError
     
@@ -3461,7 +3483,9 @@ def save_transcription_locally(pages, doc_name, config: dict, prompt_text: str, 
     """
     Save transcription to a local text file when Google Doc creation fails.
     """
-    document_name = config.get('document_name', 'Unknown')
+    # Handle both normalized (nested) and legacy (flat) config formats
+    googlecloud_config = config.get('googlecloud', {})
+    document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
     
     try:
         # Create output directory if it doesn't exist
@@ -3529,8 +3553,10 @@ def write_to_doc(docs_service, drive_service, doc_id, pages, config: dict, promp
         write_overview: If True, write overview section and document header (default: True)
         genai_client: Optional Vertex AI Gemini client (needed for title page transcription)
     """
-    document_name = config.get('document_name', 'Unknown')
-    archive_index = config['archive_index']
+    # Handle both normalized (nested) and legacy (flat) config formats
+    googlecloud_config = config.get('googlecloud', {})
+    document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
+    archive_index = config.get('archive_index')  # Optional field
     
     logging.info(f"Preparing document content...")
     if archive_index:
@@ -3661,8 +3687,12 @@ def write_to_doc(docs_service, drive_service, doc_id, pages, config: dict, promp
                         },
                         'fields': 'bold'
                     }
-                },
-                {
+                }
+            ]
+            
+            # Add folder link styling only if range is valid (not empty)
+            if folder_link_end_offset > folder_link_start_offset:
+                overview_requests.append({
                     'updateTextStyle': {
                         'range': {'startIndex': idx + folder_link_start_offset, 'endIndex': idx + folder_link_end_offset},
                         'textStyle': {
@@ -3672,22 +3702,22 @@ def write_to_doc(docs_service, drive_service, doc_id, pages, config: dict, promp
                         },
                         'fields': 'link,foregroundColor,underline'
                     }
-                }
-            ]
-            
-            # Add bold formatting for labels
-            for label_start, label_end in bold_labels:
-                overview_requests.append({
-                    'updateTextStyle': {
-                        'range': {'startIndex': idx + label_start, 'endIndex': idx + label_end},
-                        'textStyle': {
-                            'bold': True
-                        },
-                        'fields': 'bold'
-                    }
                 })
             
-            # Add yellow highlight for disclaimer
+            # Add bold formatting for labels (only if ranges are valid)
+            for label_start, label_end in bold_labels:
+                if label_end > label_start:  # Validate range is not empty
+                    overview_requests.append({
+                        'updateTextStyle': {
+                            'range': {'startIndex': idx + label_start, 'endIndex': idx + label_end},
+                            'textStyle': {
+                                'bold': True
+                            },
+                            'fields': 'bold'
+                        }
+                    })
+            
+            # Add yellow highlight for disclaimer (only if range is valid)
             if disclaimer_range[1] > disclaimer_range[0]:
                 disclaimer_start, disclaimer_end = disclaimer_range
                 overview_requests.append({
@@ -3708,24 +3738,25 @@ def write_to_doc(docs_service, drive_service, doc_id, pages, config: dict, promp
                     }
                 })
             
-            # Add formatting for prompt text (6pt Roboto Mono)
+            # Add formatting for prompt text (6pt Roboto Mono) - only if range is valid
             prompt_text_start, prompt_text_end = prompt_text_range
-            overview_requests.append({
-                'updateTextStyle': {
-                    'range': {'startIndex': idx + prompt_text_start, 'endIndex': idx + prompt_text_end},
-                    'textStyle': {
-                        'fontSize': {
-                            'magnitude': 6.0,
-                            'unit': 'PT'
+            if prompt_text_end > prompt_text_start:  # Validate range is not empty
+                overview_requests.append({
+                    'updateTextStyle': {
+                        'range': {'startIndex': idx + prompt_text_start, 'endIndex': idx + prompt_text_end},
+                        'textStyle': {
+                            'fontSize': {
+                                'magnitude': 6.0,
+                                'unit': 'PT'
+                            },
+                            'weightedFontFamily': {
+                                'fontFamily': 'Roboto Mono',
+                                'weight': 400  # Normal weight
+                            }
                         },
-                        'weightedFontFamily': {
-                            'fontFamily': 'Roboto Mono',
-                            'weight': 400  # Normal weight
-                        }
-                    },
-                    'fields': 'fontSize,weightedFontFamily'
-                }
-            })
+                        'fields': 'fontSize,weightedFontFamily'
+                    }
+                })
             
             # Execute Overview
             docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': overview_requests}).execute()
@@ -4128,7 +4159,9 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
     genai_client = handlers.get('genai_client')
     
     batch_size_for_doc = config.get('batch_size_for_doc', 10)
-    document_name = config.get('document_name', 'Unknown')
+    # Handle both normalized (nested) and legacy (flat) config formats
+    googlecloud_config = config.get('googlecloud', {})
+    document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
     image_start_number = config.get('image_start_number', 1)
     
     # Process images in batches for incremental document writing
@@ -4253,35 +4286,22 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
                 timing_list.extend(batch_timing_list)
                 
                 if first_batch:
-                    # Create document after first batch
-                    run_date = datetime.now().strftime("%Y%m%d")
-                    doc_name = f"{document_name} {run_date}"
+                    # Document should already be initialized in main() before processing starts
+                    # Just write the first batch with overview (pass all pages so far)
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed ({len(batch_transcribed_pages)} images). Writing to document with overview...")
+                    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed, writing to document...")
                     
-                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed ({len(batch_transcribed_pages)} images). Creating Google Doc '{doc_name}'...")
-                    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed, creating document...")
+                    # Verify document is initialized
+                    if not output.doc_id:
+                        # Fallback: initialize if somehow not initialized (shouldn't happen)
+                        logging.warning("Document not initialized, initializing now...")
+                        output.initialize(config)
                     
-                    # Calculate metrics for overview (will be updated later)
-                    batch_metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
-                    
-                    # Initialize output (creates document)
-                    doc_id = output.initialize(config)
-                    
-                    if doc_id is None:
-                        # Permission error - save locally instead
-                        logging.warning("Cannot create Google Doc due to insufficient permissions")
-                        logging.info("Saving transcription to local file instead...")
-                        local_file = save_transcription_locally(transcribed_pages, doc_name, config, prompt_text, "logs", batch_metrics, start_time, None)
-                        logging.info(f"✓ Transcription saved locally: {local_file}")
-                        logging.info(f"✓ Processed {len(transcribed_pages)} images successfully")
-                        # Continue processing but save locally for each batch
-                        first_batch = False
-                        continue
-                    else:
-                        # Write first batch with overview (pass all pages so far)
-                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing first batch ({len(batch_transcribed_pages)} images) to document with overview...")
-                        output.write_batch(transcribed_pages, 1, True)
-                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ First batch written to document")
-                        first_batch = False
+                    # Write first batch with overview (pass all pages so far)
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing first batch ({len(batch_transcribed_pages)} images) to document with overview...")
+                    output.write_batch(transcribed_pages, 1, True)
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ First batch written to document")
+                    first_batch = False
                 else:
                     # Append subsequent batches to existing document
                     if doc_id:
