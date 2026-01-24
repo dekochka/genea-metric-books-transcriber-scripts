@@ -1103,7 +1103,7 @@ class OutputStrategy(ABC):
         pass
     
     @abstractmethod
-    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None) -> None:
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
         """
         Finalize output (update overview, close files, etc.).
         
@@ -1112,6 +1112,7 @@ class OutputStrategy(ABC):
             metrics: Session metrics dictionary
             start_time: Session start datetime
             end_time: Session end datetime
+            error_info: Optional dict with error details {'type': str, 'message': str, 'status_code': int, 'next_image_number': int}
         """
         pass
 
@@ -1219,7 +1220,7 @@ class LogFileOutput(OutputStrategy):
         
         logging.info(f"Wrote batch {batch_num} ({len(pages_to_write)} pages) to log file")
     
-    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None) -> None:
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
         """
         Finalize log file with session summary.
         
@@ -1228,6 +1229,7 @@ class LogFileOutput(OutputStrategy):
             metrics: Session metrics dictionary
             start_time: Session start datetime
             end_time: Session end datetime
+            error_info: Optional dict with error details
         """
         if not self.log_file_path:
             raise ValueError("Log file not initialized. Call initialize() first.")
@@ -1236,6 +1238,18 @@ class LogFileOutput(OutputStrategy):
             f.write("\n" + "=" * 80 + "\n")
             f.write("SESSION SUMMARY\n")
             f.write("=" * 80 + "\n")
+            
+            # Add error information if present
+            if error_info:
+                f.write("**RUN INTERRUPTED BY ERROR**\n")
+                f.write(f"Error Type: {error_info.get('type', 'Unknown')}\n")
+                if error_info.get('status_code'):
+                    f.write(f"Error Code: {error_info['status_code']}\n")
+                f.write(f"Error Message: {error_info.get('message', 'Unknown error')}\n")
+                if error_info.get('next_image_number'):
+                    f.write(f"\nTo resume: Update config 'image_start_number' to {error_info['next_image_number']}\n")
+                f.write("\n")
+            
             f.write(f"Session completed: {datetime.now().isoformat()}\n")
             f.write(f"Total images processed: {len(all_pages)}\n")
             f.write(f"Successful transcriptions: {len([p for p in all_pages if p.get('text') and not p['text'].startswith('[Error')])}\n")
@@ -1334,7 +1348,7 @@ class GoogleDocsOutput(OutputStrategy):
         
         logging.info(f"Wrote batch {batch_num} (pages {start_idx} onwards) to Google Doc")
     
-    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None) -> None:
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
         """
         Update overview section (delegates to existing update_overview_section()).
         
@@ -1343,6 +1357,7 @@ class GoogleDocsOutput(OutputStrategy):
             metrics: Session metrics dictionary
             start_time: Session start datetime (overrides self.start_time if provided)
             end_time: Session end datetime (overrides self.end_time if provided)
+            error_info: Optional dict with error details (not used for Google Docs mode)
         """
         if not self.doc_id:
             raise ValueError("Document not initialized. Call initialize() first.")
@@ -1352,6 +1367,7 @@ class GoogleDocsOutput(OutputStrategy):
         final_end_time = end_time or self.end_time or datetime.now()
         
         # Delegate to existing update_overview_section() function
+        # Note: update_overview_section doesn't currently support error_info, but that's OK for Google Cloud mode
         update_overview_section(
             self.docs_service,
             self.doc_id,
@@ -1455,7 +1471,7 @@ class MarkdownOutput(OutputStrategy):
                 text = text.replace('\n', '  \n')  # Convert single newlines to markdown line breaks
                 f.write(f"{text}\n")
     
-    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None) -> None:
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
         """Finalize markdown file with overview at top."""
         if not self.final_file_path:
             raise ValueError("Markdown output not initialized")
@@ -1463,7 +1479,7 @@ class MarkdownOutput(OutputStrategy):
         # Generate overview
         overview = create_local_overview_section(
             all_pages, self.config, self.prompt_text, 
-            metrics=metrics, start_time=start_time, end_time=end_time
+            metrics=metrics, start_time=start_time, end_time=end_time, error_info=error_info
         )
         
         # Write final file
@@ -3009,7 +3025,7 @@ Estimated Cost Per Page: N/A
     return overview_content, formatting_info
 
 
-def create_local_overview_section(pages, config: dict, prompt_text: str, metrics=None, start_time=None, end_time=None):
+def create_local_overview_section(pages, config: dict, prompt_text: str, metrics=None, start_time=None, end_time=None, error_info=None):
     """
     Create overview section for local mode (simplified version without Google Drive links).
     
@@ -3020,6 +3036,7 @@ def create_local_overview_section(pages, config: dict, prompt_text: str, metrics
         metrics: Optional dictionary with calculated metrics
         start_time: Optional datetime for session start
         end_time: Optional datetime for session end
+        error_info: Optional dict with error details {'type': str, 'message': str, 'status_code': int, 'next_image_number': int}
         
     Returns:
         String with overview content
@@ -3065,6 +3082,17 @@ Prompt File: {prompt_file}
         overview_content += f"Time Start: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
     if end_time:
         overview_content += f"Time End: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+    
+    # Add error information if present
+    if error_info:
+        overview_content += f"\n**RUN INTERRUPTED BY ERROR**\n"
+        overview_content += f"Error Type: {error_info.get('type', 'Unknown')}\n"
+        if error_info.get('status_code'):
+            overview_content += f"Error Code: {error_info['status_code']}\n"
+        overview_content += f"Error Message: {error_info.get('message', 'Unknown error')}\n"
+        if error_info.get('next_image_number'):
+            overview_content += f"\nTo resume: Update config 'image_start_number' to {error_info['next_image_number']}\n"
+        overview_content += f"\n"
     
     overview_content += f"""
 Files Processed:
@@ -4432,67 +4460,94 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
             output_id = output.initialize(normalized_config)
         logging.info(f"Output initialized: {output_id}")
         
-        # Process images using mode-specific processing function
-        if mode == 'googlecloud':
-            transcribed_pages = process_batches_googlecloud(images, handlers, prompt_text, normalized_config, ai_logger)
-        else:  # local mode
-            transcribed_pages, start_time, end_time = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger)
+        # Variables for finalization
+        transcribed_pages = []
+        start_time = None
+        end_time = None
+        error_info = None
         
-        # Calculate metrics for finalization
-        # Note: process_batches_googlecloud already finalizes, but process_all_local doesn't
-        if mode == 'local':
-            # For local mode, we need to calculate metrics and finalize output
-            # Extract usage metadata and timing from transcribed_pages if available
-            # For now, we'll finalize with empty metrics (can be enhanced later)
-            metrics = {}  # Can be enhanced to extract from process_all_local
+        try:
+            # Process images using mode-specific processing function
+            if mode == 'googlecloud':
+                transcribed_pages = process_batches_googlecloud(images, handlers, prompt_text, normalized_config, ai_logger)
+            else:  # local mode
+                transcribed_pages, start_time, end_time = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger)
             
-            # Note: Transcriptions are already written incrementally in process_all_local
-            # Just finalize the output (no need to write again)
-            output.finalize(transcribed_pages, metrics, start_time, end_time)
-            logging.info(f"Output finalized for LOCAL mode")
-        
-        # Log session completion
-        ai_logger.info(f"=== Transcription Session Completed ===")
-        ai_logger.info(f"Session end timestamp: {datetime.now().isoformat()}")
-        ai_logger.info(f"Total images processed: {len(transcribed_pages)}")
-        ai_logger.info(f"Successful transcriptions: {len([p for p in transcribed_pages if p['text'] and not p['text'].startswith('[Error')])}")
-        ai_logger.info(f"Failed transcriptions: {len([p for p in transcribed_pages if not p['text'] or p['text'].startswith('[Error')])}")
-        ai_logger.info(f"=== Session Summary ===\n")
-        
+            # Log session completion
+            ai_logger.info(f"=== Transcription Session Completed ===")
+            ai_logger.info(f"Session end timestamp: {datetime.now().isoformat()}")
+            ai_logger.info(f"Total images processed: {len(transcribed_pages)}")
+            ai_logger.info(f"Successful transcriptions: {len([p for p in transcribed_pages if p['text'] and not p['text'].startswith('[Error')])}")
+            ai_logger.info(f"Failed transcriptions: {len([p for p in transcribed_pages if not p['text'] or p['text'].startswith('[Error')])}")
+            ai_logger.info(f"=== Session Summary ===\n")
+            
+        except Exception as e:
+            # Capture error information for finalization
+            error_type = type(e).__name__
+            error_message = str(e)
+            
+            # Extract status code if it's an API error
+            status_code = None
+            if 'status' in error_message.lower():
+                import re
+                status_match = re.search(r'status (\d+)', error_message, re.IGNORECASE)
+                if status_match:
+                    status_code = int(status_match.group(1))
+            
+            # Calculate next image number for resume
+            next_image_number = None
+            if transcribed_pages:
+                last_image_name = transcribed_pages[-1]['name']
+                last_image_number = extract_image_number(last_image_name)
+                if last_image_number is not None:
+                    next_image_number = last_image_number + 1
+                else:
+                    next_image_number = image_start_number + len(transcribed_pages)
+            
+            error_info = {
+                'type': error_type,
+                'message': error_message,
+                'status_code': status_code,
+                'next_image_number': next_image_number
+            }
+            
+            # Log session error with resume information
+            ai_logger.error(f"=== Transcription Session Error ===")
+            ai_logger.error(f"Error timestamp: {datetime.now().isoformat()}")
+            ai_logger.error(f"Error type: {error_type}")
+            ai_logger.error(f"Error: {error_message}")
+            ai_logger.error(f"Images processed before error: {len(transcribed_pages)}")
+            if next_image_number is not None:
+                last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if transcribed_pages else 'unknown'})"
+                ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image{last_image_info}")
+            ai_logger.error(f"=== Session Error End ===\n")
+            
+            logging.error(f"Error in main: {error_type}: {error_message}")
+            if next_image_number is not None:
+                last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if transcribed_pages else 'unknown'})"
+                logging.error(f"RESUME INFO: Processed {len(transcribed_pages)} images successfully before error")
+                logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number}{last_image_info}")
+            logging.error(f"Full traceback:\n{traceback.format_exc()}")
+            
+            # Don't re-raise yet, we need to finalize first
+        finally:
+            # Always finalize output (even on errors) for LOCAL mode
+            if mode == 'local':
+                metrics = {}  # Can be enhanced to extract from process_all_local
+                try:
+                    output.finalize(transcribed_pages, metrics, start_time, end_time, error_info)
+                    logging.info(f"Output finalized for LOCAL mode (with {'error' if error_info else 'success'})")
+                except Exception as finalize_error:
+                    logging.error(f"Error during output finalization: {finalize_error}")
+                    logging.error(f"Finalize traceback:\n{traceback.format_exc()}")
+            
+            # Re-raise the original exception if there was one
+            if error_info:
+                raise
+    
     except Exception as e:
-        # Log session error with resume information
-        error_type = type(e).__name__
-        images_processed = len(transcribed_pages) if 'transcribed_pages' in locals() else 0
-        
-        # Calculate next image number from the last successfully processed image
-        next_image_number = None
-        if images_processed > 0 and 'transcribed_pages' in locals():
-            last_image_name = transcribed_pages[-1]['name']
-            last_image_number = extract_image_number(last_image_name)
-            if last_image_number is not None:
-                next_image_number = last_image_number + 1
-            else:
-                # Fallback: use position-based calculation
-                next_image_number = image_start_number + images_processed
-        elif images_processed > 0:
-            # Fallback if we can't get the last image name
-            next_image_number = image_start_number + images_processed
-        
-        ai_logger.error(f"=== Transcription Session Error ===")
-        ai_logger.error(f"Error timestamp: {datetime.now().isoformat()}")
-        ai_logger.error(f"Error type: {error_type}")
-        ai_logger.error(f"Error: {str(e)}")
-        ai_logger.error(f"Images processed before error: {images_processed}")
-        if next_image_number is not None:
-            last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
-            ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image{last_image_info}")
-        ai_logger.error(f"=== Session Error End ===\n")
-        
-        logging.error(f"Error in main: {error_type}: {str(e)}")
-        if next_image_number is not None:
-            last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
-            logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
-            logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number}{last_image_info}")
+        # Final catch-all for any unhandled exceptions
+        logging.error(f"Fatal error: {str(e)}")
         logging.error(f"Full traceback:\n{traceback.format_exc()}")
         raise
 
