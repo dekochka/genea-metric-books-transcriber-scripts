@@ -242,6 +242,39 @@ See the [Architecture Documentation](docs/ARCHITECTURE.md) for:
 3. **Drive access**:
    - Share the target Drive folder (configured via `drive_folder_id` in config) with the same Google account that authenticated (Editor).
 
+## Cost and Pricing
+
+### What are Tokens?
+
+Tokens are units of measurement for the volume of text processed by the AI. One token is approximately equal to 0.75 words in Ukrainian/Russian.
+
+### Processing Costs
+
+The tool uses the **Gemini 3 Flash Preview** model from Google. Processing costs (as of January 2026):
+
+- **Input tokens** (images + instructions): **$0.15 per 1 million tokens**
+- **Output tokens** (transcription): **$0.60 per 1 million tokens**
+- **Cached tokens** (reuse): **$0.03 per 1 million tokens**
+
+> **Note**: Pricing estimates are current as of January 2026. For the latest pricing information, see the [official Google Gemini API pricing page](https://ai.google.dev/gemini-api/docs/pricing).
+
+### Cost Calculation Example
+
+For **one metric book page**:
+- Input tokens: ~6,000-6,500 tokens (image + instructions)
+- Output tokens: ~4,000-4,600 tokens (detailed transcription)
+- **Approximate cost per page: ~$0.0035-0.004** (approximately $0.004)
+
+For **100 pages**:
+- **Approximate cost: ~$0.40**
+
+### Important Notes on Costs
+
+1. **LOCAL Mode**: Pay-per-use with free tier available (no credit card required for basic usage)
+2. **GOOGLECLOUD Mode**: First $300 free - Google provides a $300 free credit for new Google Cloud users
+3. **Cost displayed in logs**: After each transcription session, you'll see the exact cost
+4. **Controllable**: You can limit the number of processed images through configuration
+
 ## Installation
 
 ```bash
