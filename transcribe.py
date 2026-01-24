@@ -4420,7 +4420,7 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
     final_metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
     
     # Finalize output (update overview section)
-    if doc_id and len(transcribed_pages) > 0:
+    if output.doc_id and len(transcribed_pages) > 0:
         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Finalizing output with overview update...")
         output.finalize(transcribed_pages, final_metrics)
         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Output finalized successfully.")
