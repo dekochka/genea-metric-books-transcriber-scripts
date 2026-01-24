@@ -29,29 +29,44 @@ import base64
 import json
 import traceback
 import yaml
+from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Any
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google import genai
 from google.genai import types
+from google.genai.errors import ClientError, ServerError
+
+# Try to import python-docx for Word output
+try:
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+    Document = None
+    print("WARNING: python-docx not installed. Word output will not be available.")
+    print("Install with: pip install python-docx>=0.8.11")
 
 # ------------------------- CONFIGURATION LOADING -------------------------
 
 def load_config(config_path: str) -> dict:
     """
-    Load configuration from YAML file.
+    Load configuration from YAML file with mode detection and validation.
     
     Args:
         config_path: Path to the YAML configuration file
         
     Returns:
-        Dictionary containing configuration values
+        Dictionary containing configuration values (normalized)
         
     Raises:
         FileNotFoundError: If config file doesn't exist
         yaml.YAMLError: If config file is invalid YAML
-        KeyError: If required configuration keys are missing
+        ValueError: If configuration validation fails
     """
     if not os.path.exists(config_path):
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
@@ -62,19 +77,212 @@ def load_config(config_path: str) -> dict:
     if config is None:
         raise ValueError(f"Configuration file is empty: {config_path}")
     
-    # Validate required keys
-    required_keys = [
-        'prompt_file', 'project_id', 'drive_folder_id',
-        'archive_index', 'region', 'ocr_model_id', 'adc_file',
-        'max_images', 'image_start_number',
-        'image_count', 'batch_size_for_doc', 'retry_mode', 'retry_image_list'
-    ]
+    # Detect mode
+    mode = detect_mode(config)
     
-    missing_keys = [key for key in required_keys if key not in config]
-    if missing_keys:
-        raise KeyError(f"Missing required configuration keys: {', '.join(missing_keys)}")
+    # Normalize config (convert legacy to nested structure)
+    config = normalize_config(config, mode)
+    
+    # Validate configuration
+    is_valid, errors = validate_config(config, mode)
+    if not is_valid:
+        raise ValueError(f"Configuration validation failed: {', '.join(errors)}")
     
     return config
+
+
+def detect_mode(config: dict) -> str:
+    """
+    Detect mode from configuration.
+    
+    Detection order:
+    1. Explicit mode field → use it
+    2. Legacy config (project_id/drive_folder_id at root) → googlecloud
+    3. local section present → local
+    4. Default → googlecloud (backward compatibility)
+    
+    Args:
+        config: Configuration dictionary
+        
+    Returns:
+        Mode string: 'local' or 'googlecloud'
+        
+    Raises:
+        ValueError: If explicit mode value is invalid
+    """
+    # Check for explicit mode field
+    if 'mode' in config:
+        mode = config['mode'].lower()
+        if mode not in ['local', 'googlecloud']:
+            raise ValueError(f"Invalid mode value: '{mode}'. Must be 'local' or 'googlecloud'")
+        return mode
+    
+    # Legacy detection: check for Google Cloud specific fields at root level
+    if 'project_id' in config or 'drive_folder_id' in config:
+        return 'googlecloud'
+    
+    # Check for local section
+    if 'local' in config:
+        return 'local'
+    
+    # Default for backward compatibility
+    return 'googlecloud'
+
+
+def normalize_config(config: dict, mode: str) -> dict:
+    """
+    Normalize configuration to internal format.
+    
+    Converts legacy flat structure to nested structure for googlecloud mode.
+    Ensures all required fields are present with defaults.
+    
+    Args:
+        config: Configuration dictionary (may be legacy format)
+        mode: Detected mode ('local' or 'googlecloud')
+        
+    Returns:
+        Normalized configuration dictionary
+    """
+    normalized = config.copy()
+    
+    if mode == 'googlecloud':
+        # If googlecloud section doesn't exist, create it from legacy flat structure
+        if 'googlecloud' not in normalized:
+            normalized['googlecloud'] = {}
+            gc_config = normalized['googlecloud']
+            
+            # Move Google Cloud specific fields to nested structure
+            if 'project_id' in normalized:
+                gc_config['project_id'] = normalized.pop('project_id')
+            if 'drive_folder_id' in normalized:
+                gc_config['drive_folder_id'] = normalized.pop('drive_folder_id')
+            if 'region' in normalized:
+                gc_config['region'] = normalized.pop('region', 'global')
+            if 'ocr_model_id' in normalized:
+                gc_config['ocr_model_id'] = normalized.pop('ocr_model_id')
+            if 'adc_file' in normalized:
+                gc_config['adc_file'] = normalized.pop('adc_file')
+            if 'document_name' in normalized:
+                gc_config['document_name'] = normalized.pop('document_name')
+            if 'title_page_filename' in normalized:
+                gc_config['title_page_filename'] = normalized.pop('title_page_filename')
+        else:
+            # Ensure googlecloud section has defaults
+            gc_config = normalized['googlecloud']
+            if 'region' not in gc_config:
+                gc_config['region'] = 'global'
+    
+    # Set defaults for shared fields
+    if 'retry_mode' not in normalized:
+        normalized['retry_mode'] = False
+    if 'retry_image_list' not in normalized:
+        normalized['retry_image_list'] = []
+    
+    return normalized
+
+
+def validate_config(config: dict, mode: str) -> tuple[bool, list[str]]:
+    """
+    Validate configuration based on mode.
+    
+    Args:
+        config: Configuration dictionary
+        mode: Mode string ('local' or 'googlecloud')
+        
+    Returns:
+        Tuple of (is_valid, error_messages)
+    """
+    errors = []
+    
+    # Shared required fields
+    if 'prompt_file' not in config:
+        errors.append("prompt_file is required")
+    
+    if 'archive_index' not in config:
+        errors.append("archive_index is required")
+    
+    # Shared optional fields with validation
+    if 'image_start_number' in config:
+        if not isinstance(config['image_start_number'], int) or config['image_start_number'] < 1:
+            errors.append("image_start_number must be a positive integer")
+    
+    if 'image_count' in config:
+        if not isinstance(config['image_count'], int) or config['image_count'] < 1:
+            errors.append("image_count must be a positive integer")
+    
+    # Mode-specific validation
+    if mode == 'local':
+        if 'local' not in config:
+            errors.append("local mode requires 'local' configuration section")
+        else:
+            local_config = config['local']
+            
+            # API key validation (can be in config or env var)
+            api_key = local_config.get('api_key') or os.getenv('GEMINI_API_KEY')
+            if not api_key:
+                errors.append("local mode requires api_key in config or GEMINI_API_KEY environment variable")
+            elif isinstance(api_key, str) and len(api_key) < 10:
+                errors.append("api_key appears to be invalid (too short)")
+            
+            # Image directory validation
+            if 'image_dir' not in local_config:
+                errors.append("local mode requires image_dir")
+            else:
+                image_dir = local_config['image_dir']
+                if not os.path.isdir(image_dir):
+                    errors.append(f"image_dir does not exist or is not a directory: {image_dir}")
+            
+            # Output directory validation (optional, will be created if missing)
+            if 'output_dir' in local_config:
+                output_dir = local_config['output_dir']
+                # Check if parent directory exists
+                parent_dir = os.path.dirname(os.path.abspath(output_dir))
+                if parent_dir and not os.path.isdir(parent_dir):
+                    errors.append(f"output_dir parent directory does not exist: {parent_dir}")
+    
+    elif mode == 'googlecloud':
+        if 'googlecloud' not in config:
+            errors.append("googlecloud mode requires 'googlecloud' configuration section")
+        else:
+            gc_config = config['googlecloud']
+            
+            # Required fields
+            required_fields = {
+                'project_id': 'project_id',
+                'drive_folder_id': 'drive_folder_id',
+                'region': 'region',
+                'ocr_model_id': 'ocr_model_id',
+                'adc_file': 'adc_file'
+            }
+            
+            for field, field_name in required_fields.items():
+                if field not in gc_config:
+                    errors.append(f"googlecloud mode requires {field_name}")
+            
+            # ADC file validation
+            if 'adc_file' in gc_config:
+                adc_file = gc_config['adc_file']
+                if not os.path.exists(adc_file):
+                    errors.append(f"adc_file does not exist: {adc_file}")
+            
+            # Drive folder ID format validation (basic check)
+            if 'drive_folder_id' in gc_config:
+                folder_id = gc_config['drive_folder_id']
+                if not isinstance(folder_id, str) or len(folder_id) < 10:
+                    errors.append("drive_folder_id appears to be invalid")
+            
+            # Optional fields with defaults
+            if 'max_images' not in config:
+                config['max_images'] = 1000
+            elif not isinstance(config['max_images'], int) or config['max_images'] < 1:
+                errors.append("max_images must be a positive integer")
+            
+            if 'batch_size_for_doc' not in config:
+                config['batch_size_for_doc'] = 10
+            elif not isinstance(config['batch_size_for_doc'], int) or config['batch_size_for_doc'] < 1:
+                errors.append("batch_size_for_doc must be a positive integer")
+    
+    return len(errors) == 0, errors
 
 
 def load_prompt_text(prompt_file: str) -> str:
@@ -102,7 +310,7 @@ def setup_logging(config: dict) -> tuple:
     Set up logging based on configuration.
     
     Args:
-        config: Configuration dictionary
+        config: Configuration dictionary (normalized, with mode detected)
         
     Returns:
         Tuple of (log_filename, ai_log_filename, ai_logger)
@@ -115,11 +323,21 @@ def setup_logging(config: dict) -> tuple:
     # Generate timestamp for log files
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    # Logging setup - use date-time-transcribe-session-folderid.log format
-    drive_folder_id = config['drive_folder_id']
-    # Use first 8 chars of folder ID for log filename
-    folder_id_short = drive_folder_id[:8] if len(drive_folder_id) >= 8 else drive_folder_id
-    log_filename = os.path.join(LOGS_DIR, f"{timestamp}-transcribe-session-{folder_id_short}.log")
+    # Detect mode for log filename
+    mode = detect_mode(config)
+    
+    # Logging setup - use date-time-transcribe-session-{identifier}.log format
+    if mode == 'googlecloud':
+        # Use drive folder ID for Google Cloud mode
+        drive_folder_id = config.get('googlecloud', {}).get('drive_folder_id', 'unknown')
+        folder_id_short = drive_folder_id[:8] if len(drive_folder_id) >= 8 else drive_folder_id
+        log_filename = os.path.join(LOGS_DIR, f"{timestamp}-transcribe-session-{folder_id_short}.log")
+    else:
+        # Use image directory name for local mode
+        image_dir = config.get('local', {}).get('image_dir', 'local')
+        dir_name = os.path.basename(os.path.abspath(image_dir))
+        dir_name_short = dir_name[:20] if len(dir_name) > 20 else dir_name
+        log_filename = os.path.join(LOGS_DIR, f"{timestamp}-transcribe-session-{dir_name_short}.log")
     
     logging.basicConfig(
         level=logging.INFO,
@@ -141,6 +359,1469 @@ def setup_logging(config: dict) -> tuple:
     
     return log_filename, ai_log_filename, ai_logger
 
+
+# ------------------------- MODE ABSTRACTION LAYER - STRATEGY PATTERN -------------------------
+
+class AuthenticationStrategy(ABC):
+    """Abstract base class for authentication strategies."""
+    
+    @abstractmethod
+    def authenticate(self) -> Any:
+        """
+        Authenticate and return credentials/client.
+        
+        Returns:
+            Authentication object (API key string for local, Credentials for googlecloud)
+        """
+        pass
+    
+    @abstractmethod
+    def validate(self) -> bool:
+        """
+        Validate authentication is working.
+        
+        Returns:
+            True if authentication is valid, False otherwise
+        """
+        pass
+
+
+class LocalAuthStrategy(AuthenticationStrategy):
+    """API key authentication for local mode (skeleton implementation)."""
+    
+    def __init__(self, api_key: str = None):
+        """
+        Initialize local authentication strategy.
+        
+        Args:
+            api_key: Gemini API key (can also come from GEMINI_API_KEY env var)
+        """
+        self.api_key = api_key or os.getenv('GEMINI_API_KEY')
+        if not self.api_key:
+            raise ValueError("API key required (config or GEMINI_API_KEY env var)")
+    
+    def authenticate(self) -> str:
+        """Return API key for Gemini Developer API."""
+        return self.api_key
+    
+    def validate(self) -> bool:
+        """Validate API key format (basic check)."""
+        return bool(self.api_key and len(self.api_key) > 10)
+
+
+class GoogleCloudAuthStrategy(AuthenticationStrategy):
+    """OAuth2/ADC authentication for Google Cloud mode (skeleton implementation)."""
+    
+    def __init__(self, adc_file: str):
+        """
+        Initialize Google Cloud authentication strategy.
+        
+        Args:
+            adc_file: Path to Application Default Credentials file
+        """
+        self.adc_file = adc_file
+    
+    def authenticate(self) -> Credentials:
+        """Authenticate using ADC file (delegates to existing authenticate() function)."""
+        # Will delegate to existing authenticate() function in Phase 4
+        return authenticate(self.adc_file)
+    
+    def validate(self) -> bool:
+        """Validate credentials file exists."""
+        return os.path.exists(self.adc_file)
+
+
+class ImageSourceStrategy(ABC):
+    """Abstract base class for image source strategies."""
+    
+    @abstractmethod
+    def list_images(self, config: dict) -> list[dict]:
+        """
+        List available images.
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            List of image metadata dictionaries with 'name', 'id', 'webViewLink' keys
+        """
+        pass
+    
+    @abstractmethod
+    def get_image_bytes(self, image_info: dict) -> bytes:
+        """
+        Get image bytes.
+        
+        Args:
+            image_info: Image metadata dictionary
+            
+        Returns:
+            Image bytes
+        """
+        pass
+    
+    @abstractmethod
+    def get_image_url(self, image_info: dict) -> str:
+        """
+        Get image URL/link for output.
+        
+        Args:
+            image_info: Image metadata dictionary
+            
+        Returns:
+            URL or file path string
+        """
+        pass
+
+
+class LocalImageSource(ImageSourceStrategy):
+    """Local file system image source."""
+    
+    def __init__(self, image_dir: str):
+        """
+        Initialize local image source.
+        
+        Args:
+            image_dir: Path to directory containing images
+        """
+        self.image_dir = image_dir
+        if not os.path.isdir(image_dir):
+            raise ValueError(f"Image directory does not exist: {image_dir}")
+    
+    def list_images(self, config: dict) -> list[dict]:
+        """
+        List images from local directory with filtering.
+        
+        Reuses the same filtering logic as Drive-based list_images(),
+        supporting all filename patterns and image_start_number/image_count filtering.
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            List of image metadata dictionaries with 'name', 'path', 'id', 'webViewLink'
+        """
+        import glob
+        import re
+        
+        retry_mode = config.get('retry_mode', False)
+        retry_image_list = config.get('retry_image_list', [])
+        image_start_number = config.get('image_start_number', 1)
+        image_count = config.get('image_count', 1000)
+        
+        # Supported extensions (case-insensitive)
+        extensions = ['*.jpg', '*.jpeg', '*.JPG', '*.JPEG']
+        all_image_paths = []
+        
+        for ext in extensions:
+            pattern = os.path.join(self.image_dir, ext)
+            all_image_paths.extend(glob.glob(pattern))
+        
+        # Sort by filename
+        all_image_paths.sort()
+        
+        logging.info(f"Found {len(all_image_paths)} total images in local directory (sorted by filename)")
+        
+        # Convert to dict format compatible with existing code
+        all_images = []
+        for img_path in all_image_paths:
+            filename = os.path.basename(img_path)
+            # Normalize path for file:// URL (Windows requires forward slashes)
+            abs_path = os.path.abspath(img_path)
+            # Convert backslashes to forward slashes for file:// URLs (Windows compatibility)
+            normalized_path = abs_path.replace('\\', '/')
+            all_images.append({
+                'name': filename,
+                'path': img_path,
+                'id': img_path,  # Use path as ID for local mode
+                'webViewLink': f"file://{normalized_path}"  # Local file URL (Windows-compatible)
+            })
+        
+        # RETRY MODE: If enabled, filter for specific failed images only
+        if retry_mode:
+            logging.info(f"RETRY MODE ENABLED: Looking for {len(retry_image_list)} specific failed images")
+            retry_images = []
+            
+            # Find matching images (exact filename match)
+            retry_names = set(retry_image_list)
+            for img in all_images:
+                if img['name'] in retry_names:
+                    retry_images.append(img)
+            
+            logging.info(f"Found {len(retry_images)} retry images out of {len(retry_image_list)} requested")
+            if retry_images:
+                retry_filenames = [img['name'] for img in retry_images]
+                logging.info(f"Retry images found: {retry_filenames}")
+            else:
+                logging.warning("No retry images found! Check the retry_image_list names in config.")
+            
+            return retry_images
+        
+        # NORMAL MODE: Apply same filtering logic as Drive-based list_images()
+        numbered_images = []
+        timestamp_images = []
+        
+        # Helper: case-insensitive check for JPEG extension
+        def has_jpeg_extension(filename: str) -> bool:
+            lower = filename.lower()
+            return lower.endswith('.jpg') or lower.endswith('.jpeg')
+        
+        # Regex patterns (same as Drive implementation)
+        timestamp_pattern = re.compile(r'^image - (\d{4}-\d{2}-\d{2}T\d{6}\.\d{3})\.(?:jpg|jpeg)$', re.IGNORECASE)
+        img_date_pattern = re.compile(r'^IMG_\d{8}_(\d+)\.(?:jpg|jpeg)$', re.IGNORECASE)
+        
+        for img in all_images:
+            filename = img['name']
+            number = None
+            
+            # Check for timestamp pattern first
+            timestamp_match = timestamp_pattern.match(filename)
+            if timestamp_match:
+                timestamp_images.append(img)
+                continue
+            
+            # Check for IMG_YYYYMMDD_XXXX.jpg pattern
+            img_date_match = img_date_pattern.match(filename)
+            if img_date_match:
+                try:
+                    number = int(img_date_match.group(1))
+                except ValueError:
+                    continue
+            
+            # Check if filename matches the pattern image (N).jpg/jpeg
+            elif filename.startswith('image (') and (filename.lower().endswith(').jpg') or filename.lower().endswith(').jpeg')):
+                try:
+                    start_idx = filename.find('(') + 1
+                    end_idx = filename.find(')')
+                    number_str = filename[start_idx:end_idx]
+                    number = int(number_str)
+                except (ValueError, IndexError):
+                    continue
+            
+            # Check if filename matches the pattern imageXXXXX.jpg/jpeg
+            elif filename.startswith('image') and has_jpeg_extension(filename) and '(' not in filename and ' - ' not in filename and '_' not in filename:
+                try:
+                    ext_len = 5 if filename.lower().endswith('.jpeg') else 4
+                    number_str = filename[5:-ext_len]
+                    number = int(number_str)
+                except ValueError:
+                    continue
+            
+            # Check if filename matches the pattern XXXXX.jpg/jpeg
+            elif has_jpeg_extension(filename) and not filename.startswith('image') and '_' not in filename:
+                try:
+                    ext_len = 5 if filename.lower().endswith('.jpeg') else 4
+                    number_str = filename[:-ext_len]
+                    number = int(number_str)
+                except ValueError:
+                    continue
+            
+            # Check if filename matches the pattern PREFIX_XXXXX.jpg/jpeg
+            elif has_jpeg_extension(filename) and '_' in filename:
+                try:
+                    ext_len = 5 if filename.lower().endswith('.jpeg') else 4
+                    base_no_ext = filename[:-ext_len]
+                    underscore_idx = base_no_ext.rfind('_')
+                    if underscore_idx != -1:
+                        suffix = base_no_ext[underscore_idx + 1:]
+                        if suffix.isdigit():
+                            number = int(suffix)
+                except Exception:
+                    continue
+            
+            # If we found a valid number, check if it's in the desired range
+            if number is not None:
+                if image_start_number <= number < image_start_number + image_count:
+                    numbered_images.append(img)
+        
+        # Handle numbered images (same logic as Drive implementation)
+        filtered_images = []
+        
+        if numbered_images:
+            start_filename_pattern1 = f"image ({image_start_number}).jpg"
+            end_filename_pattern1 = f"image ({image_start_number + image_count - 1}).jpg"
+            start_filename_pattern2 = f"image{image_start_number:05d}.jpg"
+            end_filename_pattern2 = f"image{image_start_number + image_count - 1:05d}.jpg"
+            start_filename_pattern3 = f"{image_start_number}.jpg"
+            end_filename_pattern3 = f"{image_start_number + image_count - 1}.jpg"
+            
+            logging.info(f"Filtering numbered images from {start_filename_pattern1} to {end_filename_pattern1} OR {start_filename_pattern2} to {end_filename_pattern2} OR {start_filename_pattern3} to {end_filename_pattern3}")
+            
+            # Sort numbered images numerically
+            def extract_number_for_sorting(img):
+                filename = img['name']
+                lower = filename.lower()
+                if filename.startswith('image (') and (lower.endswith(').jpg') or lower.endswith(').jpeg')):
+                    start_idx = filename.find('(') + 1
+                    end_idx = filename.find(')')
+                    number_str = filename[start_idx:end_idx]
+                elif filename.startswith('image') and has_jpeg_extension(filename) and '(' not in filename and ' - ' not in filename and '_' not in filename:
+                    ext_len = 5 if lower.endswith('.jpeg') else 4
+                    number_str = filename[5:-ext_len]
+                elif has_jpeg_extension(filename) and '_' in filename:
+                    ext_len = 5 if lower.endswith('.jpeg') else 4
+                    base_no_ext = filename[:-ext_len]
+                    underscore_idx = base_no_ext.rfind('_')
+                    number_str = base_no_ext[underscore_idx + 1:]
+                else:
+                    ext_len = 5 if lower.endswith('.jpeg') else 4
+                    number_str = filename[:-ext_len]
+                return int(number_str)
+            
+            numbered_images.sort(key=extract_number_for_sorting)
+            filtered_images.extend(numbered_images)
+        
+        # Handle timestamp images
+        if timestamp_images:
+            logging.info(f"Found {len(timestamp_images)} timestamp-based images")
+            
+            # Sort timestamp images chronologically
+            def extract_timestamp_for_sorting(img):
+                filename = img['name']
+                match = timestamp_pattern.match(filename)
+                if match:
+                    timestamp_str = match.group(1)
+                    try:
+                        from datetime import datetime
+                        formatted_timestamp = f"{timestamp_str[:11]}{timestamp_str[11:13]}:{timestamp_str[13:15]}:{timestamp_str[15:]}"
+                        return datetime.fromisoformat(formatted_timestamp)
+                    except ValueError:
+                        return datetime.min
+                return datetime.min
+            
+            timestamp_images.sort(key=extract_timestamp_for_sorting)
+            
+            # For timestamp images, treat image_start_number as starting position
+            start_pos = max(1, image_start_number) - 1
+            end_pos = min(len(timestamp_images), start_pos + image_count)
+            
+            selected_timestamp_images = timestamp_images[start_pos:end_pos]
+            filtered_images.extend(selected_timestamp_images)
+            
+            if selected_timestamp_images:
+                logging.info(f"Selected {len(selected_timestamp_images)} timestamp images from position {image_start_number} to {start_pos + len(selected_timestamp_images)}")
+        
+        # Fallback: if no images selected, use position-based selection
+        if not filtered_images and all_images:
+            start_pos = max(1, image_start_number) - 1
+            end_pos = min(len(all_images), start_pos + image_count)
+            fallback_selected = all_images[start_pos:end_pos]
+            if fallback_selected:
+                logging.info(f"No numeric/timestamp matches; falling back to position selection: items {image_start_number} to {image_start_number + len(fallback_selected) - 1}")
+                filtered_images = fallback_selected
+        
+        logging.info(f"Selected {len(filtered_images)} total images for processing")
+        
+        if filtered_images:
+            filenames = [img['name'] for img in filtered_images]
+            logging.info(f"Final selected files: {filenames}")
+        
+        return filtered_images
+    
+    def get_image_bytes(self, image_info: dict) -> bytes:
+        """
+        Read image from local file system.
+        
+        Args:
+            image_info: Image metadata dictionary with 'path' key
+            
+        Returns:
+            Image bytes
+        """
+        with open(image_info['path'], 'rb') as f:
+            return f.read()
+    
+    def get_image_url(self, image_info: dict) -> str:
+        """
+        Return local file path with normalized separators.
+        
+        Args:
+            image_info: Image metadata dictionary with 'path' key
+            
+        Returns:
+            Local file path with forward slashes (cross-platform compatible)
+        """
+        # Normalize path separators to forward slashes for consistency across platforms
+        path = image_info['path']
+        return path.replace('\\', '/')
+
+
+class DriveImageSource(ImageSourceStrategy):
+    """Google Drive image source."""
+    
+    def __init__(self, drive_service, drive_folder_id: str, document_name: str = "Unknown"):
+        """
+        Initialize Drive image source.
+        
+        Args:
+            drive_service: Google Drive API service
+            drive_folder_id: Drive folder ID containing images
+            document_name: Document name for logging (optional)
+        """
+        self.drive_service = drive_service
+        self.drive_folder_id = drive_folder_id
+        self.document_name = document_name
+    
+    def list_images(self, config: dict) -> list[dict]:
+        """
+        List images from Google Drive (delegates to existing function).
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            List of image metadata dictionaries
+        """
+        return list_images(self.drive_service, config)
+    
+    def get_image_bytes(self, image_info: dict) -> bytes:
+        """
+        Download image from Drive (delegates to existing function).
+        
+        Args:
+            image_info: Image metadata dictionary with 'id' and 'name'
+            
+        Returns:
+            Image bytes
+        """
+        return download_image(
+            self.drive_service,
+            image_info['id'],
+            image_info['name'],
+            self.document_name
+        )
+    
+    def get_image_url(self, image_info: dict) -> str:
+        """
+        Return Drive web view link.
+        
+        Args:
+            image_info: Image metadata dictionary
+            
+        Returns:
+            Web view link
+        """
+        return image_info.get('webViewLink', '')
+
+
+class AIClientStrategy(ABC):
+    """Abstract base class for AI client strategies."""
+    
+    @abstractmethod
+    def transcribe(self, image_bytes: bytes, filename: str, prompt: str) -> tuple[str, float, dict]:
+        """
+        Transcribe image using AI model.
+        
+        Args:
+            image_bytes: Image file bytes
+            filename: Image filename (for logging)
+            prompt: Transcription prompt text
+            
+        Returns:
+            Tuple of (transcription_text, elapsed_time, usage_metadata)
+        """
+        pass
+
+
+class GeminiDevClient(AIClientStrategy):
+    """Gemini Developer API client."""
+    
+    def __init__(self, api_key: str, model_id: str = "gemini-3-flash-preview", ai_logger=None):
+        """
+        Initialize Gemini Developer API client.
+        
+        Args:
+            api_key: Gemini API key
+            model_id: Model ID to use (default: gemini-3-flash-preview)
+            ai_logger: Logger instance for AI responses (optional)
+        """
+        self.api_key = api_key
+        self.model_id = model_id
+        self.ai_logger = ai_logger
+        # Initialize Gemini client for Developer API (not Vertex AI)
+        self.client = genai.Client(api_key=api_key)
+        logging.info(f"Gemini Developer API client initialized with model {model_id}")
+    
+    def transcribe(self, image_bytes: bytes, filename: str, prompt: str) -> tuple[str, float, dict]:
+        """
+        Transcribe image using Gemini Developer API.
+        
+        Args:
+            image_bytes: Image file bytes
+            filename: Image filename (for logging)
+            prompt: Transcription prompt text
+            
+        Returns:
+            Tuple of (transcription_text, elapsed_time, usage_metadata)
+        """
+        import time
+        
+        function_start_time = time.time()
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription for image '{filename}' (size: {len(image_bytes)} bytes)")
+        
+        # Create image part
+        image_part = types.Part.from_bytes(
+            data=image_bytes,
+            mime_type="image/jpeg"
+        )
+        
+        # Create content with prompt and image
+        content = types.Content(
+            role="user",
+            parts=[
+                types.Part.from_text(text=prompt),
+                image_part
+            ]
+        )
+        
+        # Configure generation parameters (matching Vertex AI configuration)
+        generate_content_config = types.GenerateContentConfig(
+            temperature=0.1,
+            top_p=0.8,
+            seed=0,
+            max_output_tokens=65535,
+            system_instruction=[types.Part.from_text(text=prompt)],
+            thinking_config=types.ThinkingConfig(
+                thinking_budget=5000,
+            ),
+        )
+        
+        max_retries = 3
+        retry_delay = 30  # seconds
+        timeout_seconds_list = [60, 120, 300]  # 1 min, 2 min, 5 min
+        
+        for attempt in range(max_retries):
+            attempt_start_time = time.time()
+            timeout_seconds = timeout_seconds_list[attempt]
+            
+            try:
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} for image '{filename}' (timeout: {timeout_seconds/60:.1f} min)")
+                
+                # Make API call
+                api_call_start = time.time()
+                response = self.client.models.generate_content(
+                    model=self.model_id,
+                    contents=[content],
+                    config=generate_content_config
+                )
+                
+                api_call_elapsed = time.time() - api_call_start
+                elapsed_time = time.time() - attempt_start_time
+                total_elapsed = time.time() - function_start_time
+                
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Gemini API response received in {api_call_elapsed:.1f}s (attempt total: {elapsed_time:.1f}s, function total: {total_elapsed:.1f}s) for '{filename}'")
+                
+                # Log warning if API call took unusually long
+                if api_call_elapsed > 60:
+                    logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: API call took {api_call_elapsed:.1f}s (>60s) for '{filename}'")
+                
+                # Extract text from response - try response.text first, then candidates
+                text = None
+                if hasattr(response, 'text') and response.text:
+                    text = response.text
+                elif hasattr(response, 'candidates') and response.candidates:
+                    # Try to extract text from first candidate
+                    candidate = response.candidates[0]
+                    if hasattr(candidate, 'content') and candidate.content:
+                        if hasattr(candidate.content, 'parts') and candidate.content.parts:
+                            # Extract text from parts
+                            text_parts = []
+                            for part in candidate.content.parts:
+                                if hasattr(part, 'text') and part.text:
+                                    text_parts.append(part.text)
+                            if text_parts:
+                                text = '\n'.join(text_parts)
+                
+                if not text:
+                    text = "[No transcription text received]"
+                
+                # Extract usage metadata if available
+                usage_metadata = {}
+                if hasattr(response, 'usage_metadata'):
+                    usage_metadata = {
+                        'prompt_tokens': getattr(response.usage_metadata, 'prompt_token_count', 0),
+                        'completion_tokens': getattr(response.usage_metadata, 'candidates_token_count', 0),
+                        'total_tokens': getattr(response.usage_metadata, 'total_token_count', 0),
+                        'cached_tokens': getattr(response.usage_metadata, 'cached_content_token_count', 0)
+                    }
+                
+                # Log the full AI response to the AI responses log (similar to transcribe_image)
+                if self.ai_logger:
+                    self.ai_logger.info(f"=== AI Response for {filename} ===")
+                    self.ai_logger.info(f"Model: {self.model_id}")
+                    self.ai_logger.info(f"Request timestamp: {datetime.now().isoformat()}")
+                    self.ai_logger.info(f"Image size: {len(image_bytes)} bytes")
+                    self.ai_logger.info(f"Prompt length: {len(prompt)} characters")
+                    self.ai_logger.info(f"Response length: {len(text) if text else 0} characters")
+                    self.ai_logger.info(f"Processing time: {elapsed_time:.1f} seconds")
+                    
+                    # Log response metadata if available
+                    if hasattr(response, 'usage_metadata'):
+                        self.ai_logger.info(f"Usage metadata: {response.usage_metadata}")
+                    if hasattr(response, 'candidates') and response.candidates:
+                        self.ai_logger.info(f"Number of candidates: {len(response.candidates)}")
+                        if hasattr(response.candidates[0], 'finish_reason'):
+                            self.ai_logger.info(f"Finish reason: {response.candidates[0].finish_reason}")
+                    
+                    # Log full response text (prompt is logged only once at session start)
+                    self.ai_logger.info(f"Full response:\n{text}")
+                    self.ai_logger.info(f"=== End AI Response for {filename} ===\n")
+                
+                function_total_elapsed = time.time() - function_start_time
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Transcription completed for '{filename}' in {function_total_elapsed:.1f}s total")
+                
+                return text, elapsed_time, usage_metadata
+                
+            except ServerError as e:
+                # Handle server errors (503, 500, etc.) - retry with exponential backoff
+                attempt_elapsed = time.time() - attempt_start_time
+                total_elapsed = time.time() - function_start_time
+                error_type = type(e).__name__
+                
+                # Get status code from exception
+                status_code = getattr(e, 'status_code', None)
+                error_str = str(e)
+                
+                # If status_code not available, extract from exception string (format: "503 UNAVAILABLE")
+                if status_code is None:
+                    import re
+                    match = re.match(r'(\d+)', error_str)
+                    if match:
+                        status_code = int(match.group(1))
+                    else:
+                        status_code = None
+                
+                # Retry 503 (Service Unavailable) and 500 (Internal Server Error) errors
+                is_retryable = status_code in (503, 500) if status_code else True  # Default to retryable if unknown
+                
+                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} failed for '{filename}' after {attempt_elapsed:.1f}s (total: {total_elapsed:.1f}s): {error_type} (status {status_code}): {str(e)}"
+                logging.warning(error_msg)
+                
+                if is_retryable and attempt < max_retries - 1:
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay}s... (exponential backoff)")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    if not is_retryable:
+                        logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Non-retryable server error (status {status_code}) for '{filename}' after {attempt_elapsed:.1f}s: {error_str}")
+                        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                        raise RuntimeError(f"Server error (status {status_code}): {error_str}") from e
+                    else:
+                        logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] All {max_retries} attempts failed for '{filename}' after {total_elapsed:.1f}s: {error_type} (status {status_code}): {str(e)}")
+                        return f"[Error during transcription: {str(e)}]", None, None
+                    
+            except (TimeoutError, ConnectionError, OSError) as e:
+                attempt_elapsed = time.time() - attempt_start_time
+                total_elapsed = time.time() - function_start_time
+                error_type = type(e).__name__
+                
+                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} failed for '{filename}' after {attempt_elapsed:.1f}s (total: {total_elapsed:.1f}s): {error_type}: {str(e)}"
+                logging.warning(error_msg)
+                
+                if attempt < max_retries - 1:
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay}s... (exponential backoff)")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] All {max_retries} attempts failed for '{filename}' after {total_elapsed:.1f}s: {error_type}: {str(e)}")
+                    return f"[Error during transcription: {str(e)}]", None, None
+                    
+            except ClientError as e:
+                # Handle API errors (400, 401, 403, etc.) - don't retry, fail immediately
+                attempt_elapsed = time.time() - attempt_start_time
+                total_elapsed = time.time() - function_start_time
+                
+                # Get status code from exception - ClientError has status_code attribute
+                status_code = getattr(e, 'status_code', None)
+                error_str = str(e)
+                
+                # If status_code not available, extract from exception string (format: "400 INVALID_ARGUMENT")
+                if status_code is None:
+                    # Parse from string like "400 INVALID_ARGUMENT. {...}"
+                    import re
+                    match = re.match(r'(\d+)', error_str)
+                    if match:
+                        status_code = int(match.group(1))
+                    else:
+                        status_code = None
+                
+                # Check for API key errors: status 400 with API key indicators
+                # Primary check: status code 400
+                # Secondary check: error message contains API key related text
+                is_api_key_error = False
+                if status_code == 400:
+                    # Check error message/reason for API key issues
+                    if 'API key' in error_str or 'API_KEY' in error_str or 'API_KEY_INVALID' in error_str:
+                        is_api_key_error = True
+                    # Also check response JSON if available
+                    elif hasattr(e, 'response') and isinstance(e.response, dict):
+                        error_info = e.response.get('error', {})
+                        if isinstance(error_info, dict):
+                            details = error_info.get('details', [])
+                            for detail in details:
+                                if isinstance(detail, dict) and detail.get('reason') == 'API_KEY_INVALID':
+                                    is_api_key_error = True
+                                    break
+                
+                if is_api_key_error:
+                    error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Invalid API key error (status 400) for '{filename}' after {attempt_elapsed:.1f}s"
+                    logging.error(error_msg)
+                    logging.error(f"Error details: {error_str}")
+                    logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                    # Raise immediately - don't return error string, let it propagate
+                    raise ValueError(f"Invalid API key (status 400): {error_str}") from e
+                
+                # For other ClientErrors with status codes (400, 401, 403, etc.), don't retry - fail immediately
+                if status_code is not None:
+                    error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] API error (status {status_code}) for '{filename}' after {attempt_elapsed:.1f}s: {error_str}"
+                    logging.error(error_msg)
+                    logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                    # Raise immediately for non-retryable errors
+                    raise RuntimeError(f"API error (status {status_code}): {error_str}") from e
+                else:
+                    # If we can't determine status code, treat as unexpected error
+                    error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] API error for '{filename}' after {attempt_elapsed:.1f}s: {error_str}"
+                    logging.error(error_msg)
+                    logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                    raise RuntimeError(f"API error: {error_str}") from e
+                
+            except Exception as e:
+                attempt_elapsed = time.time() - attempt_start_time
+                total_elapsed = time.time() - function_start_time
+                error_type = type(e).__name__
+                
+                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Unexpected error in Gemini API transcription for '{filename}' after {attempt_elapsed:.1f}s: {error_type}: {str(e)}"
+                logging.error(error_msg)
+                logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                return f"[Error during transcription: {str(e)}]", None, None
+
+
+class VertexAIClient(AIClientStrategy):
+    """Vertex AI client (skeleton implementation)."""
+    
+    def __init__(self, genai_client, model_id: str):
+        """
+        Initialize Vertex AI client.
+        
+        Args:
+            genai_client: Initialized genai.Client
+            model_id: Model ID to use
+        """
+        self.genai_client = genai_client
+        self.model_id = model_id
+    
+    def transcribe(self, image_bytes: bytes, filename: str, prompt: str) -> tuple[str, float, dict]:
+        """Transcribe using Vertex AI (delegates to existing function)."""
+        # Will delegate to existing transcribe_image() function in Phase 4
+        return transcribe_image(self.genai_client, image_bytes, filename, prompt, self.model_id)
+
+
+class OutputStrategy(ABC):
+    """Abstract base class for output strategies."""
+    
+    @abstractmethod
+    def initialize(self, config: dict) -> Any:
+        """
+        Initialize output destination.
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            Output identifier (doc_id for Google Docs, log_path for local)
+        """
+        pass
+    
+    @abstractmethod
+    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
+        """
+        Write batch of transcriptions.
+        
+        Args:
+            pages: List of page dictionaries with transcription data
+            batch_num: Batch number (1-based)
+            is_first: True if this is the first batch
+        """
+        pass
+    
+    @abstractmethod
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
+        """
+        Finalize output (update overview, close files, etc.).
+        
+        Args:
+            all_pages: All transcribed pages
+            metrics: Session metrics dictionary
+            start_time: Session start datetime
+            end_time: Session end datetime
+            error_info: Optional dict with error details {'type': str, 'message': str, 'status_code': int, 'next_image_number': int}
+        """
+        pass
+
+
+class LogFileOutput(OutputStrategy):
+    """Log file output for local mode."""
+    
+    def __init__(self, output_dir: str, ai_logger):
+        """
+        Initialize log file output.
+        
+        Args:
+            output_dir: Directory for output log files
+            ai_logger: Logger instance for AI responses
+        """
+        self.output_dir = output_dir
+        self.ai_logger = ai_logger
+        self.log_file_path = None
+        self.written_images = set()  # Track written images to prevent duplicates
+        os.makedirs(output_dir, exist_ok=True)
+    
+    def initialize(self, config: dict, prompt_text: str = None) -> str:
+        """
+        Initialize log file for transcription output.
+        
+        Creates a timestamped log file and writes session metadata.
+        
+        Args:
+            config: Configuration dictionary
+            prompt_text: Full prompt text used for transcription (optional)
+            
+        Returns:
+            Log file path
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_index = config.get('archive_index', 'transcription')
+        self.log_file_path = os.path.join(
+            self.output_dir,
+            f"{timestamp}-{archive_index}-transcription.log"
+        )
+        
+        # Write session header to log file
+        with open(self.log_file_path, 'w', encoding='utf-8') as f:
+            f.write("=" * 80 + "\n")
+            f.write("TRANSCRIPTION SESSION - LOCAL MODE\n")
+            f.write("=" * 80 + "\n")
+            f.write(f"Session started: {datetime.now().isoformat()}\n")
+            f.write(f"Archive index: {config.get('archive_index', 'N/A')}\n")
+            f.write(f"Image directory: {config.get('local', {}).get('image_dir', 'N/A')}\n")
+            f.write(f"Model: {config.get('local', {}).get('ocr_model_id', 'N/A')}\n")
+            f.write(f"Image range: {config.get('image_start_number', 'N/A')} to {config.get('image_start_number', 0) + config.get('image_count', 0) - 1}\n")
+            f.write("=" * 80 + "\n")
+            
+            # Add full prompt text if provided
+            if prompt_text:
+                f.write("\n" + "=" * 80 + "\n")
+                f.write("PROMPT TEXT USED FOR TRANSCRIPTION\n")
+                f.write("=" * 80 + "\n")
+                f.write(f"{prompt_text}\n")
+                f.write("=" * 80 + "\n\n")
+            
+            f.write("\n")
+        
+        logging.info(f"Created transcription log file: {self.log_file_path}")
+        return self.log_file_path
+    
+    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
+        """
+        Write batch of transcriptions to log file.
+        
+        Args:
+            pages: List of page dictionaries with transcription data
+            batch_num: Batch number (1-based)
+            is_first: True if this is the first batch
+        """
+        if not self.log_file_path:
+            raise ValueError("Log file not initialized. Call initialize() first.")
+        
+        # Filter out already-written images to prevent duplicates
+        pages_to_write = []
+        for page in pages:
+            page_id = f"{page['name']}_{batch_num}"
+            if page_id not in self.written_images:
+                pages_to_write.append(page)
+                self.written_images.add(page_id)
+            else:
+                logging.warning(f"Skipping duplicate write for {page['name']} (batch {batch_num})")
+        
+        if not pages_to_write:
+            return  # Nothing new to write
+        
+        with open(self.log_file_path, 'a', encoding='utf-8') as f:
+            if is_first:
+                f.write("\n" + "=" * 80 + "\n")
+                f.write("TRANSCRIPTIONS\n")
+                f.write("=" * 80 + "\n\n")
+            
+            for page in pages_to_write:
+                f.write("-" * 80 + "\n")
+                f.write(f"Image: {page['name']}\n")
+                f.write(f"Source: {page.get('webViewLink', page.get('path', ''))}\n")
+                f.write("-" * 80 + "\n")
+                f.write(f"{page['text']}\n")
+                f.write("\n")
+        
+        logging.info(f"Wrote batch {batch_num} ({len(pages_to_write)} pages) to log file")
+    
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
+        """
+        Finalize log file with session summary.
+        
+        Args:
+            all_pages: All transcribed pages
+            metrics: Session metrics dictionary
+            start_time: Session start datetime
+            end_time: Session end datetime
+            error_info: Optional dict with error details
+        """
+        if not self.log_file_path:
+            raise ValueError("Log file not initialized. Call initialize() first.")
+        
+        with open(self.log_file_path, 'a', encoding='utf-8') as f:
+            f.write("\n" + "=" * 80 + "\n")
+            f.write("SESSION SUMMARY\n")
+            f.write("=" * 80 + "\n")
+            
+            # Add error information if present
+            if error_info:
+                f.write("**RUN INTERRUPTED BY ERROR**\n")
+                f.write(f"Error Type: {error_info.get('type', 'Unknown')}\n")
+                if error_info.get('status_code'):
+                    f.write(f"Error Code: {error_info['status_code']}\n")
+                f.write(f"Error Message: {error_info.get('message', 'Unknown error')}\n")
+                if error_info.get('next_image_number'):
+                    f.write(f"\nTo resume: Update config 'image_start_number' to {error_info['next_image_number']}\n")
+                f.write("\n")
+            
+            f.write(f"Session completed: {datetime.now().isoformat()}\n")
+            f.write(f"Total images processed: {len(all_pages)}\n")
+            f.write(f"Successful transcriptions: {len([p for p in all_pages if p.get('text') and not p['text'].startswith('[Error')])}\n")
+            f.write(f"Failed transcriptions: {len([p for p in all_pages if not p.get('text') or p['text'].startswith('[Error')])}\n")
+            
+            if metrics:
+                f.write("\nMetrics:\n")
+                for key, value in metrics.items():
+                    f.write(f"  {key}: {value}\n")
+            
+            f.write("=" * 80 + "\n")
+        
+        logging.info(f"Finalized transcription log file: {self.log_file_path}")
+
+
+class GoogleDocsOutput(OutputStrategy):
+    """Google Docs output."""
+    
+    def __init__(self, docs_service, drive_service, genai_client, config: dict, prompt_text: str):
+        """
+        Initialize Google Docs output.
+        
+        Args:
+            docs_service: Google Docs API service
+            drive_service: Google Drive API service
+            genai_client: Vertex AI Gemini client
+            config: Configuration dictionary
+            prompt_text: Transcription prompt text
+        """
+        self.docs_service = docs_service
+        self.drive_service = drive_service
+        self.genai_client = genai_client
+        self.config = config
+        self.prompt_text = prompt_text
+        self.doc_id = None
+        self.start_time = None
+        self.end_time = None
+    
+    def initialize(self, config: dict) -> str:
+        """
+        Create Google Doc (delegates to existing function).
+        
+        Args:
+            config: Configuration dictionary
+            
+        Returns:
+            Document ID
+        """
+        run_date = datetime.now().strftime("%Y%m%d")
+        # Handle both normalized (nested) and legacy (flat) config formats
+        googlecloud_config = config.get('googlecloud', {})
+        document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
+        doc_name = f"{document_name} {run_date}"
+        self.doc_id = create_doc(self.docs_service, self.drive_service, doc_name, config)
+        self.start_time = datetime.now()
+        logging.info(f"Created Google Doc with ID: {self.doc_id}")
+        return self.doc_id
+    
+    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
+        """
+        Write batch to Google Doc (delegates to existing write_to_doc()).
+        
+        Args:
+            pages: List of ALL page dictionaries with transcription data (accumulated so far)
+            batch_num: Batch number (1-based)
+            is_first: True if this is the first batch
+        """
+        if not self.doc_id:
+            raise ValueError("Document not initialized. Call initialize() first.")
+        
+        # Calculate start index (number of pages already written)
+        batch_size = self.config.get('batch_size_for_doc', 10)
+        if is_first:
+            start_idx = 0
+        else:
+            # For subsequent batches, start_idx is the number of pages in previous batches
+            start_idx = (batch_num - 1) * batch_size
+        
+        # For first batch, include overview; for subsequent batches, skip overview
+        write_overview = is_first
+        
+        # Delegate to existing write_to_doc() function
+        # Note: write_to_doc expects all pages and will write from start_idx onwards
+        write_to_doc(
+            self.docs_service,
+            self.drive_service,
+            self.doc_id,
+            pages,
+            self.config,
+            self.prompt_text,
+            start_idx=start_idx,
+            metrics=None,  # Metrics will be updated in finalize()
+            start_time=self.start_time,
+            end_time=None,  # End time not known yet
+            write_overview=write_overview,
+            genai_client=self.genai_client
+        )
+        
+        logging.info(f"Wrote batch {batch_num} (pages {start_idx} onwards) to Google Doc")
+    
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
+        """
+        Update overview section (delegates to existing update_overview_section()).
+        
+        Args:
+            all_pages: All transcribed pages
+            metrics: Session metrics dictionary
+            start_time: Session start datetime (overrides self.start_time if provided)
+            end_time: Session end datetime (overrides self.end_time if provided)
+            error_info: Optional dict with error details (not used for Google Docs mode)
+        """
+        if not self.doc_id:
+            raise ValueError("Document not initialized. Call initialize() first.")
+        
+        # Use provided times or fall back to instance times
+        final_start_time = start_time or self.start_time
+        final_end_time = end_time or self.end_time or datetime.now()
+        
+        # Delegate to existing update_overview_section() function
+        # Note: update_overview_section doesn't currently support error_info, but that's OK for Google Cloud mode
+        update_overview_section(
+            self.docs_service,
+            self.doc_id,
+            all_pages,
+            self.config,
+            self.prompt_text,
+            metrics=metrics,
+            start_time=final_start_time,
+            end_time=final_end_time
+        )
+        
+        logging.info(f"Finalized Google Doc with overview update")
+
+class CompositeOutput(OutputStrategy):
+    """Composite output strategy that delegates to multiple output strategies."""
+    
+    def __init__(self, strategies: list):
+        """
+        Initialize composite output with multiple strategies.
+        
+        Args:
+            strategies: List of OutputStrategy instances
+        """
+        self.strategies = strategies
+    
+    def initialize(self, config: dict, prompt_text: str = None) -> list:
+        """Initialize all strategies and return list of output IDs."""
+        output_ids = []
+        for strategy in self.strategies:
+            try:
+                output_id = strategy.initialize(config, prompt_text)
+                output_ids.append(output_id)
+            except Exception as e:
+                logging.error(f"Error initializing output strategy {strategy.__class__.__name__}: {e}")
+        return output_ids
+    
+    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
+        """Write batch to all strategies."""
+        for strategy in self.strategies:
+            try:
+                strategy.write_batch(pages, batch_num, is_first)
+            except Exception as e:
+                logging.error(f"Error writing batch to {strategy.__class__.__name__}: {e}")
+    
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
+        """Finalize all strategies."""
+        for strategy in self.strategies:
+            try:
+                strategy.finalize(all_pages, metrics, start_time, end_time, error_info)
+            except Exception as e:
+                logging.error(f"Error finalizing {strategy.__class__.__name__}: {e}")
+
+
+class MarkdownOutput(OutputStrategy):
+    """Markdown output for local mode."""
+    
+    def __init__(self, target_dir: str, config: dict, prompt_text: str):
+        """
+        Initialize Markdown output.
+        
+        Args:
+            target_dir: Directory where markdown file will be saved (image_dir)
+            config: Configuration dictionary
+            prompt_text: Transcription prompt text
+        """
+        self.target_dir = target_dir
+        self.config = config
+        self.prompt_text = prompt_text
+        self.temp_body_file = None
+        self.final_file_path = None
+    
+    def initialize(self, config: dict, prompt_text: str = None) -> str:
+        """Initialize markdown file."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_index = config.get('archive_index', 'transcription')
+        self.final_file_path = os.path.join(self.target_dir, f"{archive_index}_{timestamp}.md")
+        self.temp_body_file = os.path.join(self.target_dir, f"temp_body_{timestamp}.md")
+        
+        # Create empty temp file
+        open(self.temp_body_file, 'w', encoding='utf-8').close()
+        
+        logging.info(f"Initialized Markdown output: {self.final_file_path}")
+        return self.final_file_path
+    
+    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
+        """Write batch to temp markdown file."""
+        if not self.temp_body_file:
+            raise ValueError("Markdown output not initialized")
+        
+        with open(self.temp_body_file, 'a', encoding='utf-8') as f:
+            for page in pages:
+                f.write(f"\n---\n\n## {page['name']}\n\n")
+                link = page.get('webViewLink', page.get('path', ''))
+                if link:
+                    # For local files, use relative path (just filename) since markdown is in same directory
+                    # This prevents path duplication when markdown is opened in browser/viewer
+                    # Markdown file is saved in target_dir (image_dir), same as images
+                    if link.startswith('http://') or link.startswith('https://'):
+                        # Keep Google Drive URLs as-is (GOOGLECLOUD mode)
+                        pass
+                    else:
+                        # For local files (file:// URLs, absolute paths, or relative paths),
+                        # use just the filename since markdown and images are in the same directory
+                        link = page['name']
+                    f.write(f"**Source:** [{page['name']}]({link})\n\n")
+                # Preserve newlines by adding two spaces before newlines for markdown line breaks
+                text = page.get('text', '')
+                # Replace single newlines with two spaces + newline (markdown line break)
+                # but preserve paragraph breaks (double newlines)
+                text = text.replace('\n\n', '\n\n')  # Preserve paragraph breaks
+                text = text.replace('\n', '  \n')  # Convert single newlines to markdown line breaks
+                f.write(f"{text}\n")
+    
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
+        """Finalize markdown file with overview at top."""
+        if not self.final_file_path:
+            raise ValueError("Markdown output not initialized")
+        
+        # Generate overview
+        overview = create_local_overview_section(
+            all_pages, self.config, self.prompt_text, 
+            metrics=metrics, start_time=start_time, end_time=end_time, error_info=error_info
+        )
+        
+        # Write final file
+        with open(self.final_file_path, 'w', encoding='utf-8') as final:
+            archive_index = self.config.get('archive_index', 'Transcription')
+            final.write(f"# {archive_index}\n\n")
+            final.write(f"## Session Overview\n\n```text\n{overview}\n```\n\n")
+            
+            # Append temp body content
+            if os.path.exists(self.temp_body_file):
+                with open(self.temp_body_file, 'r', encoding='utf-8') as temp:
+                    final.write(temp.read())
+                os.remove(self.temp_body_file)
+        
+        logging.info(f"Finalized Markdown output: {self.final_file_path}")
+
+
+
+
+
+
+class WordOutput(OutputStrategy):
+    """Microsoft Word output for local mode."""
+    
+    def __init__(self, target_dir: str, config: dict, prompt_text: str):
+        """Initialize Word output."""
+        if not DOCX_AVAILABLE:
+            raise ImportError("python-docx is required for Word output. Install with: pip install python-docx>=0.8.11")
+        self.target_dir = target_dir
+        self.config = config
+        self.prompt_text = prompt_text
+        self.doc = None
+        self.doc_path = None
+        self.overview_placeholder = None
+    
+    def initialize(self, config: dict, prompt_text: str = None) -> str:
+        """Initialize Word document."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_index = config.get('archive_index', 'transcription')
+        self.doc_path = os.path.join(self.target_dir, f"{archive_index}_{timestamp}.docx")
+        self.doc = Document()
+        self.doc.add_heading(archive_index, level=1)
+        self.overview_placeholder = self.doc.add_paragraph("[OVERVIEW_PLACEHOLDER]")
+        self.doc.save(self.doc_path)
+        logging.info(f"Initialized Word output: {self.doc_path}")
+        return self.doc_path
+    
+    def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
+        """Write batch to Word document."""
+        if not self.doc:
+            raise ValueError("Word output not initialized")
+        
+        archive_index = self.config.get('archive_index', '')
+        
+        for idx, page in enumerate(pages, start=1):
+            # Calculate page number (cumulative across batches)
+            page_number = (batch_num - 1) + idx if batch_num > 0 else idx
+            
+            # Add page header like "ф487оп1спр545стр1" (matching Google Docs format)
+            if archive_index:
+                page_header = f"{archive_index}стр{page_number}"
+            else:
+                page_header = page['name']
+            
+            self.doc.add_heading(page_header, level=2)
+            
+            # Add source link
+            link = page.get('webViewLink', page.get('path', ''))
+            if link:
+                p = self.doc.add_paragraph()
+                p.add_run('Src Img Url: ').bold = True
+                p.add_run(page['name'])
+                self.doc.add_paragraph()
+            
+            # Add transcription text with bold formatting for **text**
+            text = page.get('text', '')
+            self._add_formatted_text(text)
+            
+            # Add separator
+            self.doc.add_paragraph('_' * 80)
+        
+        self.doc.save(self.doc_path)
+    
+    def _add_formatted_text(self, text: str) -> None:
+        """
+        Add text to document with bold formatting for **text** patterns.
+        
+        Args:
+            text: Text with markdown-style bold markers
+        """
+        import re
+        
+        # Split text by lines to preserve paragraph structure
+        lines = text.split('\n')
+        
+        for line in lines:
+            if not line.strip():
+                self.doc.add_paragraph()  # Empty line
+                continue
+            
+            p = self.doc.add_paragraph()
+            
+            # Pattern to match **text**
+            pattern = r'\*\*(.+?)\*\*'
+            last_end = 0
+            
+            for match in re.finditer(pattern, line):
+                # Add text before the match (normal)
+                if match.start() > last_end:
+                    p.add_run(line[last_end:match.start()])
+                
+                # Add the matched text (bold, without the **)
+                bold_run = p.add_run(match.group(1))
+                bold_run.bold = True
+                
+                last_end = match.end()
+            
+            # Add remaining text after last match
+            if last_end < len(line):
+                p.add_run(line[last_end:])
+    
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
+        """Finalize Word document with overview."""
+        if not self.doc or not self.overview_placeholder:
+            raise ValueError("Word output not initialized")
+        overview = create_local_overview_section(all_pages, self.config, self.prompt_text, metrics=metrics, start_time=start_time, end_time=end_time, error_info=error_info)
+        self.overview_placeholder.clear()
+        run = self.overview_placeholder.add_run(overview)
+        run.font.name = 'Courier New'
+        run.font.size = Pt(9)
+        self.doc.save(self.doc_path)
+        logging.info(f"Finalized Word output: {self.doc_path}")
+
+
+class ModeFactory:
+    """Factory for creating mode-specific components."""
+    
+    @staticmethod
+    def create_handlers(mode: str, config: dict) -> dict:
+        """
+        Create all mode-specific handlers.
+        
+        Args:
+            mode: Mode string ('local' or 'googlecloud')
+            config: Configuration dictionary (normalized)
+            
+        Returns:
+            Dictionary containing all handlers:
+            - auth: AuthenticationStrategy
+            - image_source: ImageSourceStrategy
+            - ai_client: AIClientStrategy
+            - output: OutputStrategy
+            - drive_service: Drive service (googlecloud) or None (local)
+            - docs_service: Docs service (googlecloud) or None (local)
+            
+        Raises:
+            ValueError: If mode is unknown
+        """
+        if mode == 'local':
+            return ModeFactory._create_local_handlers(config)
+        elif mode == 'googlecloud':
+            return ModeFactory._create_googlecloud_handlers(config)
+        else:
+            raise ValueError(f"Unknown mode: {mode}")
+    
+    @staticmethod
+    def _create_local_handlers(config: dict) -> dict:
+        """
+        Create handlers for local mode.
+        
+        Args:
+            config: Configuration dictionary (normalized, with 'local' section)
+            
+        Returns:
+            Dictionary containing all handlers for local mode
+        """
+        local_config = config['local']
+        
+        # Create authentication strategy
+        auth = LocalAuthStrategy(local_config.get('api_key'))
+        api_key = auth.authenticate()
+        
+        # Create image source strategy
+        image_source = LocalImageSource(local_config['image_dir'])
+        
+        # Create output strategy (need ai_logger first for AI client)
+        output_dir = local_config.get('output_dir', 'logs')
+        ai_logger = logging.getLogger('ai_responses')
+        image_dir = local_config['image_dir']
+        
+        # Create AI client strategy (pass ai_logger for response logging)
+        model_id = local_config.get('ocr_model_id', 'gemini-3-flash-preview')
+        ai_client = GeminiDevClient(api_key, model_id, ai_logger)
+        
+        # Create multiple output strategies (log, markdown, word)
+        log_output = LogFileOutput(output_dir, ai_logger)
+        md_output = MarkdownOutput(image_dir, config, None)  # prompt_text will be passed in initialize
+        
+        strategies = [log_output, md_output]
+        output_formats = [f"Log ({output_dir}/)", f"Markdown ({image_dir}/)"]
+        
+        # Add Word output only if python-docx is available
+        if DOCX_AVAILABLE:
+            word_output = WordOutput(image_dir, config, None)  # prompt_text will be passed in initialize
+            strategies.append(word_output)
+            output_formats.append(f"Word ({image_dir}/)")
+        else:
+            logging.warning("python-docx not installed. Word output disabled. Install with: pip install python-docx>=0.8.11")
+        
+        # Wrap all strategies in CompositeOutput
+        output = CompositeOutput(strategies)
+        
+        logging.info(f"Created LOCAL mode handlers: image_dir={image_dir}, output_dir={output_dir}, model={model_id}")
+        logging.info(f"Output formats: {', '.join(output_formats)}")
+        
+        return {
+            'auth': auth,
+            'image_source': image_source,
+            'ai_client': ai_client,
+            'output': output,
+            'drive_service': None,
+            'docs_service': None
+        }
+    
+    @staticmethod
+    def _create_googlecloud_handlers(config: dict) -> dict:
+        """
+        Create handlers for Google Cloud mode.
+        
+        Args:
+            config: Configuration dictionary (normalized, with 'googlecloud' section)
+            
+        Returns:
+            Dictionary containing all handlers for Google Cloud mode
+        """
+        googlecloud_config = config['googlecloud']
+        
+        # Create authentication strategy and authenticate
+        auth = GoogleCloudAuthStrategy(googlecloud_config['adc_file'])
+        creds = auth.authenticate()
+        
+        # Initialize Google Cloud services
+        drive_service, docs_service, genai_client = init_services(creds, googlecloud_config)
+        
+        # Create image source strategy
+        image_source = DriveImageSource(
+            drive_service,
+            googlecloud_config['drive_folder_id'],
+            document_name=googlecloud_config.get('document_name', 'Unknown')
+        )
+        
+        # Create AI client strategy
+        model_id = googlecloud_config.get('ocr_model_id', 'gemini-3-flash-preview')
+        ai_client = VertexAIClient(genai_client, model_id)
+        
+        # Load prompt text for output strategy
+        prompt_file = config.get('prompt_file', 'prompt.txt')
+        try:
+            with open(prompt_file, 'r', encoding='utf-8') as f:
+                prompt_text = f.read()
+        except Exception as e:
+            logging.error(f"Error reading prompt file '{prompt_file}': {str(e)}")
+            prompt_text = ""  # Fallback to empty prompt
+        
+        # Create output strategy
+        # Pass full config (not just googlecloud_config) to include shared fields like archive_index
+        output = GoogleDocsOutput(
+            docs_service,
+            drive_service,
+            genai_client,
+            config,  # Pass full normalized config, not just googlecloud section
+            prompt_text
+        )
+        
+        logging.info(f"Created GOOGLECLOUD mode handlers: project_id={googlecloud_config.get('project_id')}, drive_folder={googlecloud_config['drive_folder_id']}, model={model_id}")
+        
+        return {
+            'auth': auth,
+            'image_source': image_source,
+            'ai_client': ai_client,
+            'output': output,
+            'drive_service': drive_service,
+            'docs_service': docs_service,
+            'genai_client': genai_client
+        }
+
+
+# ------------------------- EXISTING AUTHENTICATION & SERVICES -------------------------
 
 def authenticate(adc_file: str):
     """
@@ -382,13 +2063,24 @@ def list_images(drive_service, config: dict):
     import re
     from datetime import datetime
     
-    drive_folder_id = config['drive_folder_id']
-    document_name = config.get('document_name', 'Unknown')
-    max_images = config['max_images']
-    retry_mode = config['retry_mode']
-    retry_image_list = config['retry_image_list']
-    image_start_number = config['image_start_number']
-    image_count = config['image_count']
+    # Handle both normalized (nested) and legacy (flat) config formats
+    googlecloud_config = config.get('googlecloud', {})
+    
+    # Try nested format first, fall back to flat format for backward compatibility
+    drive_folder_id = googlecloud_config.get('drive_folder_id') or config.get('drive_folder_id')
+    if not drive_folder_id:
+        raise KeyError("'drive_folder_id' not found in config (checked googlecloud.drive_folder_id and top-level)")
+    
+    document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
+    max_images = config.get('max_images')
+    if max_images is None:
+        raise KeyError("'max_images' not found in config")
+    retry_mode = config.get('retry_mode', False)
+    retry_image_list = config.get('retry_image_list', [])
+    image_start_number = config.get('image_start_number', 1)
+    image_count = config.get('image_count')
+    if image_count is None:
+        raise KeyError("'image_count' not found in config")
     
     query = (
         f"mimeType='image/jpeg' and '{drive_folder_id}' in parents and trashed=false"
@@ -1141,7 +2833,11 @@ def insert_title_page_image_and_transcribe(docs_service, drive_service, doc_id: 
 
 def create_doc(docs_service, drive_service, title, config: dict):
     """Create a new Google Doc in the specified folder and return its ID."""
-    drive_folder_id = config['drive_folder_id']
+    # Handle both normalized (nested) and legacy (flat) config formats
+    googlecloud_config = config.get('googlecloud', {})
+    drive_folder_id = googlecloud_config.get('drive_folder_id') or config.get('drive_folder_id')
+    if not drive_folder_id:
+        raise KeyError("'drive_folder_id' not found in config (checked googlecloud.drive_folder_id and top-level)")
     
     try:
         # First create the document
@@ -1244,11 +2940,15 @@ def create_overview_section(pages, config: dict, prompt_text: str, metrics=None,
         start_time: Optional datetime object for when transcription started
         end_time: Optional datetime object for when transcription ended
     """
-    drive_folder_id = config['drive_folder_id']
-    document_name = config.get('document_name', 'Unknown')
-    archive_index = config['archive_index']
-    ocr_model_id = config['ocr_model_id']
-    prompt_file = config['prompt_file']
+    # Handle both normalized (nested) and legacy (flat) config formats
+    googlecloud_config = config.get('googlecloud', {})
+    drive_folder_id = googlecloud_config.get('drive_folder_id') or config.get('drive_folder_id')
+    if not drive_folder_id:
+        raise KeyError("'drive_folder_id' not found in config (checked googlecloud.drive_folder_id and top-level)")
+    document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
+    archive_index = config.get('archive_index')
+    ocr_model_id = googlecloud_config.get('ocr_model_id') or config.get('ocr_model_id')
+    prompt_file = config.get('prompt_file')
     
     # Get folder link from the first page
     folder_link = pages[0]['webViewLink'] if pages else ""
@@ -1399,6 +3099,112 @@ Estimated Cost Per Page: N/A
     return overview_content, formatting_info
 
 
+def create_local_overview_section(pages, config: dict, prompt_text: str, metrics=None, start_time=None, end_time=None, error_info=None):
+    """
+    Create overview section for local mode (simplified version without Google Drive links).
+    
+    Args:
+        pages: List of page dictionaries with 'name', 'webViewLink', 'text'
+        config: Configuration dictionary
+        prompt_text: The prompt text used for transcription
+        metrics: Optional dictionary with calculated metrics
+        start_time: Optional datetime for session start
+        end_time: Optional datetime for session end
+        error_info: Optional dict with error details {'type': str, 'message': str, 'status_code': int, 'next_image_number': int}
+        
+    Returns:
+        String with overview content
+    """
+    archive_index = config.get('archive_index', 'Unknown')
+    ocr_model_id = config.get('local', {}).get('ocr_model_id', 'gemini-3-flash-preview')
+    prompt_file = config.get('prompt_file', 'Unknown')
+    image_dir = config.get('local', {}).get('image_dir', 'Unknown')
+    
+    # Count successful and failed transcriptions
+    successful_pages = [p for p in pages if p.get('text') and not p['text'].startswith('[Error')]
+    failed_pages = [p for p in pages if not p.get('text') or p['text'].startswith('[Error')]
+    
+    # Get file range
+    if pages:
+        start_file = pages[0]['name']
+        end_file = pages[-1]['name']
+        file_count = len(pages)
+    else:
+        start_file = "N/A"
+        end_file = "N/A"
+        file_count = 0
+    
+    # Disclaimer text
+    disclaimer_text = """Нейросеть допускает много неточностей в переводе имен и фамилий - использовать как приблизительный перевод рукописного текста и перепроверять с источником!
+
+Нейромережа допускає багато неточностей у перекладі імен та прізвищ - використовувати як приблизний переклад рукописного тексту та перевіряти з джерелом!
+
+The neural network makes many inaccuracies in translating names and surnames - use as an approximate translation of handwritten text and verify with the source!"""
+    
+    overview_content = f"""TRANSCRIPTION RUN SUMMARY
+
+{disclaimer_text}
+
+Archive Index: {archive_index}
+Image Directory: {image_dir}
+Model: {ocr_model_id}
+Prompt File: {prompt_file}
+"""
+    
+    # Add time info BEFORE Files Processed section
+    if start_time:
+        overview_content += f"Time Start: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+    if end_time:
+        overview_content += f"Time End: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+    
+    # Add error information if present
+    if error_info:
+        overview_content += f"\n**RUN INTERRUPTED BY ERROR**\n"
+        overview_content += f"Error Type: {error_info.get('type', 'Unknown')}\n"
+        if error_info.get('status_code'):
+            overview_content += f"Error Code: {error_info['status_code']}\n"
+        overview_content += f"Error Message: {error_info.get('message', 'Unknown error')}\n"
+        if error_info.get('next_image_number'):
+            overview_content += f"\nTo resume: Update config 'image_start_number' to {error_info['next_image_number']}\n"
+        overview_content += f"\n"
+    
+    overview_content += f"""
+Files Processed:
+Count: {file_count}
+Start: {start_file}
+End: {end_file}
+
+Images with Errors ({len(failed_pages)}):
+"""
+    
+    if failed_pages:
+        for page in failed_pages:
+            overview_content += f"- {page['name']}\n"
+    else:
+        overview_content += "None\n"
+    
+    # Add metrics
+    if metrics:
+        overview_content += f"""
+Metrics:
+Total Time: {metrics.get('total_time', 0):.1f} seconds
+Average Time per Page: {metrics.get('avg_time_per_page', 0):.2f} seconds
+"""
+        if 'total_input_tokens' in metrics:
+            overview_content += f"Total Input Tokens: {metrics['total_input_tokens']:,}\n"
+            overview_content += f"Total Output Tokens: {metrics['total_output_tokens']:,}\n"
+    
+    overview_content += f"""
+Prompt Used:
+{prompt_text}
+
+{'='*50}
+
+"""
+    
+    return overview_content
+
+
 def update_overview_section(docs_service, doc_id, pages, config: dict, prompt_text: str, metrics=None, start_time=None, end_time=None):
     """
     Update the overview section in an existing document with final metrics.
@@ -1416,7 +3222,7 @@ def update_overview_section(docs_service, doc_id, pages, config: dict, prompt_te
         start_time: Start time of the transcription run
         end_time: End time of the transcription run
     """
-    archive_index = config['archive_index']
+    archive_index = config.get('archive_index')  # Optional field
     import time
     from googleapiclient.errors import HttpError
     
@@ -1729,7 +3535,9 @@ def save_transcription_locally(pages, doc_name, config: dict, prompt_text: str, 
     """
     Save transcription to a local text file when Google Doc creation fails.
     """
-    document_name = config.get('document_name', 'Unknown')
+    # Handle both normalized (nested) and legacy (flat) config formats
+    googlecloud_config = config.get('googlecloud', {})
+    document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
     
     try:
         # Create output directory if it doesn't exist
@@ -1797,8 +3605,10 @@ def write_to_doc(docs_service, drive_service, doc_id, pages, config: dict, promp
         write_overview: If True, write overview section and document header (default: True)
         genai_client: Optional Vertex AI Gemini client (needed for title page transcription)
     """
-    document_name = config.get('document_name', 'Unknown')
-    archive_index = config['archive_index']
+    # Handle both normalized (nested) and legacy (flat) config formats
+    googlecloud_config = config.get('googlecloud', {})
+    document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
+    archive_index = config.get('archive_index')  # Optional field
     
     logging.info(f"Preparing document content...")
     if archive_index:
@@ -1929,8 +3739,12 @@ def write_to_doc(docs_service, drive_service, doc_id, pages, config: dict, promp
                         },
                         'fields': 'bold'
                     }
-                },
-                {
+                }
+            ]
+            
+            # Add folder link styling only if range is valid (not empty)
+            if folder_link_end_offset > folder_link_start_offset:
+                overview_requests.append({
                     'updateTextStyle': {
                         'range': {'startIndex': idx + folder_link_start_offset, 'endIndex': idx + folder_link_end_offset},
                         'textStyle': {
@@ -1940,22 +3754,22 @@ def write_to_doc(docs_service, drive_service, doc_id, pages, config: dict, promp
                         },
                         'fields': 'link,foregroundColor,underline'
                     }
-                }
-            ]
-            
-            # Add bold formatting for labels
-            for label_start, label_end in bold_labels:
-                overview_requests.append({
-                    'updateTextStyle': {
-                        'range': {'startIndex': idx + label_start, 'endIndex': idx + label_end},
-                        'textStyle': {
-                            'bold': True
-                        },
-                        'fields': 'bold'
-                    }
                 })
             
-            # Add yellow highlight for disclaimer
+            # Add bold formatting for labels (only if ranges are valid)
+            for label_start, label_end in bold_labels:
+                if label_end > label_start:  # Validate range is not empty
+                    overview_requests.append({
+                        'updateTextStyle': {
+                            'range': {'startIndex': idx + label_start, 'endIndex': idx + label_end},
+                            'textStyle': {
+                                'bold': True
+                            },
+                            'fields': 'bold'
+                        }
+                    })
+            
+            # Add yellow highlight for disclaimer (only if range is valid)
             if disclaimer_range[1] > disclaimer_range[0]:
                 disclaimer_start, disclaimer_end = disclaimer_range
                 overview_requests.append({
@@ -1976,24 +3790,25 @@ def write_to_doc(docs_service, drive_service, doc_id, pages, config: dict, promp
                     }
                 })
             
-            # Add formatting for prompt text (6pt Roboto Mono)
+            # Add formatting for prompt text (6pt Roboto Mono) - only if range is valid
             prompt_text_start, prompt_text_end = prompt_text_range
-            overview_requests.append({
-                'updateTextStyle': {
-                    'range': {'startIndex': idx + prompt_text_start, 'endIndex': idx + prompt_text_end},
-                    'textStyle': {
-                        'fontSize': {
-                            'magnitude': 6.0,
-                            'unit': 'PT'
+            if prompt_text_end > prompt_text_start:  # Validate range is not empty
+                overview_requests.append({
+                    'updateTextStyle': {
+                        'range': {'startIndex': idx + prompt_text_start, 'endIndex': idx + prompt_text_end},
+                        'textStyle': {
+                            'fontSize': {
+                                'magnitude': 6.0,
+                                'unit': 'PT'
+                            },
+                            'weightedFontFamily': {
+                                'fontFamily': 'Roboto Mono',
+                                'weight': 400  # Normal weight
+                            }
                         },
-                        'weightedFontFamily': {
-                            'fontFamily': 'Roboto Mono',
-                            'weight': 400  # Normal weight
-                        }
-                    },
-                    'fields': 'fontSize,weightedFontFamily'
-                }
-            })
+                        'fields': 'fontSize,weightedFontFamily'
+                    }
+                })
             
             # Execute Overview
             docs_service.documents().batchUpdate(documentId=doc_id, body={'requests': overview_requests}).execute()
@@ -2145,314 +3960,418 @@ def write_to_doc(docs_service, drive_service, doc_id, pages, config: dict, promp
         raise
 
 
-def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
-    """Main function to process images and create transcription document."""
-    # Extract config values for easier access
-    project_id = config['project_id']
-    archive_index = config['archive_index']
-    ocr_model_id = config['ocr_model_id']
-    retry_mode = config['retry_mode']
-    retry_image_list = config['retry_image_list']
-    max_images = config['max_images']
-    image_start_number = config['image_start_number']
-    image_count = config['image_count']
-    batch_size_for_doc = config['batch_size_for_doc']
-    adc_file = config['adc_file']
+# ------------------------- SHARED PROCESSING LOGIC -------------------------
+
+def process_all_local(images: list, handlers: dict, prompt_text: str, config: dict, ai_logger) -> tuple:
+    """
+    Process all images in local mode (simpler processing, no batching).
     
-    try:
-        # Initialize services first (needed to fetch document_name if not provided)
-        creds = authenticate(adc_file)
-        drive_service, docs_service, genai_client = init_services(creds, config)
-
-        # Fetch folder name and set document_name if not provided
-        if 'document_name' not in config or not config.get('document_name'):
-            fetched_folder_name = get_folder_name(drive_service, config['drive_folder_id'])
-            if fetched_folder_name:
-                config['document_name'] = fetched_folder_name
-                logging.info(f"Fetched folder name from Drive API: '{fetched_folder_name}'")
-            else:
-                # Fallback to folder ID if fetch fails
-                config['document_name'] = f"Folder_{config['drive_folder_id'][:8]}"
-                logging.warning(f"Could not fetch folder name, using fallback: '{config['document_name']}'")
+    Args:
+        images: List of image metadata dictionaries
+        handlers: Dictionary of strategy handlers (from ModeFactory)
+        prompt_text: Prompt text for transcription
+        config: Configuration dictionary
+        ai_logger: Logger for AI responses
         
-        document_name = config.get('document_name', 'Unknown')
+    Returns:
+        Tuple of (transcribed_pages, start_time, end_time)
+    """
+    image_source = handlers['image_source']
+    ai_client = handlers['ai_client']
+    output = handlers.get('output')  # Get output handler for incremental writing
+    
+    transcribed_pages = []
+    usage_metadata_list = []
+    timing_list = []
+    start_time = datetime.now()
+    last_image_end_time = None
+    
+    total_images = len(images)
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription of {total_images} images in LOCAL mode...")
+    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting transcription of {total_images} images (LOCAL mode) ===")
+    
+    for global_idx, img_info in enumerate(images, 1):
+        image_start_time = datetime.now()
+        image_name = img_info['name']
         
-        # Log session start
-        ai_logger.info(f"=== Transcription Session Started ===")
-        ai_logger.info(f"Session timestamp: {datetime.now().isoformat()}")
-        ai_logger.info(f"Project ID: {project_id}")
-        ai_logger.info(f"Document: {document_name}")
-        ai_logger.info(f"Archive Index: {archive_index if archive_index else 'None'}")
-        ai_logger.info(f"Model: {ocr_model_id}")
-        ai_logger.info(f"Retry mode: {retry_mode}")
-        if retry_mode:
-            ai_logger.info(f"Retry images count: {len(retry_image_list)}")
-            ai_logger.info(f"Retry images: {retry_image_list}")
-        else:
-            ai_logger.info(f"Max images: {max_images}")
-            ai_logger.info(f"Image start number: {image_start_number}")
-            ai_logger.info(f"Image count: {image_count}")
-        ai_logger.info(f"Batch size for doc: {batch_size_for_doc}")
-        ai_logger.info(f"=== Session Configuration ===\n")
-
-        images = list_images(drive_service, config)
+        # Log gap detection
+        if last_image_end_time:
+            gap_seconds = (image_start_time - last_image_end_time).total_seconds()
+            if gap_seconds > 60:  # Log if gap is more than 1 minute
+                logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Large time gap detected: {gap_seconds:.1f} seconds ({gap_seconds/60:.1f} minutes) between previous image and '{image_name}'")
+                ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Time gap of {gap_seconds:.1f}s ({gap_seconds/60:.1f} min) before {image_name}")
         
-        if not images:
-            if retry_mode:
-                logging.error(f"No retry images found from the retry_image_list")
-                ai_logger.error(f"No retry images found from list of {len(retry_image_list)} images")
-            else:
-                logging.error(f"No images found for the specified range (start: {image_start_number}, count: {image_count})")
-                ai_logger.error(f"No images found for range {image_start_number} to {image_start_number + image_count - 1}")
-            return
-        
-        # Process images in batches for incremental document writing
-        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription of {len(images)} images in batches of {batch_size_for_doc}...")
-        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting batch transcription of {len(images)} images (batch size: {batch_size_for_doc}) ===")
-        start_time = datetime.now()
-        transcribed_pages = []
-        usage_metadata_list = []
-        timing_list = []
-        last_image_end_time = None
-        doc_id = None
-        doc_name = None
-        first_batch = True
-        
-        # Process images in batches
-        total_images = len(images)
-        num_batches = (total_images + batch_size_for_doc - 1) // batch_size_for_doc  # Ceiling division
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Processing image {global_idx}/{total_images}: '{image_name}'")
+        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing image {global_idx}/{total_images}: {image_name} ===")
         
         try:
-            for batch_num in range(num_batches):
-                batch_start_idx = batch_num * batch_size_for_doc
-                batch_end_idx = min(batch_start_idx + batch_size_for_doc, total_images)
-                batch_images = images[batch_start_idx:batch_end_idx]
-                batch_size = len(batch_images)
+            # Get image bytes
+            download_start = datetime.now()
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Loading image '{image_name}'...")
+            img_bytes = image_source.get_image_bytes(img_info)
+            download_elapsed = (datetime.now() - download_start).total_seconds()
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' loaded in {download_elapsed:.1f}s, starting transcription...")
+            
+            # Transcribe image
+            transcription_start = datetime.now()
+            text, elapsed_time, usage_metadata = ai_client.transcribe(img_bytes, image_name, prompt_text)
+            transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
+            
+            # Check for error responses from transcribe()
+            if text is None:
+                text = "[No transcription text received]"
+            elif isinstance(text, str) and text.startswith("[Error during transcription:"):
+                # Critical error - stop execution
+                error_msg = text
+                image_end_time = datetime.now()
+                image_total_elapsed = (image_end_time - image_start_time).total_seconds()
                 
-                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing batch {batch_num + 1}/{num_batches} (images {batch_start_idx + 1}-{batch_end_idx} of {total_images}) ===")
-                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch {batch_num + 1}/{num_batches}: Processing images {batch_start_idx + 1}-{batch_end_idx} ===")
+                logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] ✗ Failed to transcribe image {global_idx}/{total_images}: '{image_name}' after {transcription_elapsed:.1f}s")
+                logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {error_msg}")
                 
-                # Track batch-level transcribed pages and metrics
-                batch_transcribed_pages = []
-                batch_usage_metadata_list = []
-                batch_timing_list = []
+                # Check if it's an API key error - stop immediately
+                if "API key" in error_msg or "API_KEY" in error_msg or "INVALID_ARGUMENT" in error_msg:
+                    logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL: Invalid API key detected. Stopping execution.")
+                    logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Please check your API key in the configuration file or GEMINI_API_KEY environment variable.")
+                    raise ValueError(f"Invalid API key: {error_msg}")
                 
-                for batch_idx, img in enumerate(batch_images, 1):
-                    global_idx = batch_start_idx + batch_idx
-                    image_start_time = datetime.now()
-                    image_name = img['name']
-                    
-                    # Log gap detection
-                    if last_image_end_time:
-                        gap_seconds = (image_start_time - last_image_end_time).total_seconds()
-                        if gap_seconds > 60:  # Log if gap is more than 1 minute
-                            logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Large time gap detected: {gap_seconds:.1f} seconds ({gap_seconds/60:.1f} minutes) between previous image and '{image_name}'")
-                            ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Time gap of {gap_seconds:.1f}s ({gap_seconds/60:.1f} min) before {image_name}")
-                    
-                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Processing image {global_idx}/{total_images} (batch {batch_num + 1}, item {batch_idx}/{batch_size}): '{image_name}'")
-                    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing image {global_idx}/{total_images}: {image_name} ===")
-                    
-                    try:
-                        download_start = datetime.now()
-                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{image_name}'...")
-                        img_bytes = download_image(drive_service, img['id'], img['name'], document_name)
-                        download_elapsed = (datetime.now() - download_start).total_seconds()
-                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' downloaded in {download_elapsed:.1f}s, starting transcription...")
-                        
-                        transcription_start = datetime.now()
-                        text, elapsed_time, usage_metadata = transcribe_image(genai_client, img_bytes, img['name'], prompt_text, ocr_model_id)
-                        transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
-                        
-                        # Ensure text is not None
-                        if text is None:
-                            text = "[No transcription text received]"
-                        
-                        batch_transcribed_pages.append({
-                            'name': img['name'],
-                            'webViewLink': img['webViewLink'],
-                            'text': text
-                        })
-                        
-                        # Collect metrics
-                        batch_timing_list.append(elapsed_time)
-                        batch_usage_metadata_list.append(usage_metadata)
-                        
-                        image_end_time = datetime.now()
-                        image_total_elapsed = (image_end_time - image_start_time).total_seconds()
-                        last_image_end_time = image_end_time
-                        
-                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {global_idx}/{total_images}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
-                        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
-                        
-                        # Log progress
-                        progress_pct = (global_idx / total_images) * 100
-                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {global_idx}/{total_images} images ({progress_pct:.1f}%)")
-                        
-                    except Exception as e:
-                        image_end_time = datetime.now()
-                        image_total_elapsed = (image_end_time - image_start_time).total_seconds()
-                        last_image_end_time = image_end_time
-                        error_type = type(e).__name__
-                        
-                        # Calculate next image number to start from in case of failure
-                        # Extract the number from the current image filename
-                        current_image_number = extract_image_number(image_name)
-                        if current_image_number is not None:
-                            next_image_number = current_image_number + 1
-                        else:
-                            # Fallback: if we can't extract number, use position-based calculation
-                            next_image_number = image_start_number + global_idx
-                        
-                        error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
-                        logging.error(error_msg)
-                        logging.error(f"Full traceback:\n{traceback.format_exc()}")
-                        logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number} (filename number from '{image_name}')")
-                        ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
-                        ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image (current image filename number: {current_image_number})")
-                        ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
-                        
-                # Add error message as text
-                        batch_transcribed_pages.append({
-                    'name': img['name'],
-                    'webViewLink': img['webViewLink'],
-                    'text': f"[Error during transcription: {str(e)}]"
-                })
-                        # Add None for metrics on error
-                        batch_timing_list.append(None)
-                        batch_usage_metadata_list.append(None)
+                # For other errors, raise exception to stop processing
+                raise RuntimeError(f"Transcription failed for {image_name}: {error_msg}")
+            
+            # Get image URL for output
+            image_url = image_source.get_image_url(img_info)
+            
+            transcribed_pages.append({
+                'name': image_name,
+                'webViewLink': image_url,
+                'text': text
+            })
+            
+            # Collect metrics
+            timing_list.append(elapsed_time)
+            usage_metadata_list.append(usage_metadata)
+            
+            image_end_time = datetime.now()
+            image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+            last_image_end_time = image_end_time
+            
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {global_idx}/{total_images}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
+            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
+            
+            # Write transcription incrementally to log file
+            if output:
+                try:
+                    output.write_batch([transcribed_pages[-1]], batch_num=global_idx, is_first=(global_idx == 1))
+                except Exception as e:
+                    logging.warning(f"Failed to write transcription incrementally: {e}")
+            
+            # Log progress
+            progress_pct = (global_idx / total_images) * 100
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {global_idx}/{total_images} images ({progress_pct:.1f}%)")
+            
+        except (ValueError, RuntimeError) as e:
+            # Critical errors (API key, etc.) - stop execution immediately
+            image_end_time = datetime.now()
+            image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+            error_type = type(e).__name__
+            
+            # Check if this is a 503 Service Unavailable error
+            error_str = str(e)
+            is_503_error = 'status 503' in error_str or '503' in error_str
+            
+            if is_503_error and output:
+                # Write user-friendly 503 error message to transcription log
+                current_img_num = extract_image_number(image_name) or global_idx
+                friendly_message = ("[SERVICE TEMPORARILY UNAVAILABLE]\n\n"
+                    "The Gemini API service is currently unavailable (HTTP 503). "
+                    "This is a temporary issue on Google's side, not a problem with your configuration.\n\n"
+                    "What to do next:\n"
+                    "1. Wait 5-10 minutes for the service to recover\n"
+                    "2. Check Google Cloud Status page: https://status.cloud.google.com/\n"
+                    "3. Retry the transcription by running the script again\n"
+                    "4. If the issue persists, try again later\n\n"
+                    f"To resume from this image when the service is available:\n"
+                    f"- Update your config: image_start_number = {current_img_num}\n"
+                    "- Then run the script again\n\n"
+                    f"Error details: {error_str}")
+                try:
+                    image_url = image_source.get_image_url(img_info)
+                    output.write_batch([{
+                        'name': image_name,
+                        'webViewLink': image_url,
+                        'text': friendly_message
+                    }], batch_num=global_idx, is_first=(global_idx == 1))
+                    logging.info(f"Wrote 503 error message to transcription log for {image_name}")
+                except Exception as write_error:
+                    logging.warning(f"Failed to write 503 error message to log: {write_error}")
+            
+            error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL ERROR transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
+            logging.error(error_msg)
+            logging.error(f"Full traceback:\n{traceback.format_exc()}")
+            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL ERROR processing {image_name}: {error_type}: {str(e)}")
+            ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
+            
+            # Re-raise to stop execution
+            raise
+        except Exception as e:
+            image_end_time = datetime.now()
+            image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+            last_image_end_time = image_end_time
+            error_type = type(e).__name__
+            
+            # Calculate next image number to start from in case of failure
+            current_image_number = extract_image_number(image_name)
+            if current_image_number is not None:
+                next_image_number = current_image_number + 1
+            else:
+                # Fallback: use position-based calculation
+                image_start_number = config.get('image_start_number', 1)
+                next_image_number = image_start_number + global_idx
+            
+            error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
+            logging.error(error_msg)
+            logging.error(f"Full traceback:\n{traceback.format_exc()}")
+            logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number} (filename number from '{image_name}')")
+            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
+            ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image (current image filename number: {current_image_number})")
+            ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
+            
+            # Check if this is a 503 Service Unavailable error
+            error_str = str(e)
+            is_503_error = 'status 503' in error_str or '503' in error_str
+            
+            # Add error message as text - use friendly message for 503 errors
+            image_url = image_source.get_image_url(img_info)
+            if is_503_error:
+                friendly_message = ("[SERVICE TEMPORARILY UNAVAILABLE]\n\n"
+                    "The Gemini API service is currently unavailable (HTTP 503). "
+                    "This is a temporary issue on Google's side, not a problem with your configuration.\n\n"
+                    "What to do next:\n"
+                    "1. Wait 5-10 minutes for the service to recover\n"
+                    "2. Check Google Cloud Status page: https://status.cloud.google.com/\n"
+                    "3. Retry the transcription by running the script again\n"
+                    "4. If the issue persists, try again later\n\n"
+                    f"To resume from this image when the service is available:\n"
+                    f"- Update your config: image_start_number = {next_image_number}\n"
+                    "- Then run the script again\n\n"
+                    f"Error details: {error_str}")
+                error_text = friendly_message
+            else:
+                error_text = f"[Error during transcription: {str(e)}]"
+            
+            transcribed_pages.append({
+                'name': image_name,
+                'webViewLink': image_url,
+                'text': error_text
+            })
+            
+            # Write to log file immediately if 503 error
+            if is_503_error and output:
+                try:
+                    output.write_batch([transcribed_pages[-1]], batch_num=global_idx, is_first=(global_idx == 1))
+                    logging.info(f"Wrote 503 error message to transcription log for {image_name}")
+                except Exception as write_error:
+                    logging.warning(f"Failed to write 503 error message to log: {write_error}")
+            timing_list.append(None)
+            usage_metadata_list.append(None)
+    
+    # Record end time
+    end_time = datetime.now()
+    total_elapsed = (end_time - start_time).total_seconds()
+    
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Completed all images: {len(transcribed_pages)} images processed in {total_elapsed:.1f} seconds ({total_elapsed/60:.1f} minutes)")
+    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === All images transcription completed ===")
+    ai_logger.info(f"Total images: {len(transcribed_pages)}")
+    ai_logger.info(f"Total time: {total_elapsed:.1f}s ({total_elapsed/60:.1f} min)")
+    ai_logger.info(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    ai_logger.info(f"End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    return transcribed_pages, start_time, end_time
+
+
+def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, config: dict, ai_logger) -> list:
+    """
+    Process images in batches for Google Cloud mode (existing batch processing logic).
+    
+    Args:
+        images: List of image metadata dictionaries
+        handlers: Dictionary of strategy handlers (from ModeFactory)
+        prompt_text: Prompt text for transcription
+        config: Configuration dictionary
+        ai_logger: Logger for AI responses
+        
+    Returns:
+        List of transcribed pages with metadata
+    """
+    image_source = handlers['image_source']
+    ai_client = handlers['ai_client']
+    output = handlers['output']
+    docs_service = handlers['docs_service']
+    drive_service = handlers['drive_service']
+    genai_client = handlers.get('genai_client')
+    
+    batch_size_for_doc = config.get('batch_size_for_doc', 10)
+    # Handle both normalized (nested) and legacy (flat) config formats
+    googlecloud_config = config.get('googlecloud', {})
+    document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
+    image_start_number = config.get('image_start_number', 1)
+    
+    # Process images in batches for incremental document writing
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription of {len(images)} images in batches of {batch_size_for_doc}...")
+    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting batch transcription of {len(images)} images (batch size: {batch_size_for_doc}) ===")
+    start_time = datetime.now()
+    transcribed_pages = []
+    usage_metadata_list = []
+    timing_list = []
+    last_image_end_time = None
+    doc_id = None
+    doc_name = None
+    first_batch = True
+    
+    # Process images in batches
+    total_images = len(images)
+    num_batches = (total_images + batch_size_for_doc - 1) // batch_size_for_doc  # Ceiling division
+    
+    try:
+        for batch_num in range(num_batches):
+            batch_start_idx = batch_num * batch_size_for_doc
+            batch_end_idx = min(batch_start_idx + batch_size_for_doc, total_images)
+            batch_images = images[batch_start_idx:batch_end_idx]
+            batch_size = len(batch_images)
+            
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing batch {batch_num + 1}/{num_batches} (images {batch_start_idx + 1}-{batch_end_idx} of {total_images}) ===")
+            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch {batch_num + 1}/{num_batches}: Processing images {batch_start_idx + 1}-{batch_end_idx} ===")
+            
+            # Track batch-level transcribed pages and metrics
+            batch_transcribed_pages = []
+            batch_usage_metadata_list = []
+            batch_timing_list = []
+            
+            for batch_idx, img in enumerate(batch_images, 1):
+                global_idx = batch_start_idx + batch_idx
+                image_start_time = datetime.now()
+                image_name = img['name']
                 
-                # After batch is transcribed, write to document
-                if batch_transcribed_pages:
-                    # Accumulate all transcribed pages and metrics
-                    transcribed_pages.extend(batch_transcribed_pages)
-                    usage_metadata_list.extend(batch_usage_metadata_list)
-                    timing_list.extend(batch_timing_list)
+                # Log gap detection
+                if last_image_end_time:
+                    gap_seconds = (image_start_time - last_image_end_time).total_seconds()
+                    if gap_seconds > 60:  # Log if gap is more than 1 minute
+                        logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Large time gap detected: {gap_seconds:.1f} seconds ({gap_seconds/60:.1f} minutes) between previous image and '{image_name}'")
+                        ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Time gap of {gap_seconds:.1f}s ({gap_seconds/60:.1f} min) before {image_name}")
+                
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Processing image {global_idx}/{total_images} (batch {batch_num + 1}, item {batch_idx}/{batch_size}): '{image_name}'")
+                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing image {global_idx}/{total_images}: {image_name} ===")
+                
+                try:
+                    download_start = datetime.now()
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{image_name}'...")
+                    img_bytes = image_source.get_image_bytes(img)
+                    download_elapsed = (datetime.now() - download_start).total_seconds()
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' downloaded in {download_elapsed:.1f}s, starting transcription...")
                     
-                    if first_batch:
-                        # Create document after first batch
+                    transcription_start = datetime.now()
+                    text, elapsed_time, usage_metadata = ai_client.transcribe(img_bytes, image_name, prompt_text)
+                    transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
+                    
+                    # Ensure text is not None
+                    if text is None:
+                        text = "[No transcription text received]"
+                    
+                    batch_transcribed_pages.append({
+                        'name': img['name'],
+                        'webViewLink': img['webViewLink'],
+                        'text': text
+                    })
+                    
+                    # Collect metrics
+                    batch_timing_list.append(elapsed_time)
+                    batch_usage_metadata_list.append(usage_metadata)
+                    
+                    image_end_time = datetime.now()
+                    image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                    last_image_end_time = image_end_time
+                    
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {global_idx}/{total_images}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
+                    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
+                    
+                    # Log progress
+                    progress_pct = (global_idx / total_images) * 100
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {global_idx}/{total_images} images ({progress_pct:.1f}%)")
+                    
+                except Exception as e:
+                    image_end_time = datetime.now()
+                    image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                    last_image_end_time = image_end_time
+                    error_type = type(e).__name__
+                    
+                    # Calculate next image number to start from in case of failure
+                    current_image_number = extract_image_number(image_name)
+                    if current_image_number is not None:
+                        next_image_number = current_image_number + 1
+                    else:
+                        # Fallback: if we can't extract number, use position-based calculation
+                        next_image_number = image_start_number + global_idx
+                    
+                    error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
+                    logging.error(error_msg)
+                    logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                    logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number} (filename number from '{image_name}')")
+                    ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
+                    ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image (current image filename number: {current_image_number})")
+                    ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
+                    
+                    # Add error message as text
+                    batch_transcribed_pages.append({
+                        'name': img['name'],
+                        'webViewLink': img['webViewLink'],
+                        'text': f"[Error during transcription: {str(e)}]"
+                    })
+                    # Add None for metrics on error
+                    batch_timing_list.append(None)
+                    batch_usage_metadata_list.append(None)
+            
+            # After batch is transcribed, write to document
+            if batch_transcribed_pages:
+                # Accumulate all transcribed pages and metrics
+                transcribed_pages.extend(batch_transcribed_pages)
+                usage_metadata_list.extend(batch_usage_metadata_list)
+                timing_list.extend(batch_timing_list)
+                
+                if first_batch:
+                    # Document should already be initialized in main() before processing starts
+                    # Just write the first batch with overview (pass all pages so far)
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed ({len(batch_transcribed_pages)} images). Writing to document with overview...")
+                    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed, writing to document...")
+                    
+                    # Verify document is initialized
+                    if not output.doc_id:
+                        # Fallback: initialize if somehow not initialized (shouldn't happen)
+                        logging.warning("Document not initialized, initializing now...")
+                        output.initialize(config)
+                    
+                    # Write first batch with overview (pass all pages so far)
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing first batch ({len(batch_transcribed_pages)} images) to document with overview...")
+                    output.write_batch(transcribed_pages, 1, True)
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ First batch written to document")
+                    first_batch = False
+                else:
+                    # Append subsequent batches to existing document
+                    if doc_id:
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing batch {batch_num + 1} ({len(batch_transcribed_pages)} images) to document...")
+                        # Pass all transcribed pages so far (write_batch will calculate start_idx)
+                        output.write_batch(transcribed_pages, batch_num + 1, False)
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Batch {batch_num + 1} written to document")
+                    else:
+                        # Document creation failed earlier, save locally
+                        logging.warning(f"Cannot write batch {batch_num + 1} to document (doc creation failed). Saving locally...")
+                        # Append to local file if it exists, or create new one
                         run_date = datetime.now().strftime("%Y%m%d")
                         doc_name = f"{document_name} {run_date}"
-                        
-                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed ({len(batch_transcribed_pages)} images). Creating Google Doc '{doc_name}'...")
-                        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed, creating document...")
-                        
-                        # Calculate metrics for overview (will be updated later)
-                        batch_metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
-                        
-                        # Try to create Google Doc
-                        doc_id = create_doc(docs_service, drive_service, doc_name, config)
-                        
-                        if doc_id is None:
-                            # Permission error - save locally instead
-                            logging.warning("Cannot create Google Doc due to insufficient permissions")
-                            logging.info("Saving transcription to local file instead...")
-                            local_file = save_transcription_locally(transcribed_pages, doc_name, config, prompt_text, logs_dir, batch_metrics, start_time, None)
-                            logging.info(f"✓ Transcription saved locally: {local_file}")
-                            logging.info(f"✓ Processed {len(transcribed_pages)} images successfully")
-                            # Continue processing but save locally for each batch
-                            first_batch = False
-                            continue
-                        else:
-                            # Write first batch with overview
-                            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing first batch ({len(batch_transcribed_pages)} images) to document with overview...")
-                            write_to_doc(docs_service, drive_service, doc_id, transcribed_pages, config, prompt_text, start_idx=0, metrics=batch_metrics, start_time=start_time, end_time=None, write_overview=True, genai_client=genai_client)
-                            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ First batch written to document")
-                            first_batch = False
-                    else:
-                        # Append subsequent batches to existing document
-                        if doc_id:
-                            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing batch {batch_num + 1} ({len(batch_transcribed_pages)} images) to document...")
-                            # Calculate start_idx for this batch (number of pages already written)
-                            pages_written_so_far = len(transcribed_pages) - len(batch_transcribed_pages)
-                            # Pass full transcribed_pages list with correct start_idx for proper page numbering
-                            write_to_doc(docs_service, drive_service, doc_id, transcribed_pages, config, prompt_text, start_idx=pages_written_so_far, metrics=None, start_time=None, end_time=None, write_overview=False, genai_client=genai_client)
-                            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Batch {batch_num + 1} written to document")
-                        else:
-                            # Document creation failed earlier, save locally
-                            logging.warning(f"Cannot write batch {batch_num + 1} to document (doc creation failed). Saving locally...")
-                            # Append to local file if it exists, or create new one
-                            run_date = datetime.now().strftime("%Y%m%d")
-                            doc_name = f"{document_name} {run_date}"
-                            save_transcription_locally(batch_transcribed_pages, doc_name, config, prompt_text, logs_dir, None, None, None)
-        
-        except Exception as batch_error:
-            # Log error and resume information
-            error_type = type(batch_error).__name__
-            images_processed = len(transcribed_pages) if 'transcribed_pages' in locals() else 0
-            
-            # Calculate next image number from the last successfully processed image
-            next_image_number = None
-            if images_processed > 0 and 'transcribed_pages' in locals():
-                last_image_name = transcribed_pages[-1]['name']
-                last_image_number = extract_image_number(last_image_name)
-                if last_image_number is not None:
-                    next_image_number = last_image_number + 1
-                else:
-                    # Fallback: use position-based calculation
-                    next_image_number = image_start_number + images_processed
-            elif images_processed > 0:
-                # Fallback if we can't get the last image name
-                next_image_number = image_start_number + images_processed
-            
-            logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error processing batch: {error_type}: {str(batch_error)}")
-            logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
-            if next_image_number is not None:
-                last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
-                logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number}{last_image_info}")
-            logging.error(f"Full traceback:\n{traceback.format_exc()}")
-            
-            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch Processing Error ===")
-            ai_logger.error(f"Error type: {error_type}")
-            ai_logger.error(f"Error message: {str(batch_error)}")
-            ai_logger.error(f"Images processed before error: {images_processed}")
-            if next_image_number is not None:
-                ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image")
-            ai_logger.error(f"Full traceback:\n{traceback.format_exc()}")
-            ai_logger.error(f"=== End Batch Processing Error ===")
-            
-            # Re-raise to be caught by outer exception handler
-            raise
-        
-        # Record end time
-        end_time = datetime.now()
-        batch_total_elapsed = (end_time - start_time).total_seconds()
-        
-        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Completed all batches: {len(transcribed_pages)} images processed in {batch_total_elapsed:.1f} seconds ({batch_total_elapsed/60:.1f} minutes)")
-        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === All batches transcription completed ===")
-        ai_logger.info(f"Total images: {len(transcribed_pages)}")
-        ai_logger.info(f"Total time: {batch_total_elapsed:.1f}s ({batch_total_elapsed/60:.1f} min)")
-        ai_logger.info(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        ai_logger.info(f"End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # Calculate final metrics
-        final_metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
-        
-        # Update the overview section with final metrics from all batches
-        if doc_id and len(transcribed_pages) > 0:
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Updating overview section with final metrics from all batches...")
-            success = update_overview_section(docs_service, doc_id, transcribed_pages, config, prompt_text, final_metrics, start_time, end_time)
-            if success:
-                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Overview section updated successfully.")
-            else:
-                logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] Overview section update failed or was skipped.")
-            
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] All batches written to document '{doc_name}'")
-            logging.info(f"Final metrics: {final_metrics}")
-        elif len(transcribed_pages) > 0:
-            # Document creation failed, but we saved locally
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] All batches processed. Transcription saved locally.")
-        
-        # Log session completion
-        ai_logger.info(f"=== Transcription Session Completed ===")
-        ai_logger.info(f"Session end timestamp: {datetime.now().isoformat()}")
-        ai_logger.info(f"Total images processed: {len(transcribed_pages)}")
-        ai_logger.info(f"Successful transcriptions: {len([p for p in transcribed_pages if p['text'] and not p['text'].startswith('[Error')])}")
-        ai_logger.info(f"Failed transcriptions: {len([p for p in transcribed_pages if not p['text'] or p['text'].startswith('[Error')])}")
-        ai_logger.info(f"=== Session Summary ===\n")
-        
-    except Exception as e:
-        # Log session error with resume information
-        error_type = type(e).__name__
+                        save_transcription_locally(batch_transcribed_pages, doc_name, config, prompt_text, "logs", None, None, None)
+    
+    except Exception as batch_error:
+        # Log error and resume information
+        error_type = type(batch_error).__name__
         images_processed = len(transcribed_pages) if 'transcribed_pages' in locals() else 0
         
         # Calculate next image number from the last successfully processed image
@@ -2469,21 +4388,243 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
             # Fallback if we can't get the last image name
             next_image_number = image_start_number + images_processed
         
-        ai_logger.error(f"=== Transcription Session Error ===")
-        ai_logger.error(f"Error timestamp: {datetime.now().isoformat()}")
+        logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error processing batch: {error_type}: {str(batch_error)}")
+        logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
+        if next_image_number is not None:
+            last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
+            logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number}{last_image_info}")
+        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+        
+        ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch Processing Error ===")
         ai_logger.error(f"Error type: {error_type}")
-        ai_logger.error(f"Error: {str(e)}")
+        ai_logger.error(f"Error message: {str(batch_error)}")
         ai_logger.error(f"Images processed before error: {images_processed}")
         if next_image_number is not None:
-            last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
-            ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image{last_image_info}")
-        ai_logger.error(f"=== Session Error End ===\n")
+            ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image")
+        ai_logger.error(f"Full traceback:\n{traceback.format_exc()}")
+        ai_logger.error(f"=== End Batch Processing Error ===")
         
-        logging.error(f"Error in main: {error_type}: {str(e)}")
-        if next_image_number is not None:
-            last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
-            logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
-            logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number}{last_image_info}")
+        # Re-raise to be caught by outer exception handler
+        raise
+    
+    # Record end time
+    end_time = datetime.now()
+    batch_total_elapsed = (end_time - start_time).total_seconds()
+    
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Completed all batches: {len(transcribed_pages)} images processed in {batch_total_elapsed:.1f} seconds ({batch_total_elapsed/60:.1f} minutes)")
+    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === All batches transcription completed ===")
+    ai_logger.info(f"Total images: {len(transcribed_pages)}")
+    ai_logger.info(f"Total time: {batch_total_elapsed:.1f}s ({batch_total_elapsed/60:.1f} min)")
+    ai_logger.info(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    ai_logger.info(f"End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Calculate final metrics and finalize output
+    final_metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
+    
+    # Finalize output (update overview section)
+    if doc_id and len(transcribed_pages) > 0:
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Finalizing output with overview update...")
+        output.finalize(transcribed_pages, final_metrics)
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Output finalized successfully.")
+        logging.info(f"Final metrics: {final_metrics}")
+    
+    return transcribed_pages
+
+
+def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
+    """
+    Main function to process images and create transcription document.
+    Now supports dual-mode operation (LOCAL and GOOGLECLOUD) using strategy pattern.
+    """
+    try:
+        # Detect mode
+        mode = detect_mode(config)
+        logging.info(f"Detected mode: {mode.upper()}")
+        
+        # Normalize config to internal format
+        normalized_config = normalize_config(config, mode)
+        
+        # Validate config
+        is_valid, errors = validate_config(normalized_config, mode)
+        if not is_valid:
+            error_msg = f"Configuration errors: {', '.join(errors)}"
+            logging.error(error_msg)
+            raise ValueError(error_msg)
+        
+        # Create handlers using ModeFactory
+        handlers = ModeFactory.create_handlers(mode, normalized_config)
+        logging.info(f"Created handlers for {mode.upper()} mode")
+        
+        # Extract config values for logging (mode-agnostic)
+        archive_index = normalized_config.get('archive_index')
+        retry_mode = normalized_config.get('retry_mode', False)
+        retry_image_list = normalized_config.get('retry_image_list', [])
+        max_images = normalized_config.get('max_images')
+        image_start_number = normalized_config.get('image_start_number', 1)
+        image_count = normalized_config.get('image_count')
+        
+        # Mode-specific config extraction
+        if mode == 'googlecloud':
+            project_id = normalized_config.get('googlecloud', {}).get('project_id', 'Unknown')
+            ocr_model_id = normalized_config.get('googlecloud', {}).get('ocr_model_id', 'gemini-3-flash-preview')
+            batch_size_for_doc = normalized_config.get('batch_size_for_doc', 10)
+            
+            # Fetch folder name and set document_name if not provided (Google Cloud only)
+            drive_service = handlers['drive_service']
+            if 'document_name' not in normalized_config.get('googlecloud', {}) or not normalized_config.get('googlecloud', {}).get('document_name'):
+                drive_folder_id = normalized_config.get('googlecloud', {}).get('drive_folder_id')
+                if drive_folder_id:
+                    fetched_folder_name = get_folder_name(drive_service, drive_folder_id)
+                    if fetched_folder_name:
+                        normalized_config['googlecloud']['document_name'] = fetched_folder_name
+                        logging.info(f"Fetched folder name from Drive API: '{fetched_folder_name}'")
+                    else:
+                        # Fallback to folder ID if fetch fails
+                        normalized_config['googlecloud']['document_name'] = f"Folder_{drive_folder_id[:8]}"
+                        logging.warning(f"Could not fetch folder name, using fallback: '{normalized_config['googlecloud']['document_name']}'")
+            
+            document_name = normalized_config.get('googlecloud', {}).get('document_name', 'Unknown')
+        else:  # local mode
+            project_id = 'LOCAL'
+            ocr_model_id = normalized_config.get('local', {}).get('ocr_model_id', 'gemini-3-flash-preview')
+            batch_size_for_doc = None  # Not used in local mode
+            document_name = normalized_config.get('local', {}).get('image_dir', 'Unknown')
+        
+        # Log session start
+        ai_logger.info(f"=== Transcription Session Started ===")
+        ai_logger.info(f"Session timestamp: {datetime.now().isoformat()}")
+        ai_logger.info(f"Mode: {mode.upper()}")
+        ai_logger.info(f"Project ID: {project_id}")
+        ai_logger.info(f"Document: {document_name}")
+        ai_logger.info(f"Archive Index: {archive_index if archive_index else 'None'}")
+        ai_logger.info(f"Model: {ocr_model_id}")
+        ai_logger.info(f"Retry mode: {retry_mode}")
+        if retry_mode:
+            ai_logger.info(f"Retry images count: {len(retry_image_list)}")
+            ai_logger.info(f"Retry images: {retry_image_list}")
+        else:
+            ai_logger.info(f"Max images: {max_images}")
+            ai_logger.info(f"Image start number: {image_start_number}")
+            ai_logger.info(f"Image count: {image_count}")
+        if batch_size_for_doc:
+            ai_logger.info(f"Batch size for doc: {batch_size_for_doc}")
+        ai_logger.info(f"=== Session Configuration ===\n")
+
+        # List images using image source strategy
+        image_source = handlers['image_source']
+        images = image_source.list_images(normalized_config)
+        
+        if not images:
+            if retry_mode:
+                logging.error(f"No retry images found from the retry_image_list")
+                ai_logger.error(f"No retry images found from list of {len(retry_image_list)} images")
+            else:
+                logging.error(f"No images found for the specified range (start: {image_start_number}, count: {image_count})")
+                ai_logger.error(f"No images found for range {image_start_number} to {image_start_number + image_count - 1}")
+            return
+        
+        # Initialize output
+        output = handlers['output']
+        # Pass prompt_text to initialize for LOCAL mode to include it in the log
+        if mode == 'local':
+            output_id = output.initialize(normalized_config, prompt_text)
+        else:
+            output_id = output.initialize(normalized_config)
+        logging.info(f"Output initialized: {output_id}")
+        
+        # Variables for finalization
+        transcribed_pages = []
+        start_time = None
+        end_time = None
+        error_info = None
+        caught_exception = None
+        
+        try:
+            # Process images using mode-specific processing function
+            if mode == 'googlecloud':
+                transcribed_pages = process_batches_googlecloud(images, handlers, prompt_text, normalized_config, ai_logger)
+            else:  # local mode
+                transcribed_pages, start_time, end_time = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger)
+            
+            # Log session completion
+            ai_logger.info(f"=== Transcription Session Completed ===")
+            ai_logger.info(f"Session end timestamp: {datetime.now().isoformat()}")
+            ai_logger.info(f"Total images processed: {len(transcribed_pages)}")
+            ai_logger.info(f"Successful transcriptions: {len([p for p in transcribed_pages if p['text'] and not p['text'].startswith('[Error')])}")
+            ai_logger.info(f"Failed transcriptions: {len([p for p in transcribed_pages if not p['text'] or p['text'].startswith('[Error')])}")
+            ai_logger.info(f"=== Session Summary ===\n")
+            
+        except Exception as e:
+            # Save the exception for re-raising after finalization
+            caught_exception = e
+            
+            # Capture error information for finalization
+            error_type = type(e).__name__
+            error_message = str(e)
+            
+            # Extract status code if it's an API error
+            status_code = None
+            if 'status' in error_message.lower():
+                import re
+                status_match = re.search(r'status (\d+)', error_message, re.IGNORECASE)
+                if status_match:
+                    status_code = int(status_match.group(1))
+            
+            # Calculate next image number for resume
+            next_image_number = None
+            if transcribed_pages:
+                last_image_name = transcribed_pages[-1]['name']
+                last_image_number = extract_image_number(last_image_name)
+                if last_image_number is not None:
+                    next_image_number = last_image_number + 1
+                else:
+                    next_image_number = image_start_number + len(transcribed_pages)
+            
+            error_info = {
+                'type': error_type,
+                'message': error_message,
+                'status_code': status_code,
+                'next_image_number': next_image_number
+            }
+            
+            # Log session error with resume information
+            ai_logger.error(f"=== Transcription Session Error ===")
+            ai_logger.error(f"Error timestamp: {datetime.now().isoformat()}")
+            ai_logger.error(f"Error type: {error_type}")
+            ai_logger.error(f"Error: {error_message}")
+            ai_logger.error(f"Images processed before error: {len(transcribed_pages)}")
+            if next_image_number is not None:
+                last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if transcribed_pages else 'unknown'})"
+                ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image{last_image_info}")
+            ai_logger.error(f"=== Session Error End ===\n")
+            
+            logging.error(f"Error in main: {error_type}: {error_message}")
+            if next_image_number is not None:
+                last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if transcribed_pages else 'unknown'})"
+                logging.error(f"RESUME INFO: Processed {len(transcribed_pages)} images successfully before error")
+                logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number}{last_image_info}")
+            logging.error(f"Full traceback:\n{traceback.format_exc()}")
+            
+            # Don't re-raise yet, we need to finalize first
+        finally:
+            # Always finalize output (even on errors) for LOCAL mode
+            if mode == 'local':
+                metrics = {}  # Can be enhanced to extract from process_all_local
+                try:
+                    output.finalize(transcribed_pages, metrics, start_time, end_time, error_info)
+                    logging.info(f"Output finalized for LOCAL mode (with {'error' if error_info else 'success'})")
+                except Exception as finalize_error:
+                    logging.error(f"Error during output finalization: {finalize_error}")
+                    logging.error(f"Finalize traceback:\n{traceback.format_exc()}")
+        
+        # Re-raise the original exception if there was one (outside finally block)
+        if caught_exception:
+            raise caught_exception
+    
+    except Exception as e:
+        # Final catch-all for any unhandled exceptions
+        # This will catch the re-raised exception from above or any other unexpected errors
+        logging.error(f"Fatal error: {str(e)}")
         logging.error(f"Full traceback:\n{traceback.format_exc()}")
         raise
 
@@ -2512,11 +4653,15 @@ See config/config.yaml.example for a template.
         # Load configuration first (needed for logging setup)
         config = load_config(args.config_file)
         
+        # Detect mode for logging purposes (before logging setup to determine log filename)
+        mode = detect_mode(config)
+        
         # Set up logging - MUST be done before any logging calls
         log_filename, ai_log_filename, ai_logger = setup_logging(config)
         
         # Now we can log
         logging.info(f"Configuration loaded from: {args.config_file}")
+        logging.info(f"Detected mode: {mode.upper()}")
         logging.info(f"Logging initialized. Main log: {log_filename}, AI log: {ai_log_filename}")
         
         # Load prompt text

@@ -1,0 +1,87 @@
+# Genealogical Record Transcription Tool - Configuration File
+# Copy this file to config.yaml (or any name) and customize for your project
+# Then run: python transcribe.py config/your_config.yaml
+
+# ------------------------- PROMPTS -------------------------
+# Set which prompt file to load from the `prompts` folder (without path).
+# The prompt file defines transcription instructions, village names, and common surnames.
+# Example: "INSTRUCTION.txt", "f301-1439-WOJNILOW-1784-1829.md"
+prompt_file: "NIWRA_f487o1s47.md"
+
+# ------------------------- GOOGLE CLOUD & DRIVE -------------------------
+# Google Cloud Project ID
+# Example: "ukr-transcribe-genea" or "ru-ocr-genea"
+project_id: "ru-ocr-genea"
+
+# Google Drive folder ID containing the images to transcribe
+# Get this from the Drive folder URL: https://drive.google.com/drive/folders/FOLDER_ID
+drive_folder_id: "1P8CUcS84wd4n1az47rEThM6FOyuIqHzH"
+
+# Folder name for logging purposes (used in log filenames)
+# Should match or describe the Drive folder being processed
+folder_name: "ф487-1-47 1860-1876 с.Нивра Борщивского повиту - TEST"
+
+# Archive index reference (condensed archive reference)
+# Format: ф[FOND]оп[OPIS]спр[DELO] or custom format like "f301-1438-"
+# Used for document headers and record links
+# Example: "ф487оп1спр545" or "f301-1438-"
+archive_index: "ф487-1-47-"
+
+# Vertex AI region
+# Options: "global", "us-central1", etc.
+region: "global"
+
+# OCR Model ID for Gemini
+# Examples: "gemini-3-flash-preview", "gemini-2.5-pro", etc.
+ocr_model_id: "gemini-3-flash-preview"
+
+# Application Default Credentials file path
+# ADC file with refresh token for OAuth2 authentication
+# Should be in the project root directory
+adc_file: "application_default_credentials.json"
+
+# ------------------------- PROCESSING SETTINGS -------------------------
+# Maximum number of images to fetch from Google Drive
+# The script will fetch up to this many images, then filter based on
+# image_start_number and image_count parameters
+max_images: 1000
+
+# Starting image number - refers to the NUMBER IN THE FILENAME
+# (e.g., 474 for 004932851_00474.jpeg)
+# NOT the position in sequence. Extract number from filename pattern
+# (e.g., 101 for image00101.jpg or 101.jpg)
+# Set to 1 to start from the first image
+image_start_number: 5
+
+# Number of images to process starting from image_start_number
+# Example: if image_start_number=101 and image_count=5,
+# will process image00101.jpg through image00105.jpg
+image_count: 3
+
+# Number of images to transcribe before creating/writing to Google Doc
+# (for resilience - script creates doc after first batch, then appends
+# subsequent batches incrementally. If processing fails, only current
+# batch is lost - resume with new image_start_number)
+# Recommended: 2-10 depending on image complexity
+batch_size_for_doc: 2
+
+# ------------------------- RETRY MODE -------------------------
+# Set to true to retry specific failed images
+# When true, only images in retry_image_list will be processed
+retry_mode: false
+
+# List of image filenames to retry (only used when retry_mode is true)
+# Add filenames of images that failed previously
+retry_image_list:
+  # Example: Image that failed with timeout
+  - "2025-07-23T065033.080.jpg"
+
+# ------------------------- IMAGE SELECTION NOTES -------------------------
+# - image_start_number: The starting image number (e.g., 101 will start from image00101.jpg or 101.jpg)
+# - image_count: How many consecutive images to process (e.g., 5 will process image00101.jpg through image00105.jpg)
+# - Files must follow one of these patterns:
+#   * image (N).jpg where N is a number (e.g., image (7).jpg, image (10).jpg)
+#   * imageXXXXX.jpg where XXXXX is a 5-digit number (e.g., image00101.jpg)
+#   * XXXXX.jpg where XXXXX is a number (e.g., 52.jpg, 102.jpg)
+#   * image - YYYY-MM-DDTHHMMSS.mmm.jpg (timestamp format, e.g., image - 2025-07-20T112914.366.jpg)
+# - The script will fetch up to max_images from Google Drive, then filter based on these parameters

@@ -1,6 +1,18 @@
 # Genealogical Record Transcription Tool - Configuration File
 # Copy this file to config.yaml (or any name) and customize for your project
 # Then run: python transcribe.py config/your_config.yaml
+#
+# This is a LEGACY format example (backward compatible).
+# For new configurations, use config.googlecloud.example.yaml or config.local.example.yaml
+# which use the new nested structure with explicit mode selection.
+
+# ------------------------- MODE SELECTION (OPTIONAL) -------------------------
+# Mode selection: "local" or "googlecloud"
+# If not specified, will auto-detect from configuration:
+# - If project_id/drive_folder_id present → googlecloud
+# - If local section present → local
+# - Default → googlecloud (backward compatibility)
+# mode: "googlecloud"
 
 # ------------------------- PROMPTS -------------------------
 # Set which prompt file to load from the `prompts` folder (without path).
@@ -8,7 +20,10 @@
 # Example: "f301-1439-WOJNILOW-1784-1829.md"
 prompt_file: "f487o1s545-Turilche.md"
 
-# ------------------------- GOOGLE CLOUD & DRIVE -------------------------
+# ------------------------- GOOGLE CLOUD & DRIVE (LEGACY FORMAT) -------------------------
+# Note: This legacy flat format is still supported for backward compatibility.
+# New configs should use the nested format (see config.googlecloud.example.yaml)
+
 # Google Cloud Project ID
 # Example: "ukr-transcribe-genea"
 project_id: "ru-ocr-genea"
