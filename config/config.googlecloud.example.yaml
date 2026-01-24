@@ -22,14 +22,14 @@ googlecloud:
   
   # OCR Model ID for Gemini
   # Available models:
-  #   - "gemini-flash-latest" (recommended - latest stable Flash model)
+  #   - "gemini-3-flash-preview" (recommended - best for transcription quality)
+  #   - "gemini-flash-latest" (latest stable Flash model, may be less reliable)
   #   - "gemini-flash-lite-latest" (faster, lighter version)
   #   - "gemini-3-pro-preview" (advanced reasoning, higher limits with paid plans)
-  #   - "gemini-3-flash-preview" (preview version)
   # Note: Without a Google AI subscription plan, Pro models have basic access with 
   #       daily limits that may change frequently. Flash models have general access.
   #       See: https://support.google.com/gemini/answer/16275805
-  ocr_model_id: "gemini-flash-latest"
+  ocr_model_id: "gemini-3-flash-preview"
   
   # Application Default Credentials file path
   # ADC file with refresh token for OAuth2 authentication

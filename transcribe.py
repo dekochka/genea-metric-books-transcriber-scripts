@@ -822,13 +822,13 @@ class AIClientStrategy(ABC):
 class GeminiDevClient(AIClientStrategy):
     """Gemini Developer API client."""
     
-    def __init__(self, api_key: str, model_id: str = "gemini-flash-latest", ai_logger=None):
+    def __init__(self, api_key: str, model_id: str = "gemini-3-flash-preview", ai_logger=None):
         """
         Initialize Gemini Developer API client.
         
         Args:
             api_key: Gemini API key
-            model_id: Model ID to use (default: gemini-flash-latest)
+            model_id: Model ID to use (default: gemini-3-flash-preview)
             ai_logger: Logger instance for AI responses (optional)
         """
         self.api_key = api_key
@@ -1671,7 +1671,7 @@ class ModeFactory:
         image_dir = local_config['image_dir']
         
         # Create AI client strategy (pass ai_logger for response logging)
-        model_id = local_config.get('ocr_model_id', 'gemini-flash-latest')
+        model_id = local_config.get('ocr_model_id', 'gemini-3-flash-preview')
         ai_client = GeminiDevClient(api_key, model_id, ai_logger)
         
         # Create multiple output strategies (log, markdown, word)
@@ -1732,7 +1732,7 @@ class ModeFactory:
         )
         
         # Create AI client strategy
-        model_id = googlecloud_config.get('ocr_model_id', 'gemini-flash-latest')
+        model_id = googlecloud_config.get('ocr_model_id', 'gemini-3-flash-preview')
         ai_client = VertexAIClient(genai_client, model_id)
         
         # Load prompt text for output strategy
@@ -2653,7 +2653,7 @@ def insert_title_page_image_and_transcribe(docs_service, drive_service, doc_id: 
         return insert_index, None
     
     drive_folder_id = config['drive_folder_id']
-    ocr_model_id = config.get('ocr_model_id', 'gemini-flash-latest')
+    ocr_model_id = config.get('ocr_model_id', 'gemini-3-flash-preview')
     transcription_text = None
     image_inserted = False
     
@@ -3042,7 +3042,7 @@ def create_local_overview_section(pages, config: dict, prompt_text: str, metrics
         String with overview content
     """
     archive_index = config.get('archive_index', 'Unknown')
-    ocr_model_id = config.get('local', {}).get('ocr_model_id', 'gemini-flash-latest')
+    ocr_model_id = config.get('local', {}).get('ocr_model_id', 'gemini-3-flash-preview')
     prompt_file = config.get('prompt_file', 'Unknown')
     image_dir = config.get('local', {}).get('image_dir', 'Unknown')
     
@@ -4394,7 +4394,7 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
         # Mode-specific config extraction
         if mode == 'googlecloud':
             project_id = normalized_config.get('googlecloud', {}).get('project_id', 'Unknown')
-            ocr_model_id = normalized_config.get('googlecloud', {}).get('ocr_model_id', 'gemini-flash-latest')
+            ocr_model_id = normalized_config.get('googlecloud', {}).get('ocr_model_id', 'gemini-3-flash-preview')
             batch_size_for_doc = normalized_config.get('batch_size_for_doc', 10)
             
             # Fetch folder name and set document_name if not provided (Google Cloud only)
@@ -4414,7 +4414,7 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
             document_name = normalized_config.get('googlecloud', {}).get('document_name', 'Unknown')
         else:  # local mode
             project_id = 'LOCAL'
-            ocr_model_id = normalized_config.get('local', {}).get('ocr_model_id', 'gemini-flash-latest')
+            ocr_model_id = normalized_config.get('local', {}).get('ocr_model_id', 'gemini-3-flash-preview')
             batch_size_for_doc = None  # Not used in local mode
             document_name = normalized_config.get('local', {}).get('image_dir', 'Unknown')
         

@@ -51,15 +51,15 @@ local:
   # Output directory for log files (default: "logs")
   output_dir: "logs"
   
-  # OCR Model ID (default: "gemini-flash-latest")
+  # OCR Model ID (default: "gemini-3-flash-preview")
   # Available models:
-  #   - "gemini-flash-latest" (recommended - latest stable Flash model)
+  #   - "gemini-3-flash-preview" (recommended - best for transcription quality)
+  #   - "gemini-flash-latest" (latest stable Flash model, may be less reliable)
   #   - "gemini-flash-lite-latest" (faster, lighter version)
   #   - "gemini-3-pro-preview" (advanced reasoning, higher limits with paid plans)
-  #   - "gemini-3-flash-preview" (preview version)
   # Note: Without a Google AI subscription plan, Pro models have basic access with 
   #       daily limits that may change frequently. Flash models have general access.
-  ocr_model_id: "gemini-flash-latest"
+  ocr_model_id: "gemini-3-flash-preview"
 ```
 
 ### Security Best Practices
@@ -105,15 +105,15 @@ googlecloud:
   # Options: "global", "us-central1", "us-east1", etc.
   region: "global"
   
-  # OCR Model ID (default: "gemini-flash-latest")
+  # OCR Model ID (default: "gemini-3-flash-preview")
   # Available models:
-  #   - "gemini-flash-latest" (recommended - latest stable Flash model)
+  #   - "gemini-3-flash-preview" (recommended - best for transcription quality)
+  #   - "gemini-flash-latest" (latest stable Flash model, may be less reliable)
   #   - "gemini-flash-lite-latest" (faster, lighter version)
   #   - "gemini-3-pro-preview" (advanced reasoning, higher limits with paid plans)
-  #   - "gemini-3-flash-preview" (preview version)
   # Note: Without a Google AI subscription plan, Pro models have basic access with 
   #       daily limits that may change frequently. Flash models have general access.
-  ocr_model_id: "gemini-flash-latest"
+  ocr_model_id: "gemini-3-flash-preview"
   
   # Document name (optional)
   # If not provided, will be fetched from Google Drive folder name
@@ -231,7 +231,7 @@ local:
   api_key: "${GEMINI_API_KEY}"
   image_dir: "/Users/me/documents/genealogy/images"
   output_dir: "logs"
-  ocr_model_id: "gemini-flash-latest"
+  ocr_model_id: "gemini-3-flash-preview"
 
 prompt_file: "f487o1s545-Turilche.md"
 archive_index: "ф487оп1спр545"
@@ -265,7 +265,7 @@ googlecloud:
   project_id: "ukr-transcribe-genea"
   drive_folder_id: "1YHAeW5Yi8oeKqvQHHKHf8u0o_MpTKJPR"
   region: "global"
-  ocr_model_id: "gemini-flash-latest"
+  ocr_model_id: "gemini-3-flash-preview"
   adc_file: "application_default_credentials.json"
   document_name: "Turilche Birth Records 1894"
   title_page_filename: "cover-title-page.jpg"
@@ -306,10 +306,11 @@ When using the Gemini API without a Google AI subscription plan, you should be a
 - For production use with higher limits, consider upgrading to a [Google AI subscription plan](https://support.google.com/gemini/answer/16275805)
 
 **Recommendations:**
-- Start with `gemini-flash-latest` (recommended default) for reliable access
+- Start with `gemini-3-flash-preview` (recommended default) for best transcription quality
 - Use `gemini-flash-lite-latest` for faster processing of simpler documents
 - Reserve `gemini-3-pro-preview` for complex documents requiring advanced reasoning
 - Monitor your usage and consider upgrading if you frequently hit limits
+- Note: `gemini-flash-latest` may be less reliable for transcription tasks
 
 For the most current information on limits and quotas, see the [official Google AI limits documentation](https://support.google.com/gemini/answer/16275805).
 
