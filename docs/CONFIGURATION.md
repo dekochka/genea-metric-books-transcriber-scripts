@@ -51,9 +51,15 @@ local:
   # Output directory for log files (default: "logs")
   output_dir: "logs"
   
-  # OCR Model ID (default: "gemini-1.5-pro")
-  # Available models: "gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash-exp"
-  ocr_model_id: "gemini-1.5-pro"
+  # OCR Model ID (default: "gemini-flash-latest")
+  # Available models:
+  #   - "gemini-flash-latest" (recommended - latest stable Flash model)
+  #   - "gemini-flash-lite-latest" (faster, lighter version)
+  #   - "gemini-3-pro-preview" (advanced reasoning, higher limits with paid plans)
+  #   - "gemini-3-flash-preview" (preview version)
+  # Note: Without a Google AI subscription plan, Pro models have basic access with 
+  #       daily limits that may change frequently. Flash models have general access.
+  ocr_model_id: "gemini-flash-latest"
 ```
 
 ### Security Best Practices
@@ -99,9 +105,15 @@ googlecloud:
   # Options: "global", "us-central1", "us-east1", etc.
   region: "global"
   
-  # OCR Model ID (default: "gemini-3-flash-preview")
-  # Examples: "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-1.5-pro"
-  ocr_model_id: "gemini-3-flash-preview"
+  # OCR Model ID (default: "gemini-flash-latest")
+  # Available models:
+  #   - "gemini-flash-latest" (recommended - latest stable Flash model)
+  #   - "gemini-flash-lite-latest" (faster, lighter version)
+  #   - "gemini-3-pro-preview" (advanced reasoning, higher limits with paid plans)
+  #   - "gemini-3-flash-preview" (preview version)
+  # Note: Without a Google AI subscription plan, Pro models have basic access with 
+  #       daily limits that may change frequently. Flash models have general access.
+  ocr_model_id: "gemini-flash-latest"
   
   # Document name (optional)
   # If not provided, will be fetched from Google Drive folder name
@@ -219,7 +231,7 @@ local:
   api_key: "${GEMINI_API_KEY}"
   image_dir: "/Users/me/documents/genealogy/images"
   output_dir: "logs"
-  ocr_model_id: "gemini-1.5-pro"
+  ocr_model_id: "gemini-flash-latest"
 
 prompt_file: "f487o1s545-Turilche.md"
 archive_index: "ф487оп1спр545"
@@ -253,7 +265,7 @@ googlecloud:
   project_id: "ukr-transcribe-genea"
   drive_folder_id: "1YHAeW5Yi8oeKqvQHHKHf8u0o_MpTKJPR"
   region: "global"
-  ocr_model_id: "gemini-3-flash-preview"
+  ocr_model_id: "gemini-flash-latest"
   adc_file: "application_default_credentials.json"
   document_name: "Turilche Birth Records 1894"
   title_page_filename: "cover-title-page.jpg"
@@ -277,6 +289,30 @@ The tool validates your configuration before processing:
 
 Validation errors are reported with clear messages indicating what needs to be fixed.
 
+## Model Limits and API Quotas
+
+### Understanding Model Limits
+
+When using the Gemini API without a Google AI subscription plan, you should be aware of usage limits:
+
+**Model Types and Access:**
+- **Flash models** (`gemini-flash-latest`, `gemini-flash-lite-latest`): General access with no specific daily limits documented
+- **Pro models** (`gemini-3-pro-preview`): Basic access with daily limits that may change frequently
+- **Thinking models**: Basic access with daily limits that may change frequently
+
+**Important Notes:**
+- Limits may change without notice, especially during high-demand periods
+- During capacity constraints, users without a subscription plan may experience more restrictive limits
+- For production use with higher limits, consider upgrading to a [Google AI subscription plan](https://support.google.com/gemini/answer/16275805)
+
+**Recommendations:**
+- Start with `gemini-flash-latest` (recommended default) for reliable access
+- Use `gemini-flash-lite-latest` for faster processing of simpler documents
+- Reserve `gemini-3-pro-preview` for complex documents requiring advanced reasoning
+- Monitor your usage and consider upgrading if you frequently hit limits
+
+For the most current information on limits and quotas, see the [official Google AI limits documentation](https://support.google.com/gemini/answer/16275805).
+
 ## Best Practices
 
 1. **Use environment variables** for sensitive data (API keys, credentials)
@@ -285,3 +321,4 @@ Validation errors are reported with clear messages indicating what needs to be f
 4. **Keep prompt files organized** in the `prompts/` folder with descriptive names
 5. **Use descriptive config filenames** (e.g., `turilche-1894.yaml` instead of `config.yaml`)
 6. **Document your archive_index format** for consistency across projects
+7. **Choose appropriate models** based on your subscription plan and document complexity

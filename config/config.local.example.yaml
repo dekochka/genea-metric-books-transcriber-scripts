@@ -26,9 +26,16 @@ local:
   #   3. Word file (.docx) - saved to image_dir (source folder)
   output_dir: "logs"
   
-  # OCR Model ID (optional, default: "gemini-3-flash-preview")
-  # Available models: "gemini-3-flash-preview", "gemini-1.5-pro", "gemini-1.5-flash", etc.
-  ocr_model_id: "gemini-3-flash-preview"
+  # OCR Model ID (optional, default: "gemini-flash-latest")
+  # Available models:
+  #   - "gemini-flash-latest" (recommended - latest stable Flash model)
+  #   - "gemini-flash-lite-latest" (faster, lighter version)
+  #   - "gemini-3-pro-preview" (advanced reasoning, higher limits with paid plans)
+  #   - "gemini-3-flash-preview" (preview version)
+  # Note: Without a Google AI subscription plan, Pro models have basic access with 
+  #       daily limits that may change frequently. Flash models have general access.
+  #       See: https://support.google.com/gemini/answer/16275805
+  ocr_model_id: "gemini-flash-latest"
 
 # ------------------------- SHARED CONFIGURATION -------------------------
 # These settings apply to both LOCAL and GOOGLECLOUD modes

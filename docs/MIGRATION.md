@@ -36,7 +36,7 @@ project_id: "ukr-transcribe-genea"
 drive_folder_id: "1YHAeW5Yi8oeKqvQHHKHf8u0o_MpTKJPR"
 adc_file: "application_default_credentials.json"
 region: "global"
-ocr_model_id: "gemini-3-flash-preview"
+ocr_model_id: "gemini-flash-latest"
 prompt_file: "f487o1s545-Turilche.md"
 archive_index: "ф487оп1спр545"
 image_start_number: 1
@@ -56,7 +56,7 @@ googlecloud:
   drive_folder_id: "1YHAeW5Yi8oeKqvQHHKHf8u0o_MpTKJPR"
   adc_file: "application_default_credentials.json"
   region: "global"
-  ocr_model_id: "gemini-3-flash-preview"
+  ocr_model_id: "gemini-flash-latest"
 
 prompt_file: "f487o1s545-Turilche.md"
 archive_index: "ф487оп1спр545"
@@ -91,7 +91,7 @@ If you want to keep using Google Drive and Google Docs:
      drive_folder_id: "1YHAeW5Yi8oeKqvQHHKHf8u0o_MpTKJPR"
      adc_file: "application_default_credentials.json"
      region: "global"
-     ocr_model_id: "gemini-3-flash-preview"
+     ocr_model_id: "gemini-flash-latest"
      # Optional settings
      document_name: "My Document"
      title_page_filename: "cover.jpg"
@@ -133,7 +133,7 @@ If you want to try the new LOCAL mode (no Google Cloud setup required):
      api_key: "${GEMINI_API_KEY}"  # Use environment variable
      image_dir: "/path/to/your/local/images"
      output_dir: "logs"
-     ocr_model_id: "gemini-1.5-pro"
+     ocr_model_id: "gemini-flash-latest"
    
    # Shared settings (same as before)
    prompt_file: "f487o1s545-Turilche.md"
@@ -161,7 +161,7 @@ If you want to try the new LOCAL mode (no Google Cloud setup required):
 | `drive_folder_id` | `googlecloud.drive_folder_id` | Required |
 | `adc_file` | `googlecloud.adc_file` | Required |
 | `region` | `googlecloud.region` | Optional (default: "global") |
-| `ocr_model_id` | `googlecloud.ocr_model_id` | Optional (default: "gemini-3-flash-preview") |
+| `ocr_model_id` | `googlecloud.ocr_model_id` | Optional (default: "gemini-flash-latest") |
 | `document_name` | `googlecloud.document_name` | Optional |
 | `title_page_filename` | `googlecloud.title_page_filename` | Optional |
 | `batch_size_for_doc` | `googlecloud.batch_size_for_doc` | Optional (default: 10) |
@@ -181,7 +181,7 @@ If you want to try the new LOCAL mode (no Google Cloud setup required):
 | `drive_folder_id` | ❌ Not used | Use `local.image_dir` instead |
 | `adc_file` | ❌ Not used | Use `local.api_key` instead |
 | `region` | ❌ Not used | Not applicable to LOCAL mode |
-| `ocr_model_id` | `local.ocr_model_id` | Optional (default: "gemini-1.5-pro") |
+| `ocr_model_id` | `local.ocr_model_id` | Optional (default: "gemini-flash-latest") |
 | `document_name` | ❌ Not used | LOCAL mode uses log files |
 | `title_page_filename` | ❌ Not used | LOCAL mode uses log files |
 | `batch_size_for_doc` | ❌ Not used | LOCAL mode doesn't batch |

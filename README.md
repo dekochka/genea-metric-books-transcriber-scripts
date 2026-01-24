@@ -234,8 +234,11 @@ local:
   # Output directory for log files (optional, default: "logs")
   output_dir: "logs"
   
-  # OCR Model ID (optional, default: "gemini-1.5-pro")
-  ocr_model_id: "gemini-1.5-pro"
+  # OCR Model ID (optional, default: "gemini-flash-latest")
+  # Available models: "gemini-flash-latest", "gemini-flash-lite-latest", 
+  #                   "gemini-3-pro-preview", "gemini-3-flash-preview"
+  # Note: Pro models have daily limits without a Google AI subscription
+  ocr_model_id: "gemini-flash-latest"
 
 # Shared configuration (applies to both modes)
 prompt_file: "f487o1s545-Turilche.md"
@@ -270,7 +273,7 @@ googlecloud:
   project_id: "ukr-transcribe-genea"
   drive_folder_id: "<your_drive_folder_id>"
   region: "global"
-  ocr_model_id: "gemini-3-flash-preview"
+  ocr_model_id: "gemini-flash-latest"
   adc_file: "application_default_credentials.json"
   document_name: "<your_document_name>"  # Optional
   title_page_filename: "title_page.jpg"  # Optional
