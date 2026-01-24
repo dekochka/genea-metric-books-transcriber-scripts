@@ -1412,11 +1412,11 @@ class CompositeOutput(OutputStrategy):
             except Exception as e:
                 logging.error(f"Error writing batch to {strategy.__class__.__name__}: {e}")
     
-    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None) -> None:
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
         """Finalize all strategies."""
         for strategy in self.strategies:
             try:
-                strategy.finalize(all_pages, metrics, start_time, end_time)
+                strategy.finalize(all_pages, metrics, start_time, end_time, error_info)
             except Exception as e:
                 logging.error(f"Error finalizing {strategy.__class__.__name__}: {e}")
 
@@ -1601,11 +1601,11 @@ class WordOutput(OutputStrategy):
             if last_end < len(line):
                 p.add_run(line[last_end:])
     
-    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None) -> None:
+    def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
         """Finalize Word document with overview."""
         if not self.doc or not self.overview_placeholder:
             raise ValueError("Word output not initialized")
-        overview = create_local_overview_section(all_pages, self.config, self.prompt_text, metrics=metrics, start_time=start_time, end_time=end_time)
+        overview = create_local_overview_section(all_pages, self.config, self.prompt_text, metrics=metrics, start_time=start_time, end_time=end_time, error_info=error_info)
         self.overview_placeholder.clear()
         run = self.overview_placeholder.add_run(overview)
         run.font.name = 'Courier New'
@@ -4465,6 +4465,7 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
         start_time = None
         end_time = None
         error_info = None
+        caught_exception = None
         
         try:
             # Process images using mode-specific processing function
@@ -4482,6 +4483,9 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
             ai_logger.info(f"=== Session Summary ===\n")
             
         except Exception as e:
+            # Save the exception for re-raising after finalization
+            caught_exception = e
+            
             # Capture error information for finalization
             error_type = type(e).__name__
             error_message = str(e)
@@ -4540,13 +4544,14 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
                 except Exception as finalize_error:
                     logging.error(f"Error during output finalization: {finalize_error}")
                     logging.error(f"Finalize traceback:\n{traceback.format_exc()}")
-            
-            # Re-raise the original exception if there was one
-            if error_info:
-                raise
+        
+        # Re-raise the original exception if there was one (outside finally block)
+        if caught_exception:
+            raise caught_exception
     
     except Exception as e:
         # Final catch-all for any unhandled exceptions
+        # This will catch the re-raised exception from above or any other unexpected errors
         logging.error(f"Fatal error: {str(e)}")
         logging.error(f"Full traceback:\n{traceback.format_exc()}")
         raise
