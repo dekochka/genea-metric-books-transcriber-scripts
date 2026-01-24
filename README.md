@@ -158,8 +158,35 @@ See the [Architecture Documentation](docs/ARCHITECTURE.md) for:
      ```
      This writes `application_default_credentials.json` used by the scripts.
    - **OAuth client** via built-in helper:
-     - Place your OAuth client as `client_secret.json` in the project root.
-     - Run `python refresh_credentials.py` (generates `application_default_credentials.json`).
+     - **Create OAuth 2.0 client in Google Cloud Console**:
+       1. Go to https://console.cloud.google.com/
+       2. Select your project (e.g., `ukr-transcribe-genea`)
+       3. Navigate to **APIs & Services** → **Credentials**
+       4. Click **+ CREATE CREDENTIALS** → **OAuth client ID**
+       5. If prompted to configure OAuth consent screen:
+          - Select **External**
+          - Fill required fields (App name, User support email, Developer contact email)
+          - Click **Save and Continue**
+          - In **Scopes** section, click **Add or Remove Scopes** and add:
+            - `https://www.googleapis.com/auth/drive`
+            - `https://www.googleapis.com/auth/documents`
+            - `https://www.googleapis.com/auth/cloud-platform`
+          - Click **Save and Continue**
+          - In **Test users** section, add your Google email as a test user
+          - Click **Save and Continue** → **Back to Dashboard**
+       6. Return to **Credentials** → **+ CREATE CREDENTIALS** → **OAuth client ID**
+       7. Select **Application type**: **Desktop app**
+       8. Enter a name (e.g., "Transcription Tool")
+       9. Click **Create**
+       10. Click **Download JSON** - file downloads as `client_secret_XXXXX.json`
+     - **Place the client file in project root**:
+       - Rename downloaded file to `client_secret.json`
+       - Copy `client_secret.json` to project root (where `transcribe.py` is located)
+     - **Run the helper script**:
+       ```bash
+       python refresh_credentials.py
+       ```
+       This opens a browser for authentication and generates `application_default_credentials.json`.
 3. **Drive access**:
    - Share the target Drive folder (configured via `drive_folder_id` in config) with the same Google account that authenticated (Editor).
 

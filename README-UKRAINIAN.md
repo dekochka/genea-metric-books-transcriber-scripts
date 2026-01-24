@@ -196,6 +196,65 @@ Notes: Obstetrix non approbata Parasceva Demkiw.
    
    **Важливо**: Якщо ви побачили помилку "Цей додаток заблоковано" або "app not verified", див. розділ "Вирішення проблем" нижче.
 
+#### Альтернативний метод: Використання refresh_credentials.py (OAuth клієнт)
+
+Якщо ви не можете використати gcloud ADC або віддаєте перевагу OAuth методу:
+
+1. **Створіть OAuth 2.0 клієнт у Google Cloud Console**:
+   - Перейдіть до https://console.cloud.google.com/
+   - Виберіть ваш проект (наприклад: `ukr-transcribe-genea`)
+   - Перейдіть до **APIs & Services** → **Credentials**
+   - Натисніть **+ CREATE CREDENTIALS** → **OAuth client ID**
+   - Якщо вас попросять налаштувати OAuth consent screen:
+     - Виберіть **External** (зовнішній)
+     - Заповніть обов'язкові поля (App name, User support email, Developer contact email)
+     - Натисніть **Save and Continue**
+     - У розділі **Scopes** натисніть **Add or Remove Scopes** і додайте:
+       - `https://www.googleapis.com/auth/drive`
+       - `https://www.googleapis.com/auth/documents`
+       - `https://www.googleapis.com/auth/cloud-platform`
+     - Натисніть **Save and Continue**
+     - У розділі **Test users** додайте свій Google email як тестового користувача
+     - Натисніть **Save and Continue** → **Back to Dashboard**
+   - Поверніться до **Credentials** → **+ CREATE CREDENTIALS** → **OAuth client ID**
+   - Виберіть **Application type**: **Desktop app**
+   - Введіть назву (наприклад: "Transcription Tool")
+   - Натисніть **Create**
+   - Натисніть **Download JSON** - файл завантажиться як `client_secret_XXXXX.json`
+
+2. **Перемістіть файл клієнта в проект**:
+   - Перейменуйте завантажений файл на `client_secret.json`
+   - Скопіюйте `client_secret.json` в кореневу папку проекту (там, де знаходиться `transcribe.py`)
+   - **Windows**: Скопіюйте файл в папку проекту (наприклад: `C:\Users\ВАШЕ_ІМ'Я\Documents\genea-metric-books-transcriber-scripts\`)
+   - **macOS/Linux**: Скопіюйте файл в папку проекту (наприклад: `~/Documents/genea-metric-books-transcriber-scripts/`)
+
+3. **Запустіть скрипт refresh_credentials.py**:
+   - Переконайтеся, що ви знаходитесь в папці проекту
+   - Активуйте віртуальне середовище (якщо ще не активовано):
+     - Windows (PowerShell):
+       ```powershell
+       .\venv\Scripts\Activate.ps1
+       ```
+     - macOS/Linux (Terminal):
+       ```bash
+       source venv/bin/activate
+       ```
+   - Запустіть скрипт:
+     - Windows (PowerShell):
+       ```powershell
+       python refresh_credentials.py
+       ```
+     - macOS/Linux (Terminal):
+       ```bash
+       python3 refresh_credentials.py
+       ```
+
+4. **Відкриється браузер** - увійдіть у свій Google акаунт і надайте дозволи
+
+5. **Файл `application_default_credentials.json`** буде створено автоматично в кореневій папці проекту
+
+**Примітка**: Якщо токен застаріє або буде відкликано, просто запустіть `refresh_credentials.py` знову для оновлення.
+
 ### Крок 4: Підготовка папки Google Drive
 
 1. **Створіть папку** в Google Drive для зображень метричних книг
