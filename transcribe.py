@@ -1517,17 +1517,75 @@ class WordOutput(OutputStrategy):
         """Write batch to Word document."""
         if not self.doc:
             raise ValueError("Word output not initialized")
-        for page in pages:
-            self.doc.add_heading(page['name'], level=2)
+        
+        archive_index = self.config.get('archive_index', '')
+        
+        for idx, page in enumerate(pages, start=1):
+            # Calculate page number (cumulative across batches)
+            page_number = (batch_num - 1) + idx if batch_num > 0 else idx
+            
+            # Add page header like "ф487оп1спр545стр1" (matching Google Docs format)
+            if archive_index:
+                page_header = f"{archive_index}стр{page_number}"
+            else:
+                page_header = page['name']
+            
+            self.doc.add_heading(page_header, level=2)
+            
+            # Add source link
             link = page.get('webViewLink', page.get('path', ''))
             if link:
                 p = self.doc.add_paragraph()
-                p.add_run('Source: ').bold = True
-                p.add_run(link)
+                p.add_run('Src Img Url: ').bold = True
+                p.add_run(page['name'])
                 self.doc.add_paragraph()
-            self.doc.add_paragraph(page.get('text', ''))
+            
+            # Add transcription text with bold formatting for **text**
+            text = page.get('text', '')
+            self._add_formatted_text(text)
+            
+            # Add separator
             self.doc.add_paragraph('_' * 80)
+        
         self.doc.save(self.doc_path)
+    
+    def _add_formatted_text(self, text: str) -> None:
+        """
+        Add text to document with bold formatting for **text** patterns.
+        
+        Args:
+            text: Text with markdown-style bold markers
+        """
+        import re
+        
+        # Split text by lines to preserve paragraph structure
+        lines = text.split('\n')
+        
+        for line in lines:
+            if not line.strip():
+                self.doc.add_paragraph()  # Empty line
+                continue
+            
+            p = self.doc.add_paragraph()
+            
+            # Pattern to match **text**
+            pattern = r'\*\*(.+?)\*\*'
+            last_end = 0
+            
+            for match in re.finditer(pattern, line):
+                # Add text before the match (normal)
+                if match.start() > last_end:
+                    p.add_run(line[last_end:match.start()])
+                
+                # Add the matched text (bold, without the **)
+                bold_run = p.add_run(match.group(1))
+                bold_run.bold = True
+                
+                last_end = match.end()
+            
+            # Add remaining text after last match
+            if last_end < len(line):
+                p.add_run(line[last_end:])
     
     def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None) -> None:
         """Finalize Word document with overview."""
