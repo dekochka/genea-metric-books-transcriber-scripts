@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.4-beta-dual-mode] - 2026-01-24
+
+### Added
+
+#### Multi-Format Output for LOCAL Mode
+- **Markdown Output**: Structured markdown files saved in source image directory
+  - Session overview with metadata
+  - Formatted transcriptions with proper newlines
+  - Source image links (relative paths)
+- **Word Document Output**: Microsoft Word (.docx) files with formatted transcriptions
+  - Bold text formatting for emphasized terms
+  - Page-numbered headers (e.g., ф487оп1спр545-стр1)
+  - Session metadata and overview
+- **Composite Output Pattern**: Multiple output formats generated simultaneously
+  - Log files (in output_dir)
+  - Markdown files (in image_dir)
+  - Word documents (in image_dir)
+
+#### Enhanced Error Handling
+- Retry logic with exponential backoff for 503 ServerError in LOCAL mode
+- Improved error messages with human-friendly descriptions
+- Resume instructions in output documents on errors
+- Partial results saved even when errors occur
+
+#### Windows Compatibility
+- Cross-platform path handling for file:// URLs
+- Normalized path separators for Windows compatibility
+- Relative path links in Markdown output to prevent path duplication
+
+#### Documentation
+- Detailed OAuth authentication instructions using refresh_credentials.py
+- Step-by-step guide for creating OAuth 2.0 clients in Google Cloud Console
+- Updated Ukrainian documentation (README-UKRAINIAN.md)
+- Enhanced authentication method documentation
+
+### Fixed
+
+- Fixed duplicate document creation in GOOGLECLOUD mode
+- Fixed empty range styling errors in Google Docs API calls
+- Fixed config access for nested configuration format in GOOGLECLOUD mode
+- Fixed path duplication in Markdown source links (LOCAL mode)
+- Fixed 503 Service Unavailable error handling with proper retry logic
+- Fixed Windows file:// URL path normalization
+
+### Changed
+
+- Improved error handling to ensure output documents are always finalized
+- Enhanced logging with full prompt text at session start
+- Better error context preservation in exception handling
+
+## [v0.3-beta-local] - 2026-01-24
+
+### Added
+
+#### LOCAL Mode (Tested and Certified)
+- Complete LOCAL mode implementation
+- Multi-format output (Log, Markdown, Word)
+- Windows compatibility fixes
+- Comprehensive error handling
+
 ## [v0.3-beta] - 2026-01-24
 
 ### Added
@@ -105,6 +165,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Migration Notes
 
+### Upgrading from v0.3-beta to v0.4-beta-dual-mode
+
+**New Features:**
+- Multi-format output in LOCAL mode (Markdown and Word files)
+- Enhanced error handling with retry logic for 503 errors
+- Windows compatibility improvements
+- Improved OAuth authentication documentation
+
+**No breaking changes** - all existing configurations continue to work.
+
 ### Upgrading from v0.2-beta to v0.3-beta
 
 **Your existing configuration files will continue to work!** The tool automatically detects and converts legacy configs.
@@ -142,6 +212,8 @@ See [Migration Guide](docs/MIGRATION.md) for detailed instructions.
 
 ## Version History
 
+- **v0.4-beta-dual-mode** (2026-01-24): Multi-format output, enhanced error handling, Windows compatibility, OAuth documentation
+- **v0.3-beta-local** (2026-01-24): Tested and certified LOCAL mode with multi-format output
 - **v0.3-beta** (2026-01-24): Dual-mode operation, strategy pattern refactoring, comprehensive testing
 - **v0.2-beta** (Pre-2026): Google Cloud integration release
 - **v0.1-beta** (Pre-2026): Initial release
