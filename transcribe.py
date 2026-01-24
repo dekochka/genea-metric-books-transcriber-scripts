@@ -526,11 +526,15 @@ class LocalImageSource(ImageSourceStrategy):
         all_images = []
         for img_path in all_image_paths:
             filename = os.path.basename(img_path)
+            # Normalize path for file:// URL (Windows requires forward slashes)
+            abs_path = os.path.abspath(img_path)
+            # Convert backslashes to forward slashes for file:// URLs (Windows compatibility)
+            normalized_path = abs_path.replace('\\', '/')
             all_images.append({
                 'name': filename,
                 'path': img_path,
                 'id': img_path,  # Use path as ID for local mode
-                'webViewLink': f"file://{os.path.abspath(img_path)}"  # Local file URL
+                'webViewLink': f"file://{normalized_path}"  # Local file URL (Windows-compatible)
             })
         
         # RETRY MODE: If enabled, filter for specific failed images only
