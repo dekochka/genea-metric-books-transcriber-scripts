@@ -1506,6 +1506,16 @@ class MarkdownOutput(OutputStrategy):
                 f.write(f"\n---\n\n## {page['name']}\n\n")
                 link = page.get('webViewLink', page.get('path', ''))
                 if link:
+                    # For local files, use relative path (just filename) since markdown is in same directory
+                    # This prevents path duplication when markdown is opened in browser/viewer
+                    # Markdown file is saved in target_dir (image_dir), same as images
+                    if link.startswith('http://') or link.startswith('https://'):
+                        # Keep Google Drive URLs as-is (GOOGLECLOUD mode)
+                        pass
+                    else:
+                        # For local files (file:// URLs, absolute paths, or relative paths),
+                        # use just the filename since markdown and images are in the same directory
+                        link = page['name']
                     f.write(f"**Source:** [{page['name']}]({link})\n\n")
                 # Preserve newlines by adding two spaces before newlines for markdown line breaks
                 text = page.get('text', '')
