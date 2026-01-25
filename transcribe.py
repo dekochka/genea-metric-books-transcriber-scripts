@@ -195,8 +195,18 @@ def validate_config(config: dict, mode: str) -> tuple[bool, list[str]]:
     errors = []
     
     # Shared required fields
-    if 'prompt_file' not in config:
-        errors.append("prompt_file is required")
+    # Support both prompt_file (legacy) and prompt_template (wizard mode)
+    if 'prompt_file' not in config and 'prompt_template' not in config:
+        errors.append("Either prompt_file or prompt_template must be specified")
+    elif 'prompt_template' in config:
+        # Validate template exists
+        template_name = config['prompt_template']
+        templates_dir = os.path.join(os.path.dirname(__file__), "prompts", "templates")
+        template_path = os.path.join(templates_dir, f"{template_name}.md")
+        if not os.path.exists(template_path):
+            errors.append(f"Prompt template not found: {template_path}")
+        # Note: Context validation will be added in Phase 3
+        # For now, context is optional (wizard may not have collected it yet)
     
     if 'archive_index' not in config:
         errors.append("archive_index is required")
@@ -4642,58 +4652,153 @@ if __name__ == '__main__':
         epilog="""
 Example usage:
   python transcribe.py config/config.yaml
+  python transcribe.py --wizard
   
 The config file must be a YAML file containing all required configuration parameters.
 See config/config.yaml.example for a template.
+
+Use --wizard to run the interactive configuration wizard.
         """
     )
     parser.add_argument(
         'config_file',
         type=str,
+        nargs='?',  # Make optional when --wizard is used
         help='Path to YAML configuration file (e.g., config/config.yaml)'
+    )
+    parser.add_argument(
+        '--wizard',
+        action='store_true',
+        help='Run interactive configuration wizard'
+    )
+    parser.add_argument(
+        '--output',
+        type=str,
+        help='Output path for generated config file (wizard mode only)'
     )
     
     args = parser.parse_args()
     
-    try:
-        # Load configuration first (needed for logging setup)
-        config = load_config(args.config_file)
-        
-        # Detect mode for logging purposes (before logging setup to determine log filename)
-        mode = detect_mode(config)
-        
-        # Set up logging - MUST be done before any logging calls
-        log_filename, ai_log_filename, ai_logger = setup_logging(config)
-        
-        # Now we can log
-        logging.info(f"Configuration loaded from: {args.config_file}")
-        logging.info(f"Detected mode: {mode.upper()}")
-        logging.info(f"Logging initialized. Main log: {log_filename}, AI log: {ai_log_filename}")
-        
-        # Load prompt text
-        prompt_file = config['prompt_file']
-        prompt_text = load_prompt_text(prompt_file)
-        logging.info(f"Prompt file loaded: {prompt_file} ({len(prompt_text)} characters)")
-        
-        # Get logs directory for save_transcription_locally
-        logs_dir = "logs"
-        
-        # Run main function
-        main(config, prompt_text, ai_logger, logs_dir)
-        
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        print(f"Please provide a valid configuration file path.", file=sys.stderr)
-        sys.exit(1)
-    except KeyError as e:
-        print(f"Error: Missing required configuration key: {e}", file=sys.stderr)
-        print(f"Please check your configuration file against config/config.yaml.example", file=sys.stderr)
-        sys.exit(1)
-    except yaml.YAMLError as e:
-        print(f"Error: Invalid YAML in configuration file: {e}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        logging.error(f"Fatal error: {e}")
-        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+    # Handle wizard mode
+    if args.wizard:
+        try:
+            from wizard.wizard_controller import WizardController
+            from wizard.steps.mode_selection_step import ModeSelectionStep
+            from wizard.steps.processing_settings_step import ProcessingSettingsStep
+            
+            # Create wizard controller
+            controller = WizardController()
+            
+            # Add steps
+            controller.add_step(ModeSelectionStep(controller))
+            # Note: ContextCollectionStep will be added in Phase 3
+            controller.add_step(ProcessingSettingsStep(controller))
+            
+            # Run wizard
+            config_path = controller.run(output_path=args.output)
+            
+            if config_path:
+                # Continue with normal flow using generated config
+                config = load_config(config_path)
+                
+                # Detect mode for logging purposes
+                mode = detect_mode(config)
+                
+                # Set up logging
+                log_filename, ai_log_filename, ai_logger = setup_logging(config)
+                
+                logging.info(f"Configuration loaded from: {config_path}")
+                logging.info(f"Detected mode: {mode.upper()}")
+                logging.info(f"Logging initialized. Main log: {log_filename}, AI log: {ai_log_filename}")
+                
+                # Load prompt text (will support template assembly in Phase 2)
+                prompt_file = config.get('prompt_file')
+                prompt_template = config.get('prompt_template')
+                
+                if prompt_template:
+                    # Phase 2: Will use PromptAssemblyEngine for context assembly
+                    # For now, load template directly (without context variable replacement)
+                    try:
+                        # Try loading from templates directory
+                        template_path = os.path.join(os.path.dirname(__file__), "prompts", "templates", f"{prompt_template}.md")
+                        if os.path.exists(template_path):
+                            with open(template_path, 'r', encoding='utf-8') as f:
+                                prompt_text = f.read()
+                            logging.warning("Template loaded without context assembly. Context variables ({{VARIABLE}}) will not be replaced until Phase 2.")
+                        else:
+                            raise FileNotFoundError(f"Template not found: {template_path}")
+                    except Exception as e:
+                        logging.error(f"Could not load template '{prompt_template}': {e}")
+                        raise ValueError(f"Template '{prompt_template}' not found: {e}")
+                elif prompt_file:
+                    prompt_text = load_prompt_text(prompt_file)
+                else:
+                    raise ValueError("Either prompt_file or prompt_template must be specified")
+                
+                logging.info(f"Prompt loaded: {prompt_file or prompt_template} ({len(prompt_text)} characters)")
+                
+                # Get logs directory
+                logs_dir = "logs"
+                
+                # Run main function
+                main(config, prompt_text, ai_logger, logs_dir)
+            else:
+                print("Wizard cancelled or failed. Exiting.")
+                sys.exit(1)
+                
+        except ImportError as e:
+            print(f"Error: Wizard mode not available: {e}", file=sys.stderr)
+            print("Please ensure all wizard dependencies are installed.", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error in wizard mode: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+    
+    # Normal mode (existing flow)
+    elif args.config_file:
+        try:
+            # Load configuration first (needed for logging setup)
+            config = load_config(args.config_file)
+            
+            # Detect mode for logging purposes (before logging setup to determine log filename)
+            mode = detect_mode(config)
+            
+            # Set up logging - MUST be done before any logging calls
+            log_filename, ai_log_filename, ai_logger = setup_logging(config)
+            
+            # Now we can log
+            logging.info(f"Configuration loaded from: {args.config_file}")
+            logging.info(f"Detected mode: {mode.upper()}")
+            logging.info(f"Logging initialized. Main log: {log_filename}, AI log: {ai_log_filename}")
+            
+            # Load prompt text
+            prompt_file = config['prompt_file']
+            prompt_text = load_prompt_text(prompt_file)
+            logging.info(f"Prompt file loaded: {prompt_file} ({len(prompt_text)} characters)")
+            
+            # Get logs directory for save_transcription_locally
+            logs_dir = "logs"
+            
+            # Run main function
+            main(config, prompt_text, ai_logger, logs_dir)
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            print(f"Please provide a valid configuration file path.", file=sys.stderr)
+            sys.exit(1)
+        except KeyError as e:
+            print(f"Error: Missing required configuration key: {e}", file=sys.stderr)
+            print(f"Please check your configuration file against config/config.yaml.example", file=sys.stderr)
+            sys.exit(1)
+        except yaml.YAMLError as e:
+            print(f"Error: Invalid YAML in configuration file: {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            logging.error(f"Fatal error: {e}")
+            logging.error(f"Full traceback:\n{traceback.format_exc()}")
+            sys.exit(1)
+    else:
+        parser.print_help()
         sys.exit(1)
