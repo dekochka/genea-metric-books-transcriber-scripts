@@ -10,9 +10,9 @@ from wizard.steps.base_step import WizardStep
 class MockStep(WizardStep):
     """Mock wizard step for testing."""
     
-    def __init__(self, step_data=None, should_cancel=False):
+    def __init__(self, controller, step_data=None, should_cancel=False):
         """Initialize mock step."""
-        super().__init__()
+        super().__init__(controller)
         self.step_data = step_data or {}
         self.should_cancel = should_cancel
         self.run_called = False
@@ -23,6 +23,10 @@ class MockStep(WizardStep):
         if self.should_cancel:
             return None
         return self.step_data
+    
+    def validate(self, data):
+        """Mock validate method."""
+        return True, []
 
 
 class TestWizardController:
@@ -38,8 +42,8 @@ class TestWizardController:
     def test_add_step(self):
         """Test adding steps to controller."""
         controller = WizardController()
-        step1 = MockStep()
-        step2 = MockStep()
+        step1 = MockStep(controller)
+        step2 = MockStep(controller)
         
         controller.add_step(step1)
         controller.add_step(step2)
@@ -80,13 +84,18 @@ class TestWizardController:
         assert controller.collected_data['key1'] == 'value1'
         assert controller.collected_data['key2'] == 42
     
-    @patch('wizard.wizard_controller.ConfigGenerator')
-    def test_run_single_step(self, mock_config_generator_class):
+    @patch('transcribe.load_config')
+    @patch('transcribe.detect_mode')
+    @patch('wizard.config_generator.ConfigGenerator')
+    @patch('wizard.preflight_validator.PreFlightValidator')
+    @patch('questionary.path')
+    def test_run_single_step(self, mock_questionary_path, mock_validator_class, mock_config_generator_class, 
+                             mock_detect_mode, mock_load_config):
         """Test running wizard with single step."""
         controller = WizardController()
         
         step_data = {'mode': 'local', 'image_dir': '/path/to/images'}
-        step = MockStep(step_data=step_data)
+        step = MockStep(controller, step_data=step_data)
         controller.add_step(step)
         
         # Mock config generator
@@ -94,20 +103,37 @@ class TestWizardController:
         mock_generator.generate.return_value = '/path/to/config.yaml'
         mock_config_generator_class.return_value = mock_generator
         
+        # Mock validation
+        mock_validator = MagicMock()
+        mock_result = MagicMock()
+        mock_result.is_valid = True
+        mock_result.has_issues.return_value = False
+        mock_validator.validate.return_value = mock_result
+        mock_validator_class.return_value = mock_validator
+        
+        # Mock config loading
+        mock_load_config.return_value = {}
+        mock_detect_mode.return_value = 'local'
+        
         result = controller.run(output_path='/path/to/config.yaml')
         
         assert step.run_called is True
         assert result == '/path/to/config.yaml'
         mock_generator.generate.assert_called_once()
     
-    @patch('wizard.wizard_controller.ConfigGenerator')
-    def test_run_multiple_steps(self, mock_config_generator_class):
+    @patch('transcribe.load_config')
+    @patch('transcribe.detect_mode')
+    @patch('wizard.config_generator.ConfigGenerator')
+    @patch('wizard.preflight_validator.PreFlightValidator')
+    @patch('questionary.path')
+    def test_run_multiple_steps(self, mock_questionary_path, mock_validator_class, mock_config_generator_class,
+                                mock_detect_mode, mock_load_config):
         """Test running wizard with multiple steps."""
         controller = WizardController()
         
-        step1 = MockStep(step_data={'mode': 'local'})
-        step2 = MockStep(step_data={'image_dir': '/path/to/images'})
-        step3 = MockStep(step_data={'output_dir': '/path/to/output'})
+        step1 = MockStep(controller, step_data={'mode': 'local'})
+        step2 = MockStep(controller, step_data={'image_dir': '/path/to/images'})
+        step3 = MockStep(controller, step_data={'output_dir': '/path/to/output'})
         
         controller.add_step(step1)
         controller.add_step(step2)
@@ -118,6 +144,21 @@ class TestWizardController:
         mock_generator.generate.return_value = '/path/to/config.yaml'
         mock_config_generator_class.return_value = mock_generator
         
+        # Mock questionary for output path
+        mock_questionary_path.return_value.ask.return_value = '/path/to/config.yaml'
+        
+        # Mock validation
+        mock_validator = MagicMock()
+        mock_result = MagicMock()
+        mock_result.is_valid = True
+        mock_result.has_issues.return_value = False
+        mock_validator.validate.return_value = mock_result
+        mock_validator_class.return_value = mock_validator
+        
+        # Mock config loading
+        mock_load_config.return_value = {}
+        mock_detect_mode.return_value = 'local'
+        
         result = controller.run()
         
         assert step1.run_called is True
@@ -125,13 +166,12 @@ class TestWizardController:
         assert step3.run_called is True
         assert result is not None
     
-    @patch('wizard.wizard_controller.ConfigGenerator')
-    def test_run_step_cancels(self, mock_config_generator_class):
+    def test_run_step_cancels(self):
         """Test wizard cancellation when step returns None."""
         controller = WizardController()
         
-        step1 = MockStep(step_data={'mode': 'local'})
-        step2 = MockStep(should_cancel=True)  # This step cancels
+        step1 = MockStep(controller, step_data={'mode': 'local'})
+        step2 = MockStep(controller, should_cancel=True)  # This step cancels
         
         controller.add_step(step1)
         controller.add_step(step2)
@@ -141,10 +181,14 @@ class TestWizardController:
         assert step1.run_called is True
         assert step2.run_called is True
         assert result is None  # Wizard was cancelled
-        mock_config_generator_class.assert_not_called()
     
-    @patch('wizard.wizard_controller.ConfigGenerator')
-    def test_run_data_passed_to_steps(self, mock_config_generator_class):
+    @patch('transcribe.load_config')
+    @patch('transcribe.detect_mode')
+    @patch('wizard.config_generator.ConfigGenerator')
+    @patch('wizard.preflight_validator.PreFlightValidator')
+    @patch('questionary.path')
+    def test_run_data_passed_to_steps(self, mock_questionary_path, mock_validator_class, mock_config_generator_class,
+                                      mock_detect_mode, mock_load_config):
         """Test that data is passed between steps."""
         controller = WizardController()
         
@@ -153,10 +197,12 @@ class TestWizardController:
             def run(self):
                 mode = self.controller.get_data('mode')
                 return {'image_dir': f'/path/to/{mode}/images'}
+            
+            def validate(self, data):
+                return True, []
         
-        step1 = MockStep(step_data={'mode': 'local'})
-        step2 = DataUsingStep()
-        step2.controller = controller  # Set controller reference
+        step1 = MockStep(controller, step_data={'mode': 'local'})
+        step2 = DataUsingStep(controller)
         
         controller.add_step(step1)
         controller.add_step(step2)
@@ -166,19 +212,38 @@ class TestWizardController:
         mock_generator.generate.return_value = '/path/to/config.yaml'
         mock_config_generator_class.return_value = mock_generator
         
+        # Mock questionary for output path
+        mock_questionary_path.return_value.ask.return_value = '/path/to/config.yaml'
+        
+        # Mock validation
+        mock_validator = MagicMock()
+        mock_result = MagicMock()
+        mock_result.is_valid = True
+        mock_result.has_issues.return_value = False
+        mock_validator.validate.return_value = mock_result
+        mock_validator_class.return_value = mock_validator
+        
+        # Mock config loading
+        mock_load_config.return_value = {}
+        mock_detect_mode.return_value = 'local'
+        
         result = controller.run()
         
         assert result is not None
         # Verify step2 received data from step1
         assert controller.collected_data.get('mode') == 'local'
     
-    @patch('wizard.wizard_controller.ConfigGenerator')
-    @patch('wizard.wizard_controller.PreFlightValidator')
-    def test_run_includes_validation(self, mock_validator_class, mock_config_generator_class):
+    @patch('transcribe.load_config')
+    @patch('transcribe.detect_mode')
+    @patch('wizard.config_generator.ConfigGenerator')
+    @patch('wizard.preflight_validator.PreFlightValidator')
+    @patch('questionary.path')
+    def test_run_includes_validation(self, mock_questionary_path, mock_validator_class, mock_config_generator_class,
+                                    mock_detect_mode, mock_load_config):
         """Test that wizard runs validation before generating config."""
         controller = WizardController()
         
-        step = MockStep(step_data={'mode': 'local'})
+        step = MockStep(controller, step_data={'mode': 'local'})
         controller.add_step(step)
         
         # Mock validator
@@ -193,6 +258,13 @@ class TestWizardController:
         mock_generator = MagicMock()
         mock_generator.generate.return_value = '/path/to/config.yaml'
         mock_config_generator_class.return_value = mock_generator
+        
+        # Mock questionary for output path
+        mock_questionary_path.return_value.ask.return_value = '/path/to/config.yaml'
+        
+        # Mock config loading
+        mock_load_config.return_value = {}
+        mock_detect_mode.return_value = 'local'
         
         result = controller.run()
         

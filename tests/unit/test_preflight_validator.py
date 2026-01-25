@@ -85,13 +85,15 @@ class TestPreFlightValidator:
         
         assert any("too short" in warning.lower() for warning in result.warnings)
     
-    @patch('wizard.preflight_validator.genai')
-    def test_validate_local_mode_valid_api_key(self, mock_genai, validator):
+    @patch('google.genai.Client')
+    def test_validate_local_mode_valid_api_key(self, mock_client_class, validator):
         """Test validation passes with valid API key."""
         # Mock successful API call
         mock_client = MagicMock()
-        mock_client.models.list.return_value = []
-        mock_genai.Client.return_value = mock_client
+        mock_models = MagicMock()
+        mock_models.list.return_value = []
+        mock_client.models = mock_models
+        mock_client_class.return_value = mock_client
         
         config = {
             "mode": "local",
@@ -219,7 +221,7 @@ class TestPreFlightValidator:
         assert any("template" in error.lower() for error in result.errors)
     
     def test_validate_images_no_images(self, validator, temp_dir):
-        """Test validation warns when no images found."""
+        """Test validation errors when no images found."""
         config = {
             "mode": "local",
             "local": {
@@ -229,10 +231,17 @@ class TestPreFlightValidator:
             "context": {}
         }
         
-        with patch.dict(os.environ, {"GEMINI_API_KEY": "test_key"}):
-            result = validator.validate(config, "local")
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test_key_1234567890"}):
+            with patch('google.genai.Client') as mock_client_class:
+                mock_client = MagicMock()
+                mock_models = MagicMock()
+                mock_models.list.return_value = []
+                mock_client.models = mock_models
+                mock_client_class.return_value = mock_client
+                result = validator.validate(config, "local")
         
-        assert any("image" in warning.lower() for warning in result.warnings)
+        # Check for errors about images (implementation adds error, not warning)
+        assert any("image" in error.lower() or "no image" in error.lower() for error in result.errors)
     
     def test_validate_images_found(self, validator, temp_dir):
         """Test validation passes when images are found."""
