@@ -3314,12 +3314,20 @@ Images with Errors ({len(failed_pages)}):
     if metrics:
         overview_content += f"""
 Metrics:
-Total Time: {metrics.get('total_time', 0):.1f} seconds
+Total Time: {metrics.get('total_time', 0):.1f} seconds ({metrics.get('total_time', 0)/60:.1f} minutes)
 Average Time per Page: {metrics.get('avg_time_per_page', 0):.2f} seconds
 """
         if 'total_input_tokens' in metrics:
             overview_content += f"Total Input Tokens: {metrics['total_input_tokens']:,}\n"
             overview_content += f"Total Output Tokens: {metrics['total_output_tokens']:,}\n"
+            if metrics.get('total_cached_tokens', 0) > 0:
+                overview_content += f"Total Cached Tokens: {metrics['total_cached_tokens']:,}\n"
+            if 'estimated_cost_per_run' in metrics:
+                overview_content += f"Estimated Cost per Run: ${metrics['estimated_cost_per_run']:.6f}\n"
+            if 'estimated_cost_per_page' in metrics:
+                overview_content += f"Estimated Cost per Page: ${metrics['estimated_cost_per_page']:.6f}\n"
+            if 'page_count' in metrics:
+                overview_content += f"Pages Processed: {metrics['page_count']}\n"
     
     overview_content += f"""
 Prompt Used:
