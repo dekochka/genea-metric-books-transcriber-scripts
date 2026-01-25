@@ -72,15 +72,15 @@ The script processes images from a local directory containing scanned pages from
 **Output: Multiple Formats** (All saved in the source image directory):
 
 1. **Markdown File** (`.md`): Structured markdown with formatted transcriptions
-   - Example: [`ф487оп1спр545_20260124_144542.md`](data_samples/test_input_sample/ф487оп1спр545_20260124_144542.md)
+   - Example: [`ф487оп1спр526_20260126_081844.md`](data_samples/test_input_sample/ф487оп1спр526_20260126_081844.md)
    - Session overview with metadata
    - Formatted transcriptions with proper newlines
    - Source image links
 
 2. **Word Document** (`.docx`): Microsoft Word document with formatted transcriptions
-   - Example: [`ф487оп1спр545_20260124_144542.docx`](data_samples/test_input_sample/ф487оп1спр545_20260124_144542.docx)
+   - Example: [`ф487оп1спр526_20260126_081844.docx`](data_samples/test_input_sample/ф487оп1спр526_20260126_081844.docx)
    - Bold text formatting for emphasized terms
-   - Page-numbered headers (e.g., ф487оп1спр545-стр1)
+   - Page-numbered headers (e.g., ф487оп1спр526-стр1)
    - Session metadata and overview
 
 3. **Log File** (`.log`): Detailed transcription log with session metadata (saved in `logs/` directory)
@@ -553,7 +553,7 @@ Extracted Context from Title Page:
   Document Type: Метрична книга про народження
   Date Range: 1888 (липень - грудень) - 1924 (січень - квітень)
   Main Villages: Турильче (Turylcze)
-  Common Surnames: Rohaczuk, Didyk, Babij, Paszczuk, Lachidnick, Czepe, Jakowyczyn, Rau, Leszczynski
+  Common Surnames: Rohaczuk, Didyk, Babij, Paszczuk, Lachidnick, Czepeczuk, Jakowyczyn
 ? What would you like to do? Accept all extracted data
 
 Step 3/3: ProcessingSettingsStep
@@ -653,14 +653,14 @@ LOCAL mode generates **three output files** for every transcription session:
      - Session overview section with metadata
      - Formatted transcriptions with proper newlines
      - Source image links (relative paths)
-     - Example: [`ф487оп1спр545_20260124_144542.md`](data_samples/test_input_sample/ф487оп1спр545_20260124_144542.md)
+     - Example: [`ф487оп1спр526_20260126_081844.md`](data_samples/test_input_sample/ф487оп1спр526_20260126_081844.md)
 
 3. **Word Document** (saved in source image directory):
    - `{archive_index}_YYYYMMDD_HHMMSS.docx` - Microsoft Word document with:
      - Session overview with metadata
      - Formatted transcriptions with bold text for emphasized terms
-     - Page-numbered headers (e.g., ф487оп1спр545-стр1)
-     - Example: [`ф487оп1спр545_20260124_144542.docx`](data_samples/test_input_sample/ф487оп1спр545_20260124_144542.docx)
+     - Page-numbered headers (e.g., ф487оп1спр526-стр1)
+     - Example: [`ф487оп1спр526_20260126_081844.docx`](data_samples/test_input_sample/ф487оп1спр526_20260126_081844.docx)
 
 All output files are created simultaneously during transcription, allowing you to:
 - View transcriptions in your preferred format (Markdown or Word)
