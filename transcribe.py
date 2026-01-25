@@ -2727,8 +2727,43 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
                 logging.error(f"Full traceback:\n{traceback.format_exc()}")
                 # Return error text with None for timing and metadata
                 return f"[Error during transcription: {str(e)}]", None, None
-                
+        
         except Exception as e:
+            # Check if this is a timeout-related exception from httpx/httpcore
+            # httpx.ReadTimeout and httpcore.ReadTimeout should be retried
+            error_type = type(e).__name__
+            error_module = type(e).__module__
+            error_str = str(e).lower()
+            
+            # Detect timeout errors from various sources
+            is_timeout_error = (
+                'Timeout' in error_type or  # TimeoutError, ReadTimeout, etc.
+                'ReadTimeout' in error_type or  # httpx.ReadTimeout, httpcore.ReadTimeout
+                ('timeout' in error_str and ('httpx' in error_module or 'httpcore' in error_module))  # Timeout errors from httpx/httpcore
+            )
+            
+            # If it's a timeout error, treat it like TimeoutError and retry
+            if is_timeout_error and attempt < max_retries - 1:
+                # Cancel any pending timeout
+                signal.alarm(0)
+                
+                attempt_elapsed = time.time() - attempt_start_time
+                total_elapsed = time.time() - function_start_time
+                
+                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} failed for '{file_name}' after {attempt_elapsed:.1f}s (total elapsed: {total_elapsed:.1f}s): {error_type}: {str(e)}"
+                logging.warning(error_msg)
+                ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1} failed for {file_name}: {error_type}: {str(e)}")
+                ai_logger.warning(f"Attempt elapsed time: {attempt_elapsed:.1f}s, Total function time: {total_elapsed:.1f}s")
+                
+                next_timeout = timeout_seconds_list[attempt + 1]
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay} seconds... (exponential backoff, next timeout: {next_timeout/60:.1f} min)")
+                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Will retry in {retry_delay}s with exponential backoff (next timeout: {next_timeout/60:.1f} min)")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retry delay completed, starting attempt {attempt + 2}/{max_retries}...")
+                continue  # Explicitly continue to next iteration
+                
+            # Not a timeout error or all retries exhausted - handle as unexpected error
             # Cancel any pending timeout
             signal.alarm(0)
             
