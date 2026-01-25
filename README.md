@@ -13,9 +13,9 @@ A specialized tool for transcribing handwritten genealogical records (birth, dea
 
 ### Quick Start
 
-**Wizard Mode (Recommended - Interactive Configuration):**
+**Wizard Mode (Recommended - Interactive Configuration - Default):**
 1. Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/api-keys) - **No Google Cloud setup needed!**
-2. Run: `python3 transcribe.py --wizard`
+2. Run: `python3 transcribe.py` (wizard mode is the default)
 3. Follow the interactive prompts to:
    - Select processing mode (LOCAL or GOOGLECLOUD)
    - Choose image directory/Drive folder
