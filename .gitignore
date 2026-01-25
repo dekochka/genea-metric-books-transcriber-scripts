@@ -30,5 +30,10 @@ famsearch_page_sources/
 *.bak
 
 
-# Local test configs with API keys
+# Local test configs with API keys and user-generated configs
 config/test-local.yaml
+config/test-googlecloud.yaml
+config/my-*.yaml
+config/*-test*.yaml
+config/*-tmp*.yaml
+config/config-RS-*.yaml
