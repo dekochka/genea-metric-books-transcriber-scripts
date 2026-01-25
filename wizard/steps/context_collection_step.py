@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from wizard.steps.base_step import WizardStep
+from wizard.i18n import t
 
 
 class ContextCollectionStep(WizardStep):
@@ -40,8 +41,9 @@ class ContextCollectionStep(WizardStep):
             - common_surnames (list of strings)
             - title_page_filename (optional)
         """
-        self.console.print("\n[bold cyan]Context Information Collection[/bold cyan]")
-        self.console.print("[dim]Provide information about the document and villages.[/dim]\n")
+        lang = self.controller.get_language()
+        self.console.print(f"\n[bold cyan]{t('context.title', lang)}[/bold cyan]")
+        self.console.print(f"[dim]{t('context.description', lang)}[/dim]\n")
         
         # Get mode and config from previous step
         mode = self.controller.get_data("mode", "local")
@@ -51,10 +53,10 @@ class ContextCollectionStep(WizardStep):
         # Use select instead of confirm for better reliability and clarity
         # Default is Yes (first choice)
         use_title_page_choice = questionary.select(
-            "Do you want to extract context from a title page image?",
+            t('context.title_page_prompt', lang),
             choices=[
-                questionary.Choice("Yes - Extract from title page image", value=True),
-                questionary.Choice("No - Enter information manually", value=False),
+                questionary.Choice(t('context.title_page_yes', lang), value=True),
+                questionary.Choice(t('context.title_page_no', lang), value=False),
             ]
         ).ask()
         
@@ -76,63 +78,64 @@ class ContextCollectionStep(WizardStep):
         Returns:
             Context dictionary
         """
+        lang = self.controller.get_language()
         context = {}
         
         # Archive reference
-        self.console.print("[bold]Archive Reference[/bold]")
-        self.console.print("[dim]Example: Ф. 487, оп. 1, спр. 545[/dim]")
+        self.console.print(f"[bold]{t('context.archive_reference_title', lang)}[/bold]")
+        self.console.print(f"[dim]{t('context.archive_reference_example', lang)}[/dim]")
         archive_ref = questionary.text(
-            "Archive Reference:",
+            t('context.archive_reference_prompt', lang),
             validate=lambda x: len(x.strip()) > 0 if x else False
         ).ask()
         context['archive_reference'] = archive_ref.strip() if archive_ref else ""
         
         # Document type
-        self.console.print("\n[bold]Document Type[/bold]")
-        self.console.print("[dim]Example: Метрична книга про народження[/dim]")
+        self.console.print(f"\n[bold]{t('context.document_type_title', lang)}[/bold]")
+        self.console.print(f"[dim]{t('context.document_type_example', lang)}[/dim]")
         doc_type = questionary.text(
-            "Document Type:",
+            t('context.document_type_prompt', lang),
             validate=lambda x: len(x.strip()) > 0 if x else False
         ).ask()
         context['document_type'] = doc_type.strip() if doc_type else ""
         
         # Date range
-        self.console.print("\n[bold]Date Range[/bold]")
-        self.console.print("[dim]Example: 1888-1924 or 1888 (липень - грудень) - 1924[/dim]")
+        self.console.print(f"\n[bold]{t('context.date_range_title', lang)}[/bold]")
+        self.console.print(f"[dim]{t('context.date_range_example', lang)}[/dim]")
         date_range = questionary.text(
-            "Date Range:",
+            t('context.date_range_prompt', lang),
             validate=lambda x: len(x.strip()) > 0 if x else False
         ).ask()
         context['date_range'] = date_range.strip() if date_range else ""
         
         # Main villages
-        self.console.print("\n[bold]Main Villages[/bold]")
-        self.console.print("[dim]Enter villages that are primarily related to this document.[/dim]")
-        self.console.print("[dim]For each village, you can provide variants (Latin spellings).[/dim]")
-        self.console.print("[dim]Format: VillageName (variant1, variant2) or just VillageName[/dim]")
+        self.console.print(f"\n[bold]{t('context.main_villages_title', lang)}[/bold]")
+        self.console.print(f"[dim]{t('context.main_villages_hint1', lang)}[/dim]")
+        self.console.print(f"[dim]{t('context.main_villages_hint2', lang)}[/dim]")
+        self.console.print(f"[dim]{t('context.main_villages_hint3', lang)}[/dim]")
         
-        main_villages = self._collect_villages("Main Villages")
+        main_villages = self._collect_villages(t('context.main_villages_title', lang))
         context['main_villages'] = main_villages
         
         # Additional villages
-        self.console.print("\n[bold]Additional Villages[/bold]")
-        self.console.print("[dim]Enter villages that may appear but are not the main focus (optional).[/dim]")
+        self.console.print(f"\n[bold]{t('context.additional_villages_title', lang)}[/bold]")
+        self.console.print(f"[dim]{t('context.additional_villages_hint', lang)}[/dim]")
         has_additional = questionary.confirm(
-            "Do you want to add additional villages?",
+            t('context.additional_villages_prompt', lang),
             default=False
         ).ask()
         
         if has_additional:
-            additional_villages = self._collect_villages("Additional Villages")
+            additional_villages = self._collect_villages(t('context.additional_villages_title', lang))
             context['additional_villages'] = additional_villages
         else:
             context['additional_villages'] = []
         
         # Common surnames
-        self.console.print("\n[bold]Common Surnames[/bold]")
-        self.console.print("[dim]Enter surnames commonly found in these villages (optional).[/dim]")
+        self.console.print(f"\n[bold]{t('context.common_surnames_title', lang)}[/bold]")
+        self.console.print(f"[dim]{t('context.common_surnames_hint', lang)}[/dim]")
         has_surnames = questionary.confirm(
-            "Do you want to add common surnames?",
+            t('context.common_surnames_prompt', lang),
             default=False
         ).ask()
         
@@ -154,11 +157,12 @@ class ContextCollectionStep(WizardStep):
         Returns:
             List of village dictionaries with 'name' and 'variants' keys
         """
+        lang = self.controller.get_language()
         villages = []
         
         while True:
             village_input = questionary.text(
-                f"{label} (press Enter when done):",
+                t('context.village_prompt', lang),
                 default=""
             ).ask()
             
@@ -183,7 +187,8 @@ class ContextCollectionStep(WizardStep):
                 'variants': variants
             })
             
-            self.console.print(f"  [green]✓[/green] Added: {name}" + 
+            lang = self.controller.get_language()
+            self.console.print(f"  [green]✓[/green] {t('context.added', lang, item=name)}" + 
                              (f" (variants: {', '.join(variants)})" if variants else ""))
         
         return villages
@@ -195,11 +200,12 @@ class ContextCollectionStep(WizardStep):
         Returns:
             List of surname strings
         """
+        lang = self.controller.get_language()
         surnames = []
         
         while True:
             surname_input = questionary.text(
-                "Common Surname (press Enter when done):",
+                t('context.surname_prompt', lang),
                 default=""
             ).ask()
             
@@ -207,7 +213,8 @@ class ContextCollectionStep(WizardStep):
                 break
             
             surnames.append(surname_input.strip())
-            self.console.print(f"  [green]✓[/green] Added: {surname_input.strip()}")
+            lang = self.controller.get_language()
+            self.console.print(f"  [green]✓[/green] {t('context.added', lang, item=surname_input.strip())}")
         
         return surnames
     

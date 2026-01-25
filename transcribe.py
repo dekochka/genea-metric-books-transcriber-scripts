@@ -5265,12 +5265,14 @@ See config/config.yaml.example for a template.
     # Handle wizard mode (default behavior)
     if run_wizard:
         try:
-            from wizard.wizard_controller import WizardController
+            from wizard.wizard_controller import WizardController, select_language
             from wizard.steps.mode_selection_step import ModeSelectionStep
             from wizard.steps.processing_settings_step import ProcessingSettingsStep
             
+            # Select language first
+            lang = select_language()
             # Create wizard controller
-            controller = WizardController()
+            controller = WizardController(lang=lang)
             
             # Add steps
             controller.add_step(ModeSelectionStep(controller))

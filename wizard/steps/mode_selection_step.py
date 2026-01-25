@@ -11,6 +11,7 @@ import questionary
 from rich.console import Console
 
 from wizard.steps.base_step import WizardStep
+from wizard.i18n import t
 
 
 class ModeSelectionStep(WizardStep):
@@ -28,19 +29,20 @@ class ModeSelectionStep(WizardStep):
         Returns:
             Dictionary with mode and mode-specific settings
         """
-        self.console.print("\n[bold]Step 1: Select Processing Mode[/bold]")
-        self.console.print("Choose how you want to process images:\n")
+        lang = self.controller.get_language()
+        self.console.print(f"\n[bold]{t('mode_selection.title', lang)}[/bold]")
+        self.console.print(f"{t('mode_selection.description', lang)}\n")
         
         # Select mode
         mode = questionary.select(
-            "Select processing mode:",
+            t('mode_selection.prompt', lang),
             choices=[
                 questionary.Choice(
-                    "Local (process images from local folder)",
+                    t('mode_selection.local', lang),
                     value="local"
                 ),
                 questionary.Choice(
-                    "Google Cloud (process images from Google Drive folder)",
+                    t('mode_selection.googlecloud', lang),
                     value="googlecloud"
                 ),
             ]
@@ -61,12 +63,13 @@ class ModeSelectionStep(WizardStep):
     
     def _collect_local_settings(self) -> Dict[str, Any]:
         """Collect settings for LOCAL mode."""
+        lang = self.controller.get_language()
         local_data = {}
         
         # Image directory
         image_dir = questionary.path(
-            "Enter path to directory containing images:",
-            default="data_samples/test_input_sample"
+            t('local.image_dir_prompt', lang),
+            default=t('local.image_dir_default', lang)
         ).ask()
         
         if not image_dir:
@@ -82,15 +85,15 @@ class ModeSelectionStep(WizardStep):
         if env_api_key:
             # Environment variable is set - ask if user wants to use it
             use_env_key = questionary.confirm(
-                "Use GEMINI_API_KEY environment variable?",
+                t('local.use_env_key', lang),
                 default=True
             ).ask()
             
             if not use_env_key:
                 # User wants to provide their own key instead
-                self.console.print("[dim]Get your API key from: https://aistudio.google.com/api-keys[/dim]")
+                self.console.print(f"[dim]{t('local.api_key_hint', lang)}[/dim]")
                 api_key = questionary.text(
-                    "Enter Gemini API key:",
+                    t('local.api_key_prompt', lang),
                     default=""
                 ).ask()
                 if api_key:
@@ -99,21 +102,21 @@ class ModeSelectionStep(WizardStep):
             # so the code will use the env var at runtime
         else:
             # Environment variable is not set - ask for API key directly
-            self.console.print("[dim]Get your API key from: https://aistudio.google.com/api-keys[/dim]")
+            self.console.print(f"[dim]{t('local.api_key_hint', lang)}[/dim]")
             api_key = questionary.text(
-                "Enter Gemini API key:",
+                t('local.api_key_prompt', lang),
                 default=""
             ).ask()
             if api_key:
                 local_data["api_key"] = api_key
             else:
                 # User didn't provide key and env var is not set
-                self.console.print("[yellow]⚠ Warning: No API key provided. You'll need to set GEMINI_API_KEY environment variable before running transcription.[/yellow]")
+                self.console.print(f"[yellow]{t('local.no_api_key_warning', lang)}[/yellow]")
         
         # Output directory (optional)
         output_dir = questionary.path(
-            "Enter output directory for logs (or press Enter for default 'logs'):",
-            default="logs"
+            t('local.output_dir_prompt', lang),
+            default=t('local.output_dir_default', lang)
         ).ask()
         
         if output_dir:
@@ -121,7 +124,7 @@ class ModeSelectionStep(WizardStep):
         
         # Ask if logs should be saved to source image directory
         save_logs_to_source = questionary.confirm(
-            "Save logs to source image directory?",
+            t('local.save_logs_to_source', lang),
             default=True
         ).ask()
         
@@ -130,9 +133,9 @@ class ModeSelectionStep(WizardStep):
         
         # OCR model (optional, with default)
         ocr_model = questionary.select(
-            "Select OCR model:",
+            t('local.ocr_model_prompt', lang),
             choices=[
-                questionary.Choice("gemini-3-flash-preview (recommended)", value="gemini-3-flash-preview"),
+                questionary.Choice(t('local.ocr_model_recommended', lang), value="gemini-3-flash-preview"),
                 questionary.Choice("gemini-flash-latest", value="gemini-flash-latest"),
                 questionary.Choice("gemini-flash-lite-latest", value="gemini-flash-lite-latest"),
                 questionary.Choice("gemini-3-pro-preview", value="gemini-3-pro-preview"),
@@ -147,15 +150,16 @@ class ModeSelectionStep(WizardStep):
     
     def _collect_googlecloud_settings(self) -> Dict[str, Any]:
         """Collect settings for GOOGLECLOUD mode."""
+        lang = self.controller.get_language()
         gc_data = {}
         
         # Project ID
-        self.console.print("\n[bold]Google Cloud Project ID[/bold]")
-        self.console.print("[dim]Find this in Google Cloud Console: https://console.cloud.google.com/[/dim]")
-        self.console.print("[dim]Example: ru-ocr-genea or my-transcription-project[/dim]")
+        self.console.print(f"\n[bold]{t('googlecloud.project_id_title', lang)}[/bold]")
+        self.console.print(f"[dim]{t('googlecloud.project_id_hint', lang)}[/dim]")
+        self.console.print(f"[dim]{t('googlecloud.project_id_example', lang)}[/dim]")
         project_id = questionary.text(
-            "Enter Google Cloud Project ID:",
-            default="ru-ocr-genea"
+            t('googlecloud.project_id_prompt', lang),
+            default=t('googlecloud.project_id_default', lang)
         ).ask()
         
         if not project_id:
@@ -164,29 +168,29 @@ class ModeSelectionStep(WizardStep):
         gc_data["project_id"] = project_id
         
         # Drive folder ID (from URL or direct)
-        self.console.print("\n[bold]Google Drive Folder[/bold]")
-        self.console.print("[dim]Get folder ID from Drive folder URL: https://drive.google.com/drive/folders/FOLDER_ID[/dim]")
-        self.console.print("[dim]You can paste the full URL or just the folder ID[/dim]")
+        self.console.print(f"\n[bold]{t('googlecloud.drive_folder_title', lang)}[/bold]")
+        self.console.print(f"[dim]{t('googlecloud.drive_folder_hint', lang)}[/dim]")
+        self.console.print(f"[dim]{t('googlecloud.drive_folder_hint2', lang)}[/dim]")
         drive_input = questionary.text(
-            "Enter Google Drive folder URL or folder ID:",
+            t('googlecloud.drive_folder_prompt', lang),
             validate=lambda x: len(x.strip()) > 0 if x else False
         ).ask()
         
         if not drive_input:
-            self.console.print("[red]Error: Drive folder ID is required.[/red]")
+            self.console.print(f"[red]{t('googlecloud.drive_folder_error', lang)}[/red]")
             return {}  # Return empty to trigger retry
         
         # Extract folder ID from URL if provided
         folder_id = self._extract_folder_id(drive_input)
         if not folder_id:
-            self.console.print("[red]Error: Could not extract folder ID. Please provide a valid URL or folder ID.[/red]")
+            self.console.print(f"[red]{t('googlecloud.drive_folder_extract_error', lang)}[/red]")
             return {}  # Return empty to trigger retry
         
         gc_data["drive_folder_id"] = folder_id
         
         # Ask if logs should be saved to source Google Drive folder
         save_logs_to_source = questionary.confirm(
-            "Save logs to source Google Drive folder?",
+            t('googlecloud.save_logs_to_source', lang),
             default=True
         ).ask()
         
@@ -194,12 +198,12 @@ class ModeSelectionStep(WizardStep):
             gc_data["save_logs_to_source"] = save_logs_to_source
         
         # Region (optional, with default)
-        self.console.print("\n[bold]Vertex AI Region[/bold]")
-        self.console.print("[dim]Select the region where Vertex AI is available[/dim]")
+        self.console.print(f"\n[bold]{t('googlecloud.region_title', lang)}[/bold]")
+        self.console.print(f"[dim]{t('googlecloud.region_hint', lang)}[/dim]")
         region = questionary.select(
-            "Select Vertex AI region:",
+            t('googlecloud.region_prompt', lang),
             choices=[
-                questionary.Choice("global (recommended)", value="global"),
+                questionary.Choice(t('googlecloud.region_global', lang), value="global"),
                 questionary.Choice("us-central1", value="us-central1"),
                 questionary.Choice("us-east1", value="us-east1"),
             ],
@@ -210,23 +214,23 @@ class ModeSelectionStep(WizardStep):
             gc_data["region"] = region
         
         # ADC file (optional)
-        self.console.print("\n[bold]Application Default Credentials (ADC) File[/bold]")
-        self.console.print("[dim]Path to credentials file created by: gcloud auth application-default login[/dim]")
-        self.console.print("[dim]Usually located at: ~/.config/gcloud/application_default_credentials.json[/dim]")
+        self.console.print(f"\n[bold]{t('googlecloud.adc_file_title', lang)}[/bold]")
+        self.console.print(f"[dim]{t('googlecloud.adc_file_hint', lang)}[/dim]")
+        self.console.print(f"[dim]{t('googlecloud.adc_file_hint2', lang)}[/dim]")
         adc_file = questionary.path(
-            "Enter path to ADC file (or press Enter for default 'application_default_credentials.json'):",
-            default="application_default_credentials.json"
+            t('googlecloud.adc_file_prompt', lang),
+            default=t('googlecloud.adc_file_default', lang)
         ).ask()
         
         if adc_file:
             gc_data["adc_file"] = os.path.expanduser(adc_file)
         
         # Document name (optional)
-        self.console.print("\n[bold]Document Name[/bold]")
-        self.console.print("[dim]Name for the Google Doc that will be created (optional)[/dim]")
-        self.console.print("[dim]If left empty, will use the Drive folder name[/dim]")
+        self.console.print(f"\n[bold]{t('googlecloud.document_name_title', lang)}[/bold]")
+        self.console.print(f"[dim]{t('googlecloud.document_name_hint', lang)}[/dim]")
+        self.console.print(f"[dim]{t('googlecloud.document_name_hint2', lang)}[/dim]")
         document_name = questionary.text(
-            "Enter document name (or press Enter to use folder name):",
+            t('googlecloud.document_name_prompt', lang),
             default=""
         ).ask()
         
@@ -282,35 +286,36 @@ class ModeSelectionStep(WizardStep):
         Returns:
             Tuple of (is_valid, list_of_errors)
         """
+        lang = self.controller.get_language()
         errors = []
         
         if "mode" not in data:
-            errors.append("Mode not selected")
+            errors.append(t('validation.mode_not_selected', lang))
             return False, errors
         
         mode = data["mode"]
         
         if mode == "local":
             if "local" not in data:
-                errors.append("Local mode settings missing")
+                errors.append(t('validation.local_settings_missing', lang))
             else:
                 local = data["local"]
                 if "image_dir" not in local:
-                    errors.append("Image directory not specified")
+                    errors.append(t('validation.image_dir_not_specified', lang))
                 elif not os.path.isdir(local["image_dir"]):
-                    errors.append(f"Image directory does not exist: {local['image_dir']}")
+                    errors.append(t('validation.image_dir_not_exists', lang, path=local['image_dir']))
         
         elif mode == "googlecloud":
             if "googlecloud" not in data:
-                errors.append("Google Cloud mode settings missing")
+                errors.append(t('validation.googlecloud_settings_missing', lang))
             else:
                 gc = data["googlecloud"]
                 if not gc:  # Empty dict
-                    errors.append("Google Cloud mode settings missing - please complete all required fields")
+                    errors.append(t('validation.googlecloud_settings_empty', lang))
                 else:
                     if "project_id" not in gc:
-                        errors.append("Project ID not specified")
+                        errors.append(t('validation.project_id_not_specified', lang))
                     if "drive_folder_id" not in gc:
-                        errors.append("Drive folder ID not specified")
+                        errors.append(t('validation.drive_folder_id_not_specified', lang))
         
         return len(errors) == 0, errors
