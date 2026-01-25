@@ -125,13 +125,25 @@ Notes: Obstetrix non approbata Parasceva Demkiw.
 
 ### Швидкий старт
 
-**LOCAL Mode (Рекомендовано - Найпростіше налаштування, локальний Word документ):**
+**Режим Майстра (Рекомендовано - Інтерактивна конфігурація - За замовчуванням):**
+1. Отримайте API ключ Gemini з [Google AI Studio](https://aistudio.google.com/api-keys) - **Налаштування Google Cloud не потрібне!**
+2. Запустіть: `python3 transcribe.py` (режим майстра увімкнено за замовчуванням)
+3. Слідуйте інтерактивним підказкам для:
+   - Вибору режиму обробки (LOCAL або GOOGLECLOUD)
+   - Вибору папки з зображеннями/папки Drive
+   - Опціонального витягування контексту зі зображення титульної сторінки
+   - Введення інформації про документ (села, прізвища, архівне посилання)
+   - Налаштування параметрів обробки
+4. Майстер генерує файл конфігурації та перевіряє його перед обробкою
+5. Моніторинг прогресу: Перевіряйте логи в папці `logs/` та файли виводу
+
+**LOCAL Mode (Ручна конфігурація):**
 1. Отримайте API ключ Gemini з [Google AI Studio](https://aistudio.google.com/app/apikey) - **Налаштування Google Cloud не потрібне!**
 2. Встановіть змінну середовища: `export GEMINI_API_KEY="ваш-ключ"`
 3. Скопіюйте приклад конфігурації: `cp config/config.local.example.yaml config/my-config.yaml`
 4. Відредагуйте конфігурацію з шляхом до вашої папки з зображеннями
 5. **Підготуйте файл інструкцій (prompt file)** - Див. [Налаштування конфігурації - Підготовка файлу інструкцій](#крок-7-налаштування-конфігурації) для деталей. **Важливо**: Файл інструкцій значно впливає на якість та точність транскрипції. Налаштуйте його з назвами сіл, поширеними прізвищами та специфікою типу записів для вашої метричної книги.
-6. Запустіть: `python3 transcribe.py config/my-config.yaml`
+6. Запустіть: `python3 transcribe.py config/my-config.yaml` або `python3 transcribe.py --wizard-off config/my-config.yaml`
 7. Моніторинг прогресу: Перевіряйте логи в папці `logs/` та файли виводу (Markdown, Word) у вашій папці з зображеннями
 
 **GOOGLECLOUD Mode (Розширений - Повна інтеграція з Google Docs та Google Drive):**
@@ -140,10 +152,158 @@ Notes: Obstetrix non approbata Parasceva Demkiw.
 3. Скопіюйте приклад конфігурації: `cp config/config.googlecloud.example.yaml config/my-config.yaml`
 4. Відредагуйте конфігурацію з ID вашої папки Google Drive
 5. **Підготуйте файл інструкцій (prompt file)** - Див. [Налаштування конфігурації - Підготовка файлу інструкцій](#крок-7-налаштування-конфігурації) для деталей. **Важливо**: Файл інструкцій значно впливає на якість та точність транскрипції. Налаштуйте його з назвами сіл, поширеними прізвищами та специфікою типу записів для вашої метричної книги.
-6. Запустіть: `python3 transcribe.py config/my-config.yaml`
+6. Запустіть: `python3 transcribe.py config/my-config.yaml` або `python3 transcribe.py --wizard-off config/my-config.yaml`
 7. Моніторинг прогресу: Перевіряйте логи в папці `logs/` та Google Doc у вашій папці Google Drive
 
 Див. розділ [Налаштування конфігурації](#крок-7-налаштування-конфігурації) для детальних інструкцій з налаштування.
+
+## Режим Майстра (Інтерактивна конфігурація)
+
+Режим майстра забезпечує інтерактивний покроковий досвід конфігурації, який усуває необхідність ручного редагування YAML файлів.
+
+### Запуск Майстра
+
+Режим майстра увімкнено за замовчуванням. Просто запустіть:
+
+```bash
+python3 transcribe.py
+```
+
+Для використання файлу конфігурації замість цього (традиційний режим):
+
+```bash
+python3 transcribe.py config/my-config.yaml
+```
+
+Щоб явно вимкнути режим майстра та вимагати файл конфігурації:
+
+```bash
+python3 transcribe.py --wizard-off config/my-config.yaml
+```
+
+### Кроки Майстра
+
+1. **Вибір Режиму**
+   - Виберіть між режимами LOCAL або GOOGLECLOUD
+   - Виберіть папку з зображеннями (LOCAL) або папку Drive (GOOGLECLOUD)
+   - Введіть API ключ або використайте змінну середовища
+   - Виберіть модель OCR
+
+2. **Збір Контексту**
+   - Опціонально витягніть контекст зі зображення титульної сторінки за допомогою AI
+   - Перегляньте та відредагуйте витягнуту інформацію (архівне посилання, села, прізвища)
+   - Або введіть всю інформацію про контекст вручну
+
+3. **Налаштування Обробки**
+   - Виберіть шаблон інструкцій
+   - Налаштуйте діапазон зображень (початковий номер та кількість)
+   - Встановіть розмір пакету (режим GOOGLECLOUD)
+
+4. **Попередня Валідація**
+   - Автоматична перевірка всіх налаштувань
+   - Перевірка API ключів, шляхів, шаблонів та зображень
+   - Можливість продовжити попри попередження
+
+5. **Генерація Конфігурації**
+   - Майстер генерує повний файл конфігурації YAML
+   - Файл готовий до використання одразу
+   - Можна відредагувати вручну за потреби
+
+### Можливості Майстра
+
+- **Витягування Титульної Сторінки**: Автоматично витягує архівне посилання, села та прізвища зі зображень титульних сторінок
+- **Розділення Контексту**: Зберігає шаблони інструкцій статичними, зберігаючи контекст проекту в конфігурації
+- **Валідація**: Попередні перевірки виявляють помилки перед початком обробки
+- **Зворотна Сумісність**: Згенеровані конфігурації працюють з існуючим робочим процесом `transcribe.py`
+
+### Приклад Сесії Майстра
+
+```bash
+$ python3 transcribe.py
+
+╭───────────────────────────────────────── Welcome ──────────────────────────────────────────╮
+│ Genealogical Transcription Wizard                                                          │
+│ This wizard will guide you through creating a configuration file.                          │
+│ You can press Ctrl+C at any time to cancel.                                                │
+│                                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────╯
+
+Step 1/3: ModeSelectionStep
+
+Step 1: Select Processing Mode
+Choose how you want to process images:
+
+? Select processing mode: Local (process images from local folder)
+? Enter path to directory containing images: data_samples/test_input_sample
+? Use GEMINI_API_KEY environment variable? No
+Get your API key from: https://aistudio.google.com/api-keys
+? Enter Gemini API key (or press Enter to skip and use env var): AIzaSy...XXXXX
+? Enter output directory for logs (or press Enter for default 'logs'): logs
+? Select OCR model: gemini-3-flash-preview (recommended)
+
+Step 2/3: ContextCollectionStep
+
+Context Information Collection
+Provide information about the document and villages.
+
+? Do you want to extract context from a title page image? Yes
+? Select title page image (or enter manually): cover-title-page.jpg
+
+Extracting context from title page...
+
+Extracted Context from Title Page:
+  Archive Reference: Ф. 487, оп. 1, спр. 526 (545)
+  Document Type: Метрична книга про народження
+  Date Range: 1888 (липень - грудень) - 1924 (січень - квітень)
+  Main Villages: Турильче (Turylcze)
+  Common Surnames: Rohaczuk, Didyk, Babij, Paszczuk, Lachidnick, Czepe, Jakowyczyn, Rau, Leszczynski
+? What would you like to do? Accept all extracted data
+
+Step 3/3: ProcessingSettingsStep
+
+Step 3: Processing Settings
+
+? Select prompt template: metric-book-birth - Role
+Auto-generated archive index: ф487оп1спр526
+? Enter starting image number (default: 1): 1
+? Enter number of images to process: 2
+
+✓ All steps completed successfully!
+? Where should the config file be saved? config/my-project.yaml
+
+✓ Configuration saved to: config/my-project.yaml
+
+Running pre-flight validation...
+✓ All validation checks passed!
+```
+
+### Використання Згенерованої Конфігурації
+
+Після того, як майстер згенерує ваш файл конфігурації, ви можете використовувати його як зазвичай:
+
+```bash
+python3 transcribe.py config/my-project.yaml
+```
+
+Згенерована конфігурація включає:
+- Всі налаштування режиму
+- Секцію контексту з селами, прізвищами, архівним посиланням
+- Посилання на шаблон інструкцій
+- Налаштування обробки (діапазон зображень, розмір пакету тощо)
+
+### Майстер vs Ручна Конфігурація
+
+**Використовуйте Режим Майстра коли:**
+- Налаштовуєте новий проект
+- Хочете витягнути контекст з титульних сторінок
+- Віддаєте перевагу інтерактивному керівництву
+- Хочете уникнути помилок синтаксису YAML
+
+**Використовуйте Ручну Конфігурацію коли:**
+- У вас є існуючі конфігурації, які ви хочете повторно використати
+- Потрібно швидко відредагувати конкретні налаштування
+- Вам зручно редагувати YAML файли
+- Хочете контролювати версії ваших конфігурацій
 
 ## Вартість використання (витрати на токени)
 

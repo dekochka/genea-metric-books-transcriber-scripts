@@ -516,33 +516,54 @@ python3 transcribe.py --wizard-off config/my-config.yaml
 #### Example Wizard Session
 
 ```bash
-$ python3 transcribe.py --wizard
+$ python3 transcribe.py
 
-╭──────────────────────────────────────── Welcome ────────────────────────────────────────╮
-│ Genealogical Transcription Wizard                                                       │
-│ This wizard will guide you through creating a configuration file.                       │
-╰─────────────────────────────────────────────────────────────────────────────────────────╯
+╭───────────────────────────────────────── Welcome ──────────────────────────────────────────╮
+│ Genealogical Transcription Wizard                                                          │
+│ This wizard will guide you through creating a configuration file.                          │
+│ You can press Ctrl+C at any time to cancel.                                                 │
+│                                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────╯
 
-Step 1/3: Mode Selection
+Step 1/3: ModeSelectionStep
+
+Step 1: Select Processing Mode
+Choose how you want to process images:
+
 ? Select processing mode: Local (process images from local folder)
 ? Enter path to directory containing images: data_samples/test_input_sample
-? Enter Gemini API key: [your-key]
-? Select OCR model: gemini-3-flash-preview
+? Use GEMINI_API_KEY environment variable? No
+Get your API key from: https://aistudio.google.com/api-keys
+? Enter Gemini API key (or press Enter to skip and use env var): AIzaSy...XXXXX
+? Enter output directory for logs (or press Enter for default 'logs'): logs
+? Select OCR model: gemini-3-flash-preview (recommended)
 
-Step 2/3: Context Collection
+Step 2/3: ContextCollectionStep
+
+Context Information Collection
+Provide information about the document and villages.
+
 ? Do you want to extract context from a title page image? Yes
-? Select title page image: cover-title-page.jpg
-[Extracting context...]
-Extracted Context:
-  Archive Reference: Ф. 487, оп. 1, спр. 526
+? Select title page image (or enter manually): cover-title-page.jpg
+
+Extracting context from title page...
+
+Extracted Context from Title Page:
+  Archive Reference: Ф. 487, оп. 1, спр. 526 (545)
+  Document Type: Метрична книга про народження
+  Date Range: 1888 (липень - грудень) - 1924 (січень - квітень)
   Main Villages: Турильче (Turylcze)
-  Common Surnames: Rohaczuk, Didyk, Babij
+  Common Surnames: Rohaczuk, Didyk, Babij, Paszczuk, Lachidnick, Czepe, Jakowyczyn, Rau, Leszczynski
 ? What would you like to do? Accept all extracted data
 
-Step 3/3: Processing Settings
-? Select prompt template: metric-book-birth
-? Enter starting image number: 1
-? Enter number of images to process: 3
+Step 3/3: ProcessingSettingsStep
+
+Step 3: Processing Settings
+
+? Select prompt template: metric-book-birth - Role
+Auto-generated archive index: ф487оп1спр526
+? Enter starting image number (default: 1): 1
+? Enter number of images to process: 2
 
 ✓ All steps completed successfully!
 ? Where should the config file be saved? config/my-project.yaml
