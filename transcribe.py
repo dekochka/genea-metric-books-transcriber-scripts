@@ -2997,22 +2997,37 @@ def calculate_metrics(usage_metadata_list, timing_list):
     for usage_metadata in usage_metadata_list:
         if usage_metadata is None:
             continue
+        
+        # Handle both dict and object formats
+        if isinstance(usage_metadata, dict):
+            # Dictionary format (from LOCAL mode)
+            prompt_tokens = usage_metadata.get('prompt_tokens', 0)
+            completion_tokens = usage_metadata.get('completion_tokens', 0)
+            cached_tokens = usage_metadata.get('cached_tokens', 0)
+            thoughts_tokens = usage_metadata.get('thoughts_tokens', 0)
             
-        # Extract prompt tokens (input) - this includes both text and image tokens
-        if hasattr(usage_metadata, 'prompt_token_count') and usage_metadata.prompt_token_count:
-            total_input_tokens += usage_metadata.prompt_token_count
-        
-        # Extract cached tokens (billed at lower rate)
-        if hasattr(usage_metadata, 'cached_content_token_count') and usage_metadata.cached_content_token_count:
-            total_cached_tokens += usage_metadata.cached_content_token_count
-        
-        # Extract candidate tokens (output) - this is the visible response
-        if hasattr(usage_metadata, 'candidates_token_count') and usage_metadata.candidates_token_count:
-            total_output_tokens += usage_metadata.candidates_token_count
-        
-        # Extract thoughts tokens (billed as output) - reasoning tokens
-        if hasattr(usage_metadata, 'thoughts_token_count') and usage_metadata.thoughts_token_count:
-            total_output_tokens += usage_metadata.thoughts_token_count
+            total_input_tokens += prompt_tokens
+            total_output_tokens += completion_tokens
+            if thoughts_tokens:
+                total_output_tokens += thoughts_tokens
+            total_cached_tokens += cached_tokens
+        else:
+            # Object format (from GOOGLECLOUD mode)
+            # Extract prompt tokens (input) - this includes both text and image tokens
+            if hasattr(usage_metadata, 'prompt_token_count') and usage_metadata.prompt_token_count:
+                total_input_tokens += usage_metadata.prompt_token_count
+            
+            # Extract cached tokens (billed at lower rate)
+            if hasattr(usage_metadata, 'cached_content_token_count') and usage_metadata.cached_content_token_count:
+                total_cached_tokens += usage_metadata.cached_content_token_count
+            
+            # Extract candidate tokens (output) - this is the visible response
+            if hasattr(usage_metadata, 'candidates_token_count') and usage_metadata.candidates_token_count:
+                total_output_tokens += usage_metadata.candidates_token_count
+            
+            # Extract thoughts tokens (billed as output) - reasoning tokens
+            if hasattr(usage_metadata, 'thoughts_token_count') and usage_metadata.thoughts_token_count:
+                total_output_tokens += usage_metadata.thoughts_token_count
     
     # Calculate costs
     # Input tokens (excluding cached, which are billed separately)
@@ -4078,6 +4093,9 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
     """
     Process all images in local mode (simpler processing, no batching).
     
+    Returns:
+        tuple: (transcribed_pages, start_time, end_time, usage_metadata_list, timing_list)
+    
     Args:
         images: List of image metadata dictionaries
         handlers: Dictionary of strategy handlers (from ModeFactory)
@@ -4387,7 +4405,7 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
     ai_logger.info(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     ai_logger.info(f"End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     
-    return transcribed_pages, start_time, end_time
+    return transcribed_pages, start_time, end_time, usage_metadata_list, timing_list
 
 
 def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, config: dict, ai_logger) -> list:
@@ -4823,13 +4841,16 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
         end_time = None
         error_info = None
         caught_exception = None
+        usage_metadata_list = []
+        timing_list = []
         
         try:
             # Process images using mode-specific processing function
             if mode == 'googlecloud':
                 transcribed_pages = process_batches_googlecloud(images, handlers, prompt_text, normalized_config, ai_logger)
+                # For GOOGLECLOUD mode, metrics are calculated inside process_batches_googlecloud
             else:  # local mode
-                transcribed_pages, start_time, end_time = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger)
+                transcribed_pages, start_time, end_time, usage_metadata_list, timing_list = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger)
             
             # Log session completion
             ai_logger.info(f"=== Transcription Session Completed ===")
@@ -4894,7 +4915,20 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
         finally:
             # Always finalize output (even on errors) for LOCAL mode
             if mode == 'local':
-                metrics = {}  # Can be enhanced to extract from process_all_local
+                # Calculate metrics from usage metadata and timing data
+                metrics = {}
+                if usage_metadata_list and timing_list:
+                    try:
+                        metrics = calculate_metrics(usage_metadata_list, timing_list)
+                        logging.info(f"Calculated metrics for finalization: {metrics}")
+                    except Exception as metrics_error:
+                        logging.warning(f"Failed to calculate metrics: {metrics_error}")
+                        import traceback
+                        logging.warning(traceback.format_exc())
+                        metrics = {}
+                else:
+                    logging.warning(f"Cannot calculate metrics: usage_metadata_list={len(usage_metadata_list) if usage_metadata_list else 0} items, timing_list={len(timing_list) if timing_list else 0} items")
+                
                 try:
                     output.finalize(transcribed_pages, metrics, start_time, end_time, error_info)
                     logging.info(f"Output finalized for LOCAL mode (with {'error' if error_info else 'success'})")
