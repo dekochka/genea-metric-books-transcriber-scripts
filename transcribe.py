@@ -4239,9 +4239,16 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
                 # Write transcription incrementally to log file
                 if output:
                     try:
-                        output.write_batch([transcribed_pages[-1]], batch_num=global_idx, is_first=(global_idx == 1))
+                        # Verify the page has text before writing
+                        last_page = transcribed_pages[-1]
+                        if not last_page.get('text'):
+                            logging.warning(f"Page '{last_page.get('name', 'unknown')}' has no text, skipping write_batch")
+                        else:
+                            output.write_batch([last_page], batch_num=global_idx, is_first=(global_idx == 1))
                     except Exception as e:
-                        logging.warning(f"Failed to write transcription incrementally: {e}")
+                        logging.error(f"Failed to write transcription incrementally: {e}")
+                        import traceback
+                        logging.error(traceback.format_exc())
                 
                 # Log progress
                 progress_pct = (global_idx / total_images) * 100
