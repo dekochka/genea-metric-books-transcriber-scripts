@@ -13,7 +13,19 @@ A specialized tool for transcribing handwritten genealogical records (birth, dea
 
 ### Quick Start
 
-**LOCAL Mode (Recommended - Simplest Setup, Local transcribed Word doc):**
+**Wizard Mode (Recommended - Interactive Configuration):**
+1. Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/api-keys) - **No Google Cloud setup needed!**
+2. Run: `python3 transcribe.py --wizard`
+3. Follow the interactive prompts to:
+   - Select processing mode (LOCAL or GOOGLECLOUD)
+   - Choose image directory/Drive folder
+   - Optionally extract context from title page image
+   - Enter document information (villages, surnames, archive reference)
+   - Configure processing settings
+4. The wizard generates a configuration file and validates it before processing
+5. Monitor progress: Check logs in `logs/` directory and output files
+
+**LOCAL Mode (Manual Configuration):**
 1. Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey) - **No Google Cloud setup needed!**
 2. Set environment variable: `export GEMINI_API_KEY="your-key"`
 3. Copy example config: `cp config/config.local.example.yaml config/my-config.yaml`
@@ -35,6 +47,7 @@ See [Configuration](#configuration) section for detailed setup instructions.
 
 ### Key Features
 
+- **Interactive Wizard Mode**: Guided configuration setup with title page context extraction (NEW!)
 - **Dual-Mode Operation**: Choose between LOCAL mode (simpler setup, local files) or GOOGLECLOUD mode (full Google integration)
 - **Flexible Image Processing**: Supports multiple filename patterns (numbered, timestamped, prefixed)
 - **Configurable Prompts**: Uses external prompt files for different record types (births, deaths, marriages)
@@ -440,6 +453,119 @@ If not set, the script falls back to using image filenames for headers. The form
 If no numeric/timestamp match is found, the script falls back to selecting by position (based on sorted listing).
 
 ## Usage
+
+### Wizard Mode (Interactive Configuration)
+
+The wizard mode provides an interactive, step-by-step configuration experience that eliminates the need to manually edit YAML files.
+
+#### Starting the Wizard
+
+```bash
+python3 transcribe.py --wizard
+```
+
+#### Wizard Steps
+
+1. **Mode Selection**
+   - Choose between LOCAL or GOOGLECLOUD mode
+   - Select image directory (LOCAL) or Drive folder (GOOGLECLOUD)
+   - Enter API key or use environment variable
+   - Select OCR model
+
+2. **Context Collection**
+   - Optionally extract context from title page image using AI
+   - Review and edit extracted information (archive reference, villages, surnames)
+   - Or manually enter all context information
+
+3. **Processing Settings**
+   - Select prompt template
+   - Configure image range (start number and count)
+   - Set batch size (GOOGLECLOUD mode)
+
+4. **Pre-Flight Validation**
+   - Automatic validation of all settings
+   - Checks API keys, paths, templates, and images
+   - Option to continue despite warnings
+
+5. **Configuration Generation**
+   - Wizard generates a complete YAML configuration file
+   - File is ready to use immediately
+   - Can be edited manually if needed
+
+#### Wizard Features
+
+- **Title Page Extraction**: Automatically extracts archive reference, villages, and surnames from title page images
+- **Context Separation**: Keeps prompt templates static while storing project-specific context in config
+- **Validation**: Pre-flight checks catch errors before processing starts
+- **Backward Compatible**: Generated configs work with existing `transcribe.py` workflow
+
+#### Example Wizard Session
+
+```bash
+$ python3 transcribe.py --wizard
+
+╭──────────────────────────────────────── Welcome ────────────────────────────────────────╮
+│ Genealogical Transcription Wizard                                                       │
+│ This wizard will guide you through creating a configuration file.                       │
+╰─────────────────────────────────────────────────────────────────────────────────────────╯
+
+Step 1/3: Mode Selection
+? Select processing mode: Local (process images from local folder)
+? Enter path to directory containing images: data_samples/test_input_sample
+? Enter Gemini API key: [your-key]
+? Select OCR model: gemini-3-flash-preview
+
+Step 2/3: Context Collection
+? Do you want to extract context from a title page image? Yes
+? Select title page image: cover-title-page.jpg
+[Extracting context...]
+Extracted Context:
+  Archive Reference: Ф. 487, оп. 1, спр. 526
+  Main Villages: Турильче (Turylcze)
+  Common Surnames: Rohaczuk, Didyk, Babij
+? What would you like to do? Accept all extracted data
+
+Step 3/3: Processing Settings
+? Select prompt template: metric-book-birth
+? Enter starting image number: 1
+? Enter number of images to process: 3
+
+✓ All steps completed successfully!
+? Where should the config file be saved? config/my-project.yaml
+
+✓ Configuration saved to: config/my-project.yaml
+
+Running pre-flight validation...
+✓ All validation checks passed!
+```
+
+#### Using Wizard-Generated Config
+
+After the wizard generates your config file, you can use it normally:
+
+```bash
+python3 transcribe.py config/my-project.yaml
+```
+
+The generated config includes:
+- All mode-specific settings
+- Context section with villages, surnames, archive reference
+- Prompt template reference
+- Processing settings (image range, batch size, etc.)
+
+#### Wizard vs Manual Configuration
+
+**Use Wizard Mode when:**
+- Setting up a new project
+- You want to extract context from title pages
+- You prefer interactive guidance
+- You want to avoid YAML syntax errors
+
+**Use Manual Configuration when:**
+- You have existing configs you want to reuse
+- You need to make quick edits to specific settings
+- You're comfortable editing YAML files
+- You want to version control your configs
 
 ### LOCAL Mode
 

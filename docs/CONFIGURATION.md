@@ -135,14 +135,55 @@ googlecloud:
 
 These settings apply to both LOCAL and GOOGLECLOUD modes:
 
+### Prompt Configuration
+
+You can use either the traditional `prompt_file` approach or the new wizard-generated `prompt_template` + `context` approach:
+
+**Option 1: Traditional Prompt File (Legacy)**
 ```yaml
-# Prompt file (required)
+# Prompt file (required for legacy configs)
 # Path to prompt file in prompts/ folder (without full path)
 prompt_file: "f487o1s545-Turilche.md"
+```
 
+**Option 2: Prompt Template + Context (Wizard-Generated)**
+```yaml
+# Prompt template (wizard mode)
+# Name of template in prompts/templates/ folder (without .md extension)
+prompt_template: "metric-book-birth"
+
+# Context section (wizard mode)
+# Project-specific information separated from static prompt template
+context:
+  archive_reference: "Ф. 487, оп. 1, спр. 545"
+  document_type: "Birth records"
+  date_range: "1850-1900"
+  main_villages:
+    - name: "Княжа"
+      variants: ["Knyazha", "Kniazha"]
+  additional_villages:
+    - name: "Шубино"
+      variants: []
+  common_surnames:
+    - "Іванов"
+    - "Петров"
+    - "Сидоров"
+  title_page_filename: "cover-title-page.jpg"  # Optional
+```
+
+**Benefits of Template + Context Approach:**
+- Static prompt templates don't need editing for each project
+- Context (villages, surnames) is stored in config, not in prompt file
+- Easier to reuse prompt templates across multiple projects
+- Context can be extracted automatically from title page images
+
+### Processing Settings
+
+```yaml
 # Archive index reference (optional)
 # Format: ф[FOND]оп[OPIS]спр[DELO] or custom format
 # Used for document headers and record links
+# Auto-generated from archive_reference if using wizard mode
 archive_index: "ф487оп1спр545"
 
 # Processing settings
@@ -208,7 +249,35 @@ The tool automatically converts legacy configs to the new nested format internal
 
 ## Configuration Examples
 
-### Minimal LOCAL Mode Config
+### Wizard-Generated Config (Recommended)
+
+```yaml
+mode: "local"
+
+local:
+  api_key: "${GEMINI_API_KEY}"
+  image_dir: "data_samples/test_input_sample"
+  output_dir: "logs"
+  ocr_model_id: "gemini-3-flash-preview"
+
+context:
+  archive_reference: "Ф. 487, оп. 1, спр. 545"
+  document_type: "Birth records"
+  date_range: "1850-1900"
+  main_villages:
+    - name: "Княжа"
+      variants: ["Knyazha"]
+  common_surnames:
+    - "Іванов"
+    - "Петров"
+
+prompt_template: "metric-book-birth"
+archive_index: "487-1-545"
+image_start_number: 1
+image_count: 10
+```
+
+### Minimal LOCAL Mode Config (Legacy)
 
 ```yaml
 mode: "local"
