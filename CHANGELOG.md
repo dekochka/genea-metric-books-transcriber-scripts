@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.5.1] - 2026-01-26
+
+### Fixed
+
+- Fixed `httpx.ReadTimeout` not triggering retry mechanism in Vertex AI transcription
+- Timeout errors from `httpx`/`httpcore` now properly retry with exponential backoff
+- All 3 retry attempts (1 min → 2 min → 5 min) now work correctly for httpx timeout errors
+
+**Note:** This version replaces v0.5-beta-wizard-mode with the retry fix included.
+
 ## [v0.5-beta-wizard-mode] - 2026-01-26
 
 ### Added
@@ -266,6 +276,7 @@ See [Migration Guide](docs/MIGRATION.md) for detailed instructions.
 
 ## Version History
 
+- **v0.5.1** (2026-01-26): Fixed httpx.ReadTimeout retry handling - replaces v0.5-beta-wizard-mode
 - **v0.5-beta-wizard-mode** (2026-01-26): Interactive wizard mode, context separation, AI title page extraction, enhanced UX
 - **v0.4-beta-dual-mode** (2026-01-24): Multi-format output, enhanced error handling, Windows compatibility, OAuth documentation
 - **v0.3-beta-local** (2026-01-24): Tested and certified LOCAL mode with multi-format output
