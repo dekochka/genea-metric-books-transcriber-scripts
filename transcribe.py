@@ -1515,11 +1515,16 @@ class CompositeOutput(OutputStrategy):
     
     def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
         """Write batch to all strategies."""
+        if not pages:
+            logging.warning(f"CompositeOutput.write_batch called with empty pages list (batch {batch_num})")
+        
         for strategy in self.strategies:
             try:
                 strategy.write_batch(pages, batch_num, is_first)
             except Exception as e:
                 logging.error(f"Error writing batch to {strategy.__class__.__name__}: {e}")
+                import traceback
+                logging.error(traceback.format_exc())
     
     def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
         """Finalize all strategies."""
@@ -1566,29 +1571,51 @@ class MarkdownOutput(OutputStrategy):
         if not self.temp_body_file:
             raise ValueError("Markdown output not initialized")
         
-        with open(self.temp_body_file, 'a', encoding='utf-8') as f:
-            for page in pages:
-                f.write(f"\n---\n\n## {page['name']}\n\n")
-                link = page.get('webViewLink', page.get('path', ''))
-                if link:
-                    # For local files, use relative path (just filename) since markdown is in same directory
-                    # This prevents path duplication when markdown is opened in browser/viewer
-                    # Markdown file is saved in target_dir (image_dir), same as images
-                    if link.startswith('http://') or link.startswith('https://'):
-                        # Keep Google Drive URLs as-is (GOOGLECLOUD mode)
-                        pass
-                    else:
-                        # For local files (file:// URLs, absolute paths, or relative paths),
-                        # use just the filename since markdown and images are in the same directory
-                        link = page['name']
-                    f.write(f"**Source:** [{page['name']}]({link})\n\n")
-                # Preserve newlines by adding two spaces before newlines for markdown line breaks
-                text = page.get('text', '')
-                # Replace single newlines with two spaces + newline (markdown line break)
-                # but preserve paragraph breaks (double newlines)
-                text = text.replace('\n\n', '\n\n')  # Preserve paragraph breaks
-                text = text.replace('\n', '  \n')  # Convert single newlines to markdown line breaks
-                f.write(f"{text}\n")
+        if not pages:
+            logging.warning(f"MarkdownOutput.write_batch called with empty pages list (batch {batch_num})")
+            return
+        
+        try:
+            with open(self.temp_body_file, 'a', encoding='utf-8') as f:
+                for page in pages:
+                    if not page:
+                        logging.warning(f"MarkdownOutput.write_batch: skipping empty page in batch {batch_num}")
+                        continue
+                    
+                    page_name = page.get('name', 'Unknown')
+                    f.write(f"\n---\n\n## {page_name}\n\n")
+                    link = page.get('webViewLink', page.get('path', ''))
+                    if link:
+                        # For local files, use relative path (just filename) since markdown is in same directory
+                        # This prevents path duplication when markdown is opened in browser/viewer
+                        # Markdown file is saved in target_dir (image_dir), same as images
+                        if link.startswith('http://') or link.startswith('https://'):
+                            # Keep Google Drive URLs as-is (GOOGLECLOUD mode)
+                            pass
+                        else:
+                            # For local files (file:// URLs, absolute paths, or relative paths),
+                            # use just the filename since markdown and images are in the same directory
+                            link = page_name
+                        f.write(f"**Source:** [{page_name}]({link})\n\n")
+                    
+                    # Preserve newlines by adding two spaces before newlines for markdown line breaks
+                    text = page.get('text', '')
+                    if not text:
+                        logging.warning(f"MarkdownOutput.write_batch: page '{page_name}' has empty text field")
+                        text = "[No transcription text available]"
+                    
+                    # Replace single newlines with two spaces + newline (markdown line break)
+                    # but preserve paragraph breaks (double newlines)
+                    text = text.replace('\n\n', '\n\n')  # Preserve paragraph breaks
+                    text = text.replace('\n', '  \n')  # Convert single newlines to markdown line breaks
+                    f.write(f"{text}\n")
+            
+            logging.debug(f"MarkdownOutput.write_batch: wrote {len(pages)} page(s) to temp file {self.temp_body_file}")
+        except Exception as e:
+            logging.error(f"MarkdownOutput.write_batch failed for batch {batch_num}: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            raise
     
     def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
         """Finalize markdown file with overview at top."""
@@ -1651,36 +1678,56 @@ class WordOutput(OutputStrategy):
         if not self.doc:
             raise ValueError("Word output not initialized")
         
+        if not pages:
+            logging.warning(f"WordOutput.write_batch called with empty pages list (batch {batch_num})")
+            return
+        
         archive_index = self.config.get('archive_index', '')
         
-        for idx, page in enumerate(pages, start=1):
-            # Calculate page number (cumulative across batches)
-            page_number = (batch_num - 1) + idx if batch_num > 0 else idx
+        try:
+            for idx, page in enumerate(pages, start=1):
+                if not page:
+                    logging.warning(f"WordOutput.write_batch: skipping empty page in batch {batch_num}")
+                    continue
+                
+                # Calculate page number (cumulative across batches)
+                page_number = (batch_num - 1) + idx if batch_num > 0 else idx
+                
+                page_name = page.get('name', 'Unknown')
+                # Add page header like "ф487оп1спр545стр1" (matching Google Docs format)
+                if archive_index:
+                    page_header = f"{archive_index}стр{page_number}"
+                else:
+                    page_header = page_name
+                
+                self.doc.add_heading(page_header, level=2)
+                
+                # Add source link
+                link = page.get('webViewLink', page.get('path', ''))
+                if link:
+                    p = self.doc.add_paragraph()
+                    p.add_run('Src Img Url: ').bold = True
+                    p.add_run(page_name)
+                    self.doc.add_paragraph()
+                
+                # Add transcription text with bold formatting for **text**
+                text = page.get('text', '')
+                if not text:
+                    logging.warning(f"WordOutput.write_batch: page '{page_name}' has empty text field")
+                    text = "[No transcription text available]"
+                
+                self._add_formatted_text(text)
+                
+                # Add separator
+                self.doc.add_paragraph('_' * 80)
             
-            # Add page header like "ф487оп1спр545стр1" (matching Google Docs format)
-            if archive_index:
-                page_header = f"{archive_index}стр{page_number}"
-            else:
-                page_header = page['name']
-            
-            self.doc.add_heading(page_header, level=2)
-            
-            # Add source link
-            link = page.get('webViewLink', page.get('path', ''))
-            if link:
-                p = self.doc.add_paragraph()
-                p.add_run('Src Img Url: ').bold = True
-                p.add_run(page['name'])
-                self.doc.add_paragraph()
-            
-            # Add transcription text with bold formatting for **text**
-            text = page.get('text', '')
-            self._add_formatted_text(text)
-            
-            # Add separator
-            self.doc.add_paragraph('_' * 80)
-        
-        self.doc.save(self.doc_path)
+            self.doc.save(self.doc_path)
+            logging.debug(f"WordOutput.write_batch: wrote {len(pages)} page(s) to Word document {self.doc_path}")
+        except Exception as e:
+            logging.error(f"WordOutput.write_batch failed for batch {batch_num}: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            raise
     
     def _add_formatted_text(self, text: str) -> None:
         """
