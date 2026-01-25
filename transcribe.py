@@ -393,14 +393,25 @@ def setup_logging(config: dict) -> tuple:
         dir_name_short = dir_name[:20] if len(dir_name) > 20 else dir_name
         log_filename = os.path.join(LOGS_DIR, f"{timestamp}-transcribe-session-{dir_name_short}.log")
     
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(log_filename)
-        ]
-    )
+    # Clear any existing handlers to ensure clean logging setup
+    # This is important when running from wizard mode where logging might already be configured
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+        handler.close()
+    
+    # Configure logging with file and console handlers
+    file_handler = logging.FileHandler(log_filename, encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'))
+    
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'))
+    
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
     
     # Set up separate logger for AI responses
     ai_logger = logging.getLogger('ai_responses')

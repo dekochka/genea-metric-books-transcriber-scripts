@@ -7,7 +7,8 @@ Supports optional title page extraction (Phase 4) and manual entry.
 
 import os
 import re
-from typing import Dict, Any, List
+import logging
+from typing import Dict, Any, List, Optional
 import questionary
 from rich.console import Console
 from rich.panel import Panel
@@ -27,8 +28,7 @@ class ContextCollectionStep(WizardStep):
         """
         Collect context information.
         
-        For Phase 3: Manual collection only.
-        Phase 4 will add title page extraction option.
+        Supports both title page extraction (Phase 4) and manual entry.
         
         Returns:
             Dictionary with context data:
@@ -38,14 +38,35 @@ class ContextCollectionStep(WizardStep):
             - main_villages (list of dicts with 'name' and 'variants')
             - additional_villages (list of dicts)
             - common_surnames (list of strings)
-            - title_page_filename (optional, for Phase 4)
+            - title_page_filename (optional)
         """
         self.console.print("\n[bold cyan]Context Information Collection[/bold cyan]")
         self.console.print("[dim]Provide information about the document and villages.[/dim]\n")
         
-        # For Phase 3, only manual collection
-        # Phase 4 will add: "Do you want to extract from title page?"
-        context = self._collect_context_manually()
+        # Get mode and config from previous step
+        mode = self.controller.get_data("mode", "local")
+        mode_data = self.controller.get_data(mode, {})
+        
+        # For GOOGLECLOUD mode, title page extraction requires services that aren't initialized yet
+        # So we only offer it for LOCAL mode
+        if mode == "local":
+            # Ask if user wants to extract from title page
+            use_title_page = questionary.confirm(
+                "Do you want to extract context from a title page image?",
+                default=False
+            ).ask()
+            
+            if use_title_page:
+                # Try title page extraction
+                context = self._extract_and_review_title_page(mode, mode_data)
+            else:
+                # Manual collection
+                context = self._collect_context_manually()
+        else:
+            # GOOGLECLOUD mode: manual entry only (services not initialized in wizard)
+            self.console.print("[dim]Note: Title page extraction is not available in wizard for GOOGLECLOUD mode.[/dim]")
+            self.console.print("[dim]You can enter context manually or extract later when processing.[/dim]\n")
+            context = self._collect_context_manually()
         
         return {"context": context}
     
@@ -190,6 +211,360 @@ class ContextCollectionStep(WizardStep):
             self.console.print(f"  [green]✓[/green] Added: {surname_input.strip()}")
         
         return surnames
+    
+    def _extract_and_review_title_page(self, mode: str, config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract context from title page and allow user review/accept/reject.
+        
+        Returns:
+            Final context dictionary (extracted + user edits, or manual entry)
+        """
+        try:
+            # Get title page information
+            if mode == "local":
+                title_page_info = self._get_title_page_for_local(config.get('image_dir'))
+            elif mode == "googlecloud":
+                title_page_info = self._get_title_page_for_googlecloud(
+                    config.get('drive_folder_id'),
+                    config.get('drive_service')
+                )
+            else:
+                self.console.print(f"[yellow]Unknown mode: {mode}. Falling back to manual entry.[/yellow]")
+                return self._collect_context_manually()
+            
+            if not title_page_info:
+                self.console.print("[yellow]⚠ Title page selection cancelled. Falling back to manual entry.[/yellow]")
+                return self._collect_context_manually()
+            
+            # Initialize extractor
+            from wizard.title_page_extractor import TitlePageExtractor
+            
+            if mode == "local":
+                api_key = config.get('api_key')
+                if not api_key:
+                    self.console.print("[yellow]⚠ API key not available. Falling back to manual entry.[/yellow]")
+                    return self._collect_context_manually()
+                
+                extractor = TitlePageExtractor(api_key=api_key, model_id=config.get('ocr_model_id', 'gemini-3-flash-preview'))
+            else:  # googlecloud
+                # For GOOGLECLOUD mode in wizard, services aren't initialized yet
+                # This should not be reached, but handle gracefully
+                self.console.print("[yellow]⚠ Title page extraction not available for GOOGLECLOUD mode in wizard.[/yellow]")
+                return self._collect_context_manually()
+            
+            # Extract context
+            self.console.print("\n[dim]Extracting context from title page...[/dim]")
+            extracted = extractor.extract(title_page_info, mode, config)
+            
+            if not extracted:
+                self.console.print("[yellow]⚠ Title page extraction failed. Falling back to manual entry.[/yellow]")
+                return self._collect_context_manually()
+            
+            # Show extracted data and allow review
+            return self._review_extracted_context(extracted, title_page_info)
+            
+        except Exception as e:
+            self.console.print(f"[red]Error during title page extraction: {e}[/red]")
+            logging.error(f"Title page extraction error: {e}", exc_info=True)
+            return self._collect_context_manually()
+    
+    def _review_extracted_context(self, extracted: Dict[str, Any], title_page_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Show extracted context and allow user to accept/edit/reject.
+        
+        Returns:
+            Final context dictionary
+        """
+        self.console.print("\n[bold cyan]Extracted Context from Title Page:[/bold cyan]")
+        self.console.print(f"  Archive Reference: {extracted.get('archive_reference', 'N/A')}")
+        self.console.print(f"  Document Type: {extracted.get('document_type', 'N/A')}")
+        self.console.print(f"  Date Range: {extracted.get('date_range', 'N/A')}")
+        
+        main_villages = extracted.get('main_villages', [])
+        if main_villages:
+            self.console.print(f"  Main Villages: {', '.join(main_villages)}")
+        else:
+            self.console.print("  Main Villages: None")
+        
+        additional_villages = extracted.get('additional_villages', [])
+        if additional_villages:
+            self.console.print(f"  Additional Villages: {', '.join(additional_villages)}")
+        
+        surnames = extracted.get('common_surnames', [])
+        if surnames:
+            self.console.print(f"  Common Surnames: {', '.join(surnames)}")
+        
+        # Ask user what to do
+        action = questionary.select(
+            "What would you like to do?",
+            choices=[
+                "Accept all extracted data",
+                "Edit some fields",
+                "Reject and enter manually",
+            ]
+        ).ask()
+        
+        if action == "Accept all extracted data":
+            return self._format_extracted_context(extracted, title_page_info)
+        
+        elif action == "Edit some fields":
+            return self._edit_extracted_context(extracted, title_page_info)
+        
+        else:  # Reject and enter manually
+            return self._collect_context_manually()
+    
+    def _edit_extracted_context(self, extracted: Dict[str, Any], title_page_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Allow user to edit individual fields from extracted context.
+        
+        Returns:
+            Edited context dictionary
+        """
+        final_context = {}
+        
+        # Archive reference
+        archive_ref = questionary.text(
+            "Archive Reference:",
+            default=extracted.get('archive_reference', '')
+        ).ask()
+        final_context['archive_reference'] = archive_ref.strip() if archive_ref else ""
+        
+        # Document type
+        doc_type = questionary.text(
+            "Document Type:",
+            default=extracted.get('document_type', '')
+        ).ask()
+        final_context['document_type'] = doc_type.strip() if doc_type else ""
+        
+        # Date range
+        date_range = questionary.text(
+            "Date Range:",
+            default=extracted.get('date_range', '')
+        ).ask()
+        final_context['date_range'] = date_range.strip() if date_range else ""
+        
+        # Main villages (allow editing list)
+        main_villages_text = questionary.text(
+            "Main Villages (comma-separated, or 'Village (variant1, variant2)' format):",
+            default=', '.join(extracted.get('main_villages', []))
+        ).ask()
+        
+        # Parse villages (simple for now - just split by comma)
+        # User can enter "Village1, Village2" or "Village1 (var1, var2), Village2"
+        main_villages = []
+        if main_villages_text:
+            for village_str in main_villages_text.split(','):
+                village_str = village_str.strip()
+                if not village_str:
+                    continue
+                
+                # Try to parse variant format
+                match = re.match(r'^(.+?)\s*\((.+?)\)$', village_str)
+                if match:
+                    name = match.group(1).strip()
+                    variants_str = match.group(2).strip()
+                    variants = [v.strip() for v in variants_str.split(',') if v.strip()]
+                    main_villages.append({'name': name, 'variants': variants})
+                else:
+                    main_villages.append({'name': village_str, 'variants': []})
+        
+        final_context['main_villages'] = main_villages
+        
+        # Additional villages
+        additional_villages_text = questionary.text(
+            "Additional Villages (comma-separated, optional):",
+            default=', '.join(extracted.get('additional_villages', []))
+        ).ask()
+        
+        additional_villages = []
+        if additional_villages_text:
+            for village_str in additional_villages_text.split(','):
+                village_str = village_str.strip()
+                if not village_str:
+                    continue
+                
+                match = re.match(r'^(.+?)\s*\((.+?)\)$', village_str)
+                if match:
+                    name = match.group(1).strip()
+                    variants_str = match.group(2).strip()
+                    variants = [v.strip() for v in variants_str.split(',') if v.strip()]
+                    additional_villages.append({'name': name, 'variants': variants})
+                else:
+                    additional_villages.append({'name': village_str, 'variants': []})
+        
+        final_context['additional_villages'] = additional_villages
+        
+        # Common surnames
+        surnames_text = questionary.text(
+            "Common Surnames (comma-separated, optional):",
+            default=', '.join(extracted.get('common_surnames', []))
+        ).ask()
+        final_context['common_surnames'] = [
+            s.strip() for s in surnames_text.split(',') if s.strip()
+        ] if surnames_text else []
+        
+        # Add title page filename
+        final_context['title_page_filename'] = title_page_info.get('filename')
+        
+        return final_context
+    
+    def _format_extracted_context(self, extracted: Dict[str, Any], title_page_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Format extracted context into final structure.
+        
+        Converts extracted data (which may have simple lists) into
+        the structured format expected by the wizard.
+        """
+        # Convert simple village strings to VillageInfo objects
+        main_villages = []
+        for village in extracted.get('main_villages', []):
+            if isinstance(village, str):
+                main_villages.append({'name': village, 'variants': []})
+            else:
+                main_villages.append(village)
+        
+        additional_villages = []
+        for village in extracted.get('additional_villages', []):
+            if isinstance(village, str):
+                additional_villages.append({'name': village, 'variants': []})
+            else:
+                additional_villages.append(village)
+        
+        return {
+            'archive_reference': extracted.get('archive_reference', ''),
+            'document_type': extracted.get('document_type', ''),
+            'date_range': extracted.get('date_range', ''),
+            'main_villages': main_villages,
+            'additional_villages': additional_villages,
+            'common_surnames': extracted.get('common_surnames', []),
+            'title_page_filename': title_page_info.get('filename'),
+        }
+    
+    def _get_title_page_for_local(self, image_dir: str) -> Optional[Dict[str, Any]]:
+        """
+        Get title page file path for LOCAL mode.
+        
+        Args:
+            image_dir: Directory containing images
+            
+        Returns:
+            Dictionary with 'filename' and 'path' keys, or None if cancelled
+        """
+        if not image_dir or not os.path.isdir(image_dir):
+            self.console.print(f"[red]Image directory not found: {image_dir}[/red]")
+            return None
+        
+        # List image files
+        image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+        image_files = [
+            f for f in os.listdir(image_dir)
+            if os.path.splitext(f.lower())[1] in image_extensions
+        ]
+        
+        if not image_files:
+            self.console.print(f"[yellow]No image files found in {image_dir}[/yellow]")
+            return None
+        
+        # Let user select or enter filename
+        choices = image_files + ["Enter filename manually"]
+        selected = questionary.select(
+            "Select title page image (or enter manually):",
+            choices=choices
+        ).ask()
+        
+        if selected == "Enter filename manually":
+            filename = questionary.text(
+                "Enter title page filename:",
+            ).ask()
+            if not filename:
+                return None
+        else:
+            filename = selected
+        
+        # Validate file exists
+        file_path = os.path.join(image_dir, filename)
+        if not os.path.exists(file_path):
+            self.console.print(f"[red]File not found: {file_path}[/red]")
+            return None
+        
+        return {
+            'filename': filename,
+            'path': file_path
+        }
+    
+    def _get_title_page_for_googlecloud(self, drive_folder_id: str, drive_service: Any) -> Optional[Dict[str, Any]]:
+        """
+        Get title page filename for GOOGLECLOUD mode.
+        
+        Args:
+            drive_folder_id: ID of the Drive folder
+            drive_service: Google Drive API service
+            
+        Returns:
+            Dictionary with 'filename' and 'drive_folder_id' keys, or None if cancelled
+        """
+        try:
+            # List files in Drive folder
+            query = f"'{drive_folder_id}' in parents and trashed=false"
+            results = drive_service.files().list(q=query, fields="files(id, name, mimeType)").execute()
+            files = results.get('files', [])
+            
+            # Filter for image files
+            image_mime_types = {
+                'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'
+            }
+            image_files = [
+                f for f in files
+                if f.get('mimeType', '').startswith('image/')
+            ]
+            
+            if not image_files:
+                self.console.print("[yellow]No image files found in Drive folder[/yellow]")
+                # Still allow manual entry
+                filename = questionary.text(
+                    "Enter title page filename manually:",
+                ).ask()
+                if not filename:
+                    return None
+                return {
+                    'filename': filename,
+                    'drive_folder_id': drive_folder_id
+                }
+            
+            # Let user select or enter filename
+            choices = [f['name'] for f in image_files] + ["Enter filename manually"]
+            selected = questionary.select(
+                "Select title page image (or enter manually):",
+                choices=choices
+            ).ask()
+            
+            if selected == "Enter filename manually":
+                filename = questionary.text(
+                    "Enter title page filename:",
+                ).ask()
+                if not filename:
+                    return None
+            else:
+                filename = selected
+            
+            return {
+                'filename': filename,
+                'drive_folder_id': drive_folder_id
+            }
+            
+        except Exception as e:
+            self.console.print(f"[red]Error listing Drive files: {e}[/red]")
+            logging.error(f"Error listing Drive files: {e}", exc_info=True)
+            # Fallback to manual entry
+            filename = questionary.text(
+                "Enter title page filename manually:",
+            ).ask()
+            if not filename:
+                return None
+            return {
+                'filename': filename,
+                'drive_folder_id': drive_folder_id
+            }
     
     def validate(self, data: Dict[str, Any]) -> tuple[bool, List[str]]:
         """
