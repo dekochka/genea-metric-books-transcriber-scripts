@@ -535,10 +535,17 @@ class ContextCollectionStep(WizardStep):
             with open(adc_file, 'r') as f:
                 creds_data = json.load(f)
             
+            # Required scopes for Drive and Vertex AI
+            scopes = [
+                "https://www.googleapis.com/auth/drive",
+                "https://www.googleapis.com/auth/documents",
+                "https://www.googleapis.com/auth/cloud-platform"
+            ]
+            
             # Check if it's OAuth user credentials or service account
             if 'refresh_token' in creds_data:
                 # OAuth user credentials
-                creds = Credentials.from_authorized_user_info(creds_data)
+                creds = Credentials.from_authorized_user_info(creds_data, scopes=scopes)
                 if creds.expired and creds.refresh_token:
                     creds.refresh(Request())
             elif 'client_email' in creds_data:
