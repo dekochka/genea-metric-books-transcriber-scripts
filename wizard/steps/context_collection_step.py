@@ -47,25 +47,17 @@ class ContextCollectionStep(WizardStep):
         mode = self.controller.get_data("mode", "local")
         mode_data = self.controller.get_data(mode, {})
         
-        # For GOOGLECLOUD mode, title page extraction requires services that aren't initialized yet
-        # So we only offer it for LOCAL mode
-        if mode == "local":
-            # Ask if user wants to extract from title page
-            use_title_page = questionary.confirm(
-                "Do you want to extract context from a title page image?",
-                default=False
-            ).ask()
-            
-            if use_title_page:
-                # Try title page extraction
-                context = self._extract_and_review_title_page(mode, mode_data)
-            else:
-                # Manual collection
-                context = self._collect_context_manually()
+        # Ask if user wants to extract from title page (both modes support this now)
+        use_title_page = questionary.confirm(
+            "Do you want to extract context from a title page image?",
+            default=False
+        ).ask()
+        
+        if use_title_page:
+            # Try title page extraction
+            context = self._extract_and_review_title_page(mode, mode_data)
         else:
-            # GOOGLECLOUD mode: manual entry only (services not initialized in wizard)
-            self.console.print("[dim]Note: Title page extraction is not available in wizard for GOOGLECLOUD mode.[/dim]")
-            self.console.print("[dim]You can enter context manually or extract later when processing.[/dim]\n")
+            # Manual collection
             context = self._collect_context_manually()
         
         return {"context": context}
@@ -224,9 +216,14 @@ class ContextCollectionStep(WizardStep):
             if mode == "local":
                 title_page_info = self._get_title_page_for_local(config.get('image_dir'))
             elif mode == "googlecloud":
+                drive_service = config.get('drive_service')
+                if not drive_service:
+                    self.console.print("[yellow]⚠ Drive service not available. Falling back to manual entry.[/yellow]")
+                    return self._collect_context_manually()
+                
                 title_page_info = self._get_title_page_for_googlecloud(
                     config.get('drive_folder_id'),
-                    config.get('drive_service')
+                    drive_service
                 )
             else:
                 self.console.print(f"[yellow]Unknown mode: {mode}. Falling back to manual entry.[/yellow]")
@@ -247,10 +244,22 @@ class ContextCollectionStep(WizardStep):
                 
                 extractor = TitlePageExtractor(api_key=api_key, model_id=config.get('ocr_model_id', 'gemini-3-flash-preview'))
             else:  # googlecloud
-                # For GOOGLECLOUD mode in wizard, services aren't initialized yet
-                # This should not be reached, but handle gracefully
-                self.console.print("[yellow]⚠ Title page extraction not available for GOOGLECLOUD mode in wizard.[/yellow]")
-                return self._collect_context_manually()
+                # Initialize Google services for title page extraction
+                self.console.print("[dim]Initializing Google services for title page extraction...[/dim]")
+                try:
+                    services = self._initialize_google_services(config)
+                    if not services:
+                        self.console.print("[yellow]⚠ Failed to initialize Google services. Falling back to manual entry.[/yellow]")
+                        return self._collect_context_manually()
+                    
+                    drive_service, genai_client = services
+                    extractor = TitlePageExtractor(genai_client=genai_client, model_id=config.get('ocr_model_id', 'gemini-3-flash-preview'))
+                    # Add drive_service to config for title page extraction
+                    config['drive_service'] = drive_service
+                except Exception as e:
+                    self.console.print(f"[yellow]⚠ Error initializing Google services: {e}[/yellow]")
+                    logging.error(f"Error initializing Google services for title page extraction: {e}", exc_info=True)
+                    return self._collect_context_manually()
             
             # Extract context
             self.console.print("\n[dim]Extracting context from title page...[/dim]")
@@ -491,6 +500,83 @@ class ContextCollectionStep(WizardStep):
             'filename': filename,
             'path': file_path
         }
+    
+    def _initialize_google_services(self, config: Dict[str, Any]) -> Optional[tuple]:
+        """
+        Initialize Google Drive and Vertex AI services for title page extraction.
+        
+        Args:
+            config: Configuration dictionary with Google Cloud settings
+            
+        Returns:
+            Tuple of (drive_service, genai_client) or None if failed
+        """
+        try:
+            # Import required modules
+            from google.auth import default
+            from google.auth.transport.requests import Request
+            from google.oauth2.credentials import Credentials
+            from google_auth_oauthlib.flow import InstalledAppFlow
+            import json
+            import os
+            from googleapiclient.discovery import build
+            import httplib2
+            from google_auth_httplib2 import AuthorizedHttp
+            from google import genai
+            import vertexai
+            
+            # Get ADC file path
+            adc_file = config.get('adc_file', 'application_default_credentials.json')
+            if not os.path.exists(adc_file):
+                logging.error(f"ADC file not found: {adc_file}")
+                return None
+            
+            # Load credentials
+            with open(adc_file, 'r') as f:
+                creds_data = json.load(f)
+            
+            # Check if it's OAuth user credentials or service account
+            if 'refresh_token' in creds_data:
+                # OAuth user credentials
+                creds = Credentials.from_authorized_user_info(creds_data)
+                if creds.expired and creds.refresh_token:
+                    creds.refresh(Request())
+            elif 'client_email' in creds_data:
+                # Service account
+                from google.oauth2 import service_account
+                creds = service_account.Credentials.from_service_account_file(adc_file)
+            else:
+                logging.error("Unrecognized credential format")
+                return None
+            
+            # Initialize Vertex AI
+            project_id = config.get('project_id')
+            region = config.get('region', 'global')
+            
+            vertexai.init(
+                project=project_id,
+                location=region,
+                credentials=creds
+            )
+            
+            # Create genai client
+            genai_client = genai.Client(
+                vertexai=True,
+                project=project_id,
+                location=region,
+                credentials=creds
+            )
+            
+            # Initialize Drive service
+            http_base = httplib2.Http(timeout=60)  # 1 minute timeout for wizard
+            http = AuthorizedHttp(creds, http=http_base)
+            drive_service = build("drive", "v3", http=http)
+            
+            return drive_service, genai_client
+            
+        except Exception as e:
+            logging.error(f"Error initializing Google services: {e}", exc_info=True)
+            return None
     
     def _get_title_page_for_googlecloud(self, drive_folder_id: str, drive_service: Any) -> Optional[Dict[str, Any]]:
         """
