@@ -57,13 +57,23 @@ class ProcessingSettingsStep(WizardStep):
             if template_name:
                 data["prompt_template"] = template_name
         
-        # Archive index
-        archive_index = questionary.text(
-            "Enter archive index (e.g., 'ф487оп1спр545'):",
-        ).ask()
+        # Archive index - auto-generate from archive reference if available
+        context = self.controller.get_data("context", {})
+        archive_reference = context.get("archive_reference", "")
         
-        if archive_index:
+        if archive_reference:
+            # Auto-generate archive_index from archive_reference
+            # Convert "Ф. 487, оп. 1, спр. 545" to "ф487оп1спр545"
+            archive_index = self._normalize_archive_reference(archive_reference)
             data["archive_index"] = archive_index
+            self.console.print(f"[dim]Auto-generated archive index: {archive_index}[/dim]")
+        else:
+            # Fallback: ask user if no archive reference available
+            archive_index = questionary.text(
+                "Enter archive index (e.g., 'ф487оп1спр545'):",
+            ).ask()
+            if archive_index:
+                data["archive_index"] = archive_index
         
         # Image start number
         image_start = questionary.text(
@@ -115,6 +125,36 @@ class ProcessingSettingsStep(WizardStep):
         # (It's stored in mode-specific config section, not in processing settings)
         
         return data
+    
+    def _normalize_archive_reference(self, archive_ref: str) -> str:
+        """
+        Normalize archive reference to archive index format.
+        
+        Converts "Ф. 487, оп. 1, спр. 545" to "ф487оп1спр545"
+        
+        Args:
+            archive_ref: Archive reference string
+            
+        Returns:
+            Normalized archive index string
+        """
+        import re
+        
+        # Remove spaces and punctuation, keep only letters and numbers
+        # Extract fond, opis, sprava numbers
+        # Pattern: Ф. 487, оп. 1, спр. 545 or Ф.487, оп.1, спр.545
+        pattern = r'[Фф]\.?\s*(\d+)[,\s]*[Оо]п\.?\s*(\d+)[,\s]*[Сс]пр\.?\s*(\d+)'
+        match = re.search(pattern, archive_ref)
+        
+        if match:
+            fond = match.group(1)
+            opis = match.group(2)
+            sprava = match.group(3)
+            return f"ф{fond}оп{opis}спр{sprava}"
+        
+        # Fallback: remove spaces and punctuation, lowercase
+        normalized = re.sub(r'[^\w]', '', archive_ref).lower()
+        return normalized
     
     def _list_available_templates(self) -> list[Dict[str, str]]:
         """
