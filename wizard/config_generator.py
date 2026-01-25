@@ -67,10 +67,11 @@ class ConfigGenerator:
             if "googlecloud" in wizard_data:
                 config["googlecloud"] = wizard_data["googlecloud"]
         
-        # Context section (will be populated in Phase 3)
-        # For now, create empty context structure
+        # Context section
         if "context" in wizard_data:
-            config["context"] = wizard_data["context"]
+            context = wizard_data["context"]
+            # Format context section properly
+            config["context"] = self._format_context_section(context)
         
         # Processing settings
         if "prompt_template" in wizard_data:
@@ -97,3 +98,43 @@ class ConfigGenerator:
         config["retry_image_list"] = wizard_data.get("retry_image_list", [])
         
         return config
+    
+    def _format_context_section(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Format context section for YAML output.
+        
+        Args:
+            context: Raw context dictionary from wizard
+            
+        Returns:
+            Formatted context dictionary
+        """
+        formatted = {}
+        
+        # Simple string fields
+        if context.get('archive_reference'):
+            formatted['archive_reference'] = context['archive_reference']
+        
+        if context.get('document_type'):
+            formatted['document_type'] = context['document_type']
+        
+        if context.get('date_range'):
+            formatted['date_range'] = context['date_range']
+        
+        # Title page filename (optional)
+        if context.get('title_page_filename'):
+            formatted['title_page_filename'] = context['title_page_filename']
+        
+        # Main villages - format as list of dicts
+        if context.get('main_villages'):
+            formatted['main_villages'] = context['main_villages']
+        
+        # Additional villages - format as list of dicts
+        if context.get('additional_villages'):
+            formatted['additional_villages'] = context['additional_villages']
+        
+        # Common surnames - format as list
+        if context.get('common_surnames'):
+            formatted['common_surnames'] = context['common_surnames']
+        
+        return formatted

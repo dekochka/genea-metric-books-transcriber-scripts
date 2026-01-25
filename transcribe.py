@@ -4735,7 +4735,8 @@ Use --wizard to run the interactive configuration wizard.
             
             # Add steps
             controller.add_step(ModeSelectionStep(controller))
-            # Note: ContextCollectionStep will be added in Phase 3
+            from wizard.steps.context_collection_step import ContextCollectionStep
+            controller.add_step(ContextCollectionStep(controller))
             controller.add_step(ProcessingSettingsStep(controller))
             
             # Run wizard
