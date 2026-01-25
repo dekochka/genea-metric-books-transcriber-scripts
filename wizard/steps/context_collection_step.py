@@ -286,7 +286,8 @@ class ContextCollectionStep(WizardStep):
                 extractor = TitlePageExtractor(genai_client=genai_client, model_id=config.get('ocr_model_id', 'gemini-3-flash-preview'))
             
             # Extract context
-            self.console.print("\n[dim]Extracting context from title page...[/dim]")
+            lang = self.controller.get_language()
+            self.console.print(f"\n[dim]{t('context.extracting', lang)}[/dim]")
             extracted = extractor.extract(title_page_info, mode, config)
             
             if not extracted:
@@ -308,42 +309,43 @@ class ContextCollectionStep(WizardStep):
         Returns:
             Final context dictionary
         """
-        self.console.print("\n[bold cyan]Extracted Context from Title Page:[/bold cyan]")
-        self.console.print(f"  Archive Reference: {extracted.get('archive_reference', 'N/A')}")
-        self.console.print(f"  Document Type: {extracted.get('document_type', 'N/A')}")
-        self.console.print(f"  Date Range: {extracted.get('date_range', 'N/A')}")
+        lang = self.controller.get_language()
+        self.console.print(f"\n[bold cyan]{t('context.extracted_title', lang)}[/bold cyan]")
+        self.console.print(f"  {t('context.archive_reference_label', lang)} {extracted.get('archive_reference', 'N/A')}")
+        self.console.print(f"  {t('context.document_type_label', lang)} {extracted.get('document_type', 'N/A')}")
+        self.console.print(f"  {t('context.date_range_label', lang)} {extracted.get('date_range', 'N/A')}")
         
         main_villages = extracted.get('main_villages', [])
         if main_villages:
-            self.console.print(f"  Main Villages: {', '.join(main_villages)}")
+            self.console.print(f"  {t('context.main_villages_label', lang)} {', '.join(main_villages)}")
         else:
-            self.console.print("  Main Villages: None")
+            self.console.print(f"  {t('context.main_villages_none', lang)}")
         
         additional_villages = extracted.get('additional_villages', [])
         if additional_villages:
-            self.console.print(f"  Additional Villages: {', '.join(additional_villages)}")
+            self.console.print(f"  {t('context.additional_villages_label', lang)} {', '.join(additional_villages)}")
         
         surnames = extracted.get('common_surnames', [])
         if surnames:
-            self.console.print(f"  Common Surnames: {', '.join(surnames)}")
+            self.console.print(f"  {t('context.common_surnames_label', lang)} {', '.join(surnames)}")
         
         # Ask user what to do
         action = questionary.select(
-            "What would you like to do?",
+            t('context.review_prompt', lang),
             choices=[
-                "Accept all extracted data",
-                "Edit some fields",
-                "Reject and enter manually",
+                questionary.Choice(t('context.review_accept', lang), value="accept"),
+                questionary.Choice(t('context.review_edit', lang), value="edit"),
+                questionary.Choice(t('context.review_reject', lang), value="reject"),
             ]
         ).ask()
         
-        if action == "Accept all extracted data":
+        if action == "accept":
             return self._format_extracted_context(extracted, title_page_info)
         
-        elif action == "Edit some fields":
+        elif action == "edit":
             return self._edit_extracted_context(extracted, title_page_info)
         
-        else:  # Reject and enter manually
+        else:  # reject
             return self._collect_context_manually()
     
     def _edit_extracted_context(self, extracted: Dict[str, Any], title_page_info: Dict[str, Any]) -> Dict[str, Any]:
@@ -499,15 +501,17 @@ class ContextCollectionStep(WizardStep):
             return None
         
         # Let user select or enter filename
-        choices = image_files + ["Enter filename manually"]
+        lang = self.controller.get_language()
+        enter_manually_text = t('context.enter_filename_manually', lang)
+        choices = image_files + [enter_manually_text]
         selected = questionary.select(
-            "Select title page image (or enter manually):",
+            t('context.title_page_select', lang),
             choices=choices
         ).ask()
         
-        if selected == "Enter filename manually":
+        if selected == enter_manually_text:
             filename = questionary.text(
-                "Enter title page filename:",
+                t('context.title_page_filename_prompt', lang),
             ).ask()
             if not filename:
                 return None
@@ -635,11 +639,12 @@ class ContextCollectionStep(WizardStep):
                 if f.get('mimeType', '').startswith('image/')
             ]
             
+            lang = self.controller.get_language()
             if not image_files:
                 self.console.print("[yellow]No image files found in Drive folder[/yellow]")
                 # Still allow manual entry
                 filename = questionary.text(
-                    "Enter title page filename manually:",
+                    t('context.title_page_filename_manual', lang),
                 ).ask()
                 if not filename:
                     return None
@@ -649,15 +654,16 @@ class ContextCollectionStep(WizardStep):
                 }
             
             # Let user select or enter filename
-            choices = [f['name'] for f in image_files] + ["Enter filename manually"]
+            enter_manually_text = t('context.enter_filename_manually', lang)
+            choices = [f['name'] for f in image_files] + [enter_manually_text]
             selected = questionary.select(
-                "Select title page image (or enter manually):",
+                t('context.title_page_select', lang),
                 choices=choices
             ).ask()
             
-            if selected == "Enter filename manually":
+            if selected == enter_manually_text:
                 filename = questionary.text(
-                    "Enter title page filename:",
+                    t('context.title_page_filename_prompt', lang),
                 ).ask()
                 if not filename:
                     return None
@@ -670,11 +676,12 @@ class ContextCollectionStep(WizardStep):
             }
             
         except Exception as e:
+            lang = self.controller.get_language()
             self.console.print(f"[red]Error listing Drive files: {e}[/red]")
             logging.error(f"Error listing Drive files: {e}", exc_info=True)
             # Fallback to manual entry
             filename = questionary.text(
-                "Enter title page filename manually:",
+                t('context.title_page_filename_manual', lang),
             ).ask()
             if not filename:
                 return None
