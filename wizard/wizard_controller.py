@@ -102,8 +102,9 @@ class WizardController:
                         self.console.print("[yellow]Wizard cancelled by user.[/yellow]")
                         return None
                 
-                # Store step data
-                self.collected_data.update(step_data)
+                # Store step data (handle None return from cancelled step)
+                if step_data is not None:
+                    self.collected_data.update(step_data)
             
             # Generate config file
             self.console.print("\n[bold green]✓ All steps completed successfully![/bold green]")

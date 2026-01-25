@@ -214,7 +214,10 @@
   - [x] test_wizard_controller.py - Tests for WizardController (10 tests)
   - [x] test_title_page_extractor.py - Tests for TitlePageExtractor (8 tests)
   - **Total: 122 unit tests, all passing**
-- [ ] **Task 7.2:** Write Integration Tests
+- [x] **Task 7.2:** Write Integration Tests ✅
+  - [x] test_wizard_flow.py - End-to-end wizard flow tests (4 tests)
+  - [x] test_wizard_config_compatibility.py - Backward compatibility tests (6 tests)
+  - **Total: 10 integration tests, all passing**
 - [ ] **Task 7.3:** Update Documentation
 - [ ] **Task 7.4:** Manual Testing & Bug Fixes
 
