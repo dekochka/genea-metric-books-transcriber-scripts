@@ -122,6 +122,9 @@ class ModeSelectionStep(WizardStep):
         gc_data = {}
         
         # Project ID
+        self.console.print("\n[bold]Google Cloud Project ID[/bold]")
+        self.console.print("[dim]Find this in Google Cloud Console: https://console.cloud.google.com/[/dim]")
+        self.console.print("[dim]Example: ru-ocr-genea or my-transcription-project[/dim]")
         project_id = questionary.text(
             "Enter Google Cloud Project ID:",
             default="ru-ocr-genea"
@@ -133,6 +136,9 @@ class ModeSelectionStep(WizardStep):
         gc_data["project_id"] = project_id
         
         # Drive folder ID (from URL or direct)
+        self.console.print("\n[bold]Google Drive Folder[/bold]")
+        self.console.print("[dim]Get folder ID from Drive folder URL: https://drive.google.com/drive/folders/FOLDER_ID[/dim]")
+        self.console.print("[dim]You can paste the full URL or just the folder ID[/dim]")
         drive_input = questionary.text(
             "Enter Google Drive folder URL or folder ID:",
         ).ask()
@@ -149,6 +155,8 @@ class ModeSelectionStep(WizardStep):
         gc_data["drive_folder_id"] = folder_id
         
         # Region (optional, with default)
+        self.console.print("\n[bold]Vertex AI Region[/bold]")
+        self.console.print("[dim]Select the region where Vertex AI is available[/dim]")
         region = questionary.select(
             "Select Vertex AI region:",
             choices=[
@@ -163,6 +171,9 @@ class ModeSelectionStep(WizardStep):
             gc_data["region"] = region
         
         # ADC file (optional)
+        self.console.print("\n[bold]Application Default Credentials (ADC) File[/bold]")
+        self.console.print("[dim]Path to credentials file created by: gcloud auth application-default login[/dim]")
+        self.console.print("[dim]Usually located at: ~/.config/gcloud/application_default_credentials.json[/dim]")
         adc_file = questionary.path(
             "Enter path to ADC file (or press Enter for default 'application_default_credentials.json'):",
             default="application_default_credentials.json"
@@ -172,6 +183,9 @@ class ModeSelectionStep(WizardStep):
             gc_data["adc_file"] = os.path.expanduser(adc_file)
         
         # Document name (optional)
+        self.console.print("\n[bold]Document Name[/bold]")
+        self.console.print("[dim]Name for the Google Doc that will be created (optional)[/dim]")
+        self.console.print("[dim]If left empty, will use the Drive folder name[/dim]")
         document_name = questionary.text(
             "Enter document name (or press Enter to use folder name):",
             default=""

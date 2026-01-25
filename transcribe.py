@@ -4237,8 +4237,15 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
                 # Track token usage for cost estimation
                 current_cost = 0.0
                 if usage_metadata:
-                    prompt_tokens = usage_metadata.get('prompt_tokens', 0)
-                    completion_tokens = usage_metadata.get('completion_tokens', 0)
+                    # Handle both dict (LOCAL mode) and Pydantic object (GOOGLECLOUD mode)
+                    if isinstance(usage_metadata, dict):
+                        prompt_tokens = usage_metadata.get('prompt_tokens', 0) or 0
+                        completion_tokens = usage_metadata.get('completion_tokens', 0) or 0
+                    else:
+                        # GOOGLECLOUD mode: usage_metadata is a Pydantic object
+                        prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0) or 0
+                        completion_tokens = getattr(usage_metadata, 'candidates_token_count', 0) or 0
+                    
                     total_prompt_tokens += prompt_tokens
                     total_completion_tokens += completion_tokens
                     total_tokens += prompt_tokens + completion_tokens
@@ -4560,8 +4567,16 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
                         # Track token usage for cost estimation
                         current_cost = 0.0
                         if usage_metadata:
-                            prompt_tokens = usage_metadata.get('prompt_tokens', 0)
-                            completion_tokens = usage_metadata.get('completion_tokens', 0)
+                            # Handle both dict (LOCAL mode) and Pydantic object (GOOGLECLOUD mode)
+                            if isinstance(usage_metadata, dict):
+                                prompt_tokens = usage_metadata.get('prompt_tokens', 0) or 0
+                                completion_tokens = usage_metadata.get('completion_tokens', 0) or 0
+                            else:
+                                # GOOGLECLOUD mode: usage_metadata is a Pydantic object (GenerateContentResponseUsageMetadata)
+                                # Access attributes directly, not as dict
+                                prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0) or 0
+                                completion_tokens = getattr(usage_metadata, 'candidates_token_count', 0) or 0
+                            
                             total_prompt_tokens += prompt_tokens
                             total_completion_tokens += completion_tokens
                             total_tokens += prompt_tokens + completion_tokens

@@ -100,13 +100,36 @@ class PreFlightValidator:
                 result.errors.append(f"ADC file not found: {adc_file}")
             else:
                 # Try to validate credentials
+                # Note: ADC files can be either service account JSON or OAuth user credentials
+                # OAuth user credentials don't have client_email/token_uri, so we check for both formats
                 try:
-                    from google.oauth2 import service_account
-                    credentials = service_account.Credentials.from_service_account_file(adc_file)
-                    if not credentials.valid:
-                        result.warnings.append("ADC credentials may be expired or invalid")
+                    import json
+                    with open(adc_file, 'r') as f:
+                        creds_data = json.load(f)
+                    
+                    # Check if it's a service account (has client_email)
+                    if 'client_email' in creds_data:
+                        from google.oauth2 import service_account
+                        credentials = service_account.Credentials.from_service_account_file(adc_file)
+                        if not credentials.valid:
+                            result.warnings.append("ADC credentials may be expired or invalid")
+                    # Check if it's OAuth user credentials (has refresh_token)
+                    elif 'refresh_token' in creds_data:
+                        # OAuth user credentials are valid - they'll be refreshed at runtime
+                        # Just check that required fields exist
+                        if 'client_id' not in creds_data or 'client_secret' not in creds_data:
+                            result.warnings.append("ADC file appears to be OAuth credentials but missing client_id or client_secret")
+                        else:
+                            # OAuth credentials look valid
+                            pass
+                    else:
+                        result.warnings.append("ADC file format not recognized (neither service account nor OAuth user credentials)")
+                except json.JSONDecodeError:
+                    result.errors.append(f"ADC file is not valid JSON: {adc_file}")
                 except Exception as e:
-                    result.errors.append(f"Failed to load ADC credentials: {str(e)}")
+                    # Don't fail validation for credential format issues - they might work at runtime
+                    # OAuth user credentials often fail service_account validation but work fine
+                    result.warnings.append(f"Could not fully validate ADC credentials: {str(e)} (may still work at runtime)")
     
     def _validate_paths(self, config: Dict[str, Any], mode: str, result: ValidationResult):
         """Validate file paths and directories."""
