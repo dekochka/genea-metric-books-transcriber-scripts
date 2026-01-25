@@ -3001,10 +3001,10 @@ def calculate_metrics(usage_metadata_list, timing_list):
         # Handle both dict and object formats
         if isinstance(usage_metadata, dict):
             # Dictionary format (from LOCAL mode)
-            prompt_tokens = usage_metadata.get('prompt_tokens', 0)
-            completion_tokens = usage_metadata.get('completion_tokens', 0)
-            cached_tokens = usage_metadata.get('cached_tokens', 0)
-            thoughts_tokens = usage_metadata.get('thoughts_tokens', 0)
+            prompt_tokens = usage_metadata.get('prompt_tokens', 0) or 0
+            completion_tokens = usage_metadata.get('completion_tokens', 0) or 0
+            cached_tokens = usage_metadata.get('cached_tokens', 0) or 0
+            thoughts_tokens = usage_metadata.get('thoughts_tokens', 0) or 0
             
             total_input_tokens += prompt_tokens
             total_output_tokens += completion_tokens
