@@ -2589,14 +2589,6 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
         ),
     )
     
-    # Timeout handler
-    def timeout_handler(signum, frame):
-        elapsed = time.time() - function_start_time
-        error_msg = f"Vertex AI API call timed out after {timeout_seconds/60:.1f} minutes (total elapsed: {elapsed:.1f}s) for {file_name}"
-        logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] {error_msg}")
-        ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] TIMEOUT: {error_msg}")
-        raise TimeoutError(error_msg)
-    
     max_retries = 3
     retry_delay = 30  # seconds
     # Exponential backoff timeouts: 1 min, 2 min, 5 min
@@ -2605,14 +2597,23 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
     for attempt in range(max_retries):
         attempt_start_time = time.time()
         timeout_seconds = timeout_seconds_list[attempt]
+        
+        # Define timeout handler inside loop to properly capture timeout_seconds
+        def timeout_handler(signum, frame):
+            elapsed = time.time() - function_start_time
+            error_msg = f"Vertex AI API call timed out after {timeout_seconds/60:.1f} minutes (total elapsed: {elapsed:.1f}s) for {file_name}"
+            logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] {error_msg}")
+            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] TIMEOUT: {error_msg}")
+            raise TimeoutError(error_msg)
+        
         try:
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} for image '{file_name}'")
-            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} starting for {file_name}")
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} for image '{file_name}' (timeout: {timeout_seconds/60:.1f} min)")
+            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} starting for {file_name} (timeout: {timeout_seconds/60:.1f} min)")
             
             # Set up timeout with exponential backoff (1 min, 2 min, 5 min)
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(timeout_seconds)
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Timeout set to {timeout_seconds/60:.1f} minutes for '{file_name}'")
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Timeout set to {timeout_seconds/60:.1f} minutes for '{file_name}' (attempt {attempt + 1}/{max_retries})")
             
             api_call_start = time.time()
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Making API call to Vertex AI for '{file_name}'...")
@@ -2705,20 +2706,24 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
             ai_logger.debug(f"Traceback for {file_name}:\n{traceback.format_exc()}")
             
             if attempt < max_retries - 1:
-                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay} seconds... (exponential backoff)")
-                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Will retry in {retry_delay}s with exponential backoff")
+                next_timeout = timeout_seconds_list[attempt + 1]
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay} seconds... (exponential backoff, next timeout: {next_timeout/60:.1f} min)")
+                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Will retry in {retry_delay}s with exponential backoff (next timeout: {next_timeout/60:.1f} min)")
                 time.sleep(retry_delay)
                 retry_delay *= 2  # Exponential backoff
-                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retry delay completed, starting next attempt...")
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retry delay completed, starting attempt {attempt + 2}/{max_retries}...")
+                continue  # Explicitly continue to next iteration
             else:
                 error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] All {max_retries} attempts failed for '{file_name}' after {total_elapsed:.1f}s total: {error_type}: {str(e)}"
                 ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] === AI Error for {file_name} ===")
                 ai_logger.error(f"Error type: {error_type}")
                 ai_logger.error(f"Error message: {str(e)}")
                 ai_logger.error(f"Total elapsed time: {total_elapsed:.1f}s")
+                ai_logger.error(f"Attempts made: {max_retries}")
                 ai_logger.error(f"Full traceback:\n{traceback.format_exc()}")
                 ai_logger.error(f"=== End AI Error for {file_name} ===\n")
                 logging.error(error_msg)
+                logging.error(f"All {max_retries} retry attempts exhausted for '{file_name}'")
                 logging.error(f"Full traceback:\n{traceback.format_exc()}")
                 # Return error text with None for timing and metadata
                 return f"[Error during transcription: {str(e)}]", None, None
