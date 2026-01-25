@@ -2976,6 +2976,109 @@ def create_doc(docs_service, drive_service, title, config: dict):
         raise
 
 
+def _log_run_summary(output, transcribed_pages, metrics, start_time, end_time, error_info, mode):
+    """
+    Log comprehensive Run Summary to main logger.
+    
+    Args:
+        output: Output strategy object (may be CompositeOutput)
+        transcribed_pages: List of transcribed pages
+        metrics: Metrics dictionary
+        start_time: Session start datetime
+        end_time: Session end datetime
+        error_info: Optional error info dict
+        mode: 'local' or 'googlecloud'
+    """
+    logging.info("")
+    logging.info("=" * 80)
+    logging.info("RUN SUMMARY")
+    logging.info("=" * 80)
+    
+    # Status
+    if error_info:
+        logging.info("Status: INTERRUPTED BY ERROR")
+        logging.info(f"  Error Type: {error_info.get('type', 'Unknown')}")
+        logging.info(f"  Error Message: {error_info.get('message', 'Unknown error')}")
+        if error_info.get('next_image_number'):
+            logging.info(f"  Resume: Update config 'image_start_number' to {error_info['next_image_number']}")
+    else:
+        logging.info("Status: COMPLETED SUCCESSFULLY")
+    
+    # Statistics
+    total_images = len(transcribed_pages)
+    successful = len([p for p in transcribed_pages if p.get('text') and not p['text'].startswith('[Error')])
+    failed = total_images - successful
+    
+    logging.info("")
+    logging.info("Statistics:")
+    logging.info(f"  Total images processed: {total_images}")
+    logging.info(f"  Successful transcriptions: {successful}")
+    logging.info(f"  Failed transcriptions: {failed}")
+    
+    # Timing
+    if start_time and end_time:
+        elapsed = (end_time - start_time).total_seconds()
+        logging.info(f"  Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logging.info(f"  End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logging.info(f"  Total duration: {elapsed:.1f} seconds ({elapsed/60:.1f} minutes)")
+    
+    # Metrics
+    if metrics and isinstance(metrics, dict) and len(metrics) > 0:
+        logging.info("")
+        logging.info("Metrics:")
+        for key, value in metrics.items():
+            if isinstance(value, (int, float)):
+                if 'token' in key.lower() or 'count' in key.lower():
+                    logging.info(f"  {key}: {value:,}")
+                elif 'cost' in key.lower() or 'price' in key.lower():
+                    logging.info(f"  {key}: ${value:.4f}")
+                elif 'time' in key.lower() or 'duration' in key.lower() or 'elapsed' in key.lower():
+                    logging.info(f"  {key}: {value:.2f}s")
+                else:
+                    logging.info(f"  {key}: {value}")
+            else:
+                logging.info(f"  {key}: {value}")
+    elif metrics is None:
+        logging.info("")
+        logging.info("Metrics: (Not available)")
+    
+    # Outputs produced
+    logging.info("")
+    logging.info("Outputs Produced:")
+    
+    def _collect_outputs(strategy, outputs_list):
+        """Recursively collect output paths from strategy (handles CompositeOutput)."""
+        if isinstance(strategy, CompositeOutput):
+            for sub_strategy in strategy.strategies:
+                _collect_outputs(sub_strategy, outputs_list)
+        else:
+            # LogFileOutput
+            if hasattr(strategy, 'log_file_path') and strategy.log_file_path:
+                outputs_list.append(('Log File', strategy.log_file_path))
+            # MarkdownOutput
+            if hasattr(strategy, 'final_file_path') and strategy.final_file_path:
+                outputs_list.append(('Markdown File', strategy.final_file_path))
+            # WordOutput
+            if hasattr(strategy, 'doc_path') and strategy.doc_path:
+                outputs_list.append(('Word Document', strategy.doc_path))
+            # GoogleDocsOutput
+            if hasattr(strategy, 'doc_id') and strategy.doc_id:
+                doc_url = f"https://docs.google.com/document/d/{strategy.doc_id}"
+                outputs_list.append(('Google Doc', doc_url))
+    
+    outputs = []
+    _collect_outputs(output, outputs)
+    
+    if outputs:
+        for output_type, output_path in outputs:
+            logging.info(f"  {output_type}: {output_path}")
+    else:
+        logging.info("  (No outputs generated)")
+    
+    logging.info("=" * 80)
+    logging.info("")
+
+
 def calculate_metrics(usage_metadata_list, timing_list):
     """
     Calculate metrics from usage metadata and timing data.
@@ -4529,7 +4632,7 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
                             logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Large time gap detected: {gap_seconds:.1f} seconds ({gap_seconds/60:.1f} minutes) between previous image and '{image_name}'")
                             ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Time gap of {gap_seconds:.1f}s ({gap_seconds/60:.1f} min) before {image_name}")
                     
-                    # Update progress bar
+                    # Update progress bar (without advancing)
                     progress.update(
                         task,
                         advance=0,
@@ -4592,7 +4695,7 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
                         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {global_idx}/{total_images}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
                         ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
                         
-                        # Update progress bar with cost info
+                        # Update progress bar with cost info (advance once per image)
                         cost_str = f"Est. cost: ${current_cost:.4f}" if usage_metadata and current_cost > 0 else ""
                         progress.update(
                             task,
@@ -4636,8 +4739,8 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
                         batch_timing_list.append(None)
                         batch_usage_metadata_list.append(None)
                         
-                    # Advance progress bar even on error
-                    progress.update(task, advance=1)
+                        # Advance progress bar on error (only once, not in success path)
+                        progress.update(task, advance=1)
                 
                 # After batch is transcribed, write to document
                 if batch_transcribed_pages:
@@ -4659,6 +4762,12 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
                             output.initialize(config)
                         
                         # Write first batch with overview (pass all pages so far)
+                        # Update progress bar to show we're writing (but don't advance)
+                        progress.update(
+                            task,
+                            advance=0,
+                            description=f"[cyan]Writing batch {batch_num + 1}/{num_batches} to document...[/cyan]"
+                        )
                         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing first batch ({len(batch_transcribed_pages)} images) to document with overview...")
                         output.write_batch(transcribed_pages, 1, True)
                         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ First batch written to document")
@@ -4666,6 +4775,12 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
                     else:
                         # Append subsequent batches to existing document
                         if output.doc_id:
+                            # Update progress bar to show we're writing (but don't advance)
+                            progress.update(
+                                task,
+                                advance=0,
+                                description=f"[cyan]Writing batch {batch_num + 1}/{num_batches} to document...[/cyan]"
+                            )
                             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing batch {batch_num + 1} ({len(batch_transcribed_pages)} images) to document...")
                             # Pass all transcribed pages so far (write_batch will calculate start_idx)
                             output.write_batch(transcribed_pages, batch_num + 1, False)
@@ -4753,6 +4868,13 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
         output.finalize(transcribed_pages, final_metrics)
         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Output finalized successfully.")
         logging.info(f"Final metrics: {final_metrics}")
+    
+    # Calculate end time for summary
+    end_time = datetime.now()
+    start_time = output.start_time if hasattr(output, 'start_time') and output.start_time else None
+    
+    # Log comprehensive Run Summary
+    _log_run_summary(output, transcribed_pages, final_metrics, start_time, end_time, None, 'googlecloud')
     
     return transcribed_pages
 
@@ -4875,13 +4997,16 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
             else:  # local mode
                 transcribed_pages, start_time, end_time, usage_metadata_list, timing_list = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger)
             
-            # Log session completion
+            # Log session completion (to ai_logger)
             ai_logger.info(f"=== Transcription Session Completed ===")
             ai_logger.info(f"Session end timestamp: {datetime.now().isoformat()}")
             ai_logger.info(f"Total images processed: {len(transcribed_pages)}")
             ai_logger.info(f"Successful transcriptions: {len([p for p in transcribed_pages if p['text'] and not p['text'].startswith('[Error')])}")
             ai_logger.info(f"Failed transcriptions: {len([p for p in transcribed_pages if not p['text'] or p['text'].startswith('[Error')])}")
             ai_logger.info(f"=== Session Summary ===\n")
+            
+            # For GOOGLECLOUD mode, Run Summary is already logged in process_batches_googlecloud
+            # For LOCAL mode, Run Summary will be logged in the finally block after finalization
             
         except Exception as e:
             # Save the exception for re-raising after finalization
@@ -4958,6 +5083,9 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
                 except Exception as finalize_error:
                     logging.error(f"Error during output finalization: {finalize_error}")
                     logging.error(f"Finalize traceback:\n{traceback.format_exc()}")
+                
+                # Log comprehensive Run Summary for LOCAL mode
+                _log_run_summary(output, transcribed_pages, metrics, start_time, end_time, error_info, mode)
         
         # Re-raise the original exception if there was one (outside finally block)
         if caught_exception:
