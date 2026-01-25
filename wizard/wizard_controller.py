@@ -130,6 +130,49 @@ class WizardController:
             
             self.console.print(f"\n[green]✓ Configuration saved to: {config_path}[/green]")
             
+            # Run pre-flight validation
+            self.console.print("\n[bold cyan]Running pre-flight validation...[/bold cyan]")
+            from wizard.preflight_validator import PreFlightValidator
+            from transcribe import load_config, detect_mode
+            
+            try:
+                # Load the generated config for validation
+                config = load_config(config_path)
+                mode = detect_mode(config)
+                
+                validator = PreFlightValidator()
+                result = validator.validate(config, mode)
+                
+                # Display results
+                validator.display_results(result)
+                
+                # If there are errors, ask user if they want to continue
+                if result.errors:
+                    import questionary
+                    continue_anyway = questionary.confirm(
+                        "\nThere are validation errors. Do you want to continue anyway?",
+                        default=False
+                    ).ask()
+                    
+                    if not continue_anyway:
+                        self.console.print("[yellow]Validation cancelled. Please fix the issues and try again.[/yellow]")
+                        return None
+                elif result.warnings:
+                    # Just show warnings, but allow to continue
+                    import questionary
+                    continue_anyway = questionary.confirm(
+                        "\nThere are validation warnings. Do you want to continue?",
+                        default=True
+                    ).ask()
+                    
+                    if not continue_anyway:
+                        self.console.print("[yellow]Validation cancelled. Please review the warnings.[/yellow]")
+                        return None
+                
+            except Exception as e:
+                self.console.print(f"[yellow]⚠ Validation failed with error: {e}[/yellow]")
+                self.console.print("[dim]Continuing anyway...[/dim]")
+            
             return config_path
             
         except KeyboardInterrupt:
