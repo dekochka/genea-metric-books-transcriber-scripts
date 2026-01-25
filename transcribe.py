@@ -295,9 +295,53 @@ def validate_config(config: dict, mode: str) -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 
-def load_prompt_text(prompt_file: str) -> str:
+def load_prompt_text(config_or_file: Any) -> str:
     """
-    Load prompt text from file in the prompts directory.
+    Load prompt text from config or file.
+    
+    Supports both modes:
+    - Legacy: prompt_file (direct file reference)
+    - Wizard: prompt_template + context (template assembly)
+    
+    Args:
+        config_or_file: Either a config dict (wizard mode) or prompt file name (legacy mode)
+        
+    Returns:
+        Prompt text as string, or fallback minimal prompt if file not found
+    """
+    # Check if it's a config dict (wizard mode) or string (legacy mode)
+    if isinstance(config_or_file, dict):
+        config = config_or_file
+        
+        # Wizard mode: assemble from template
+        if 'prompt_template' in config:
+            from wizard.prompt_assembler import PromptAssemblyEngine
+            
+            assembler = PromptAssemblyEngine()
+            context = config.get('context', {})
+            template_name = config['prompt_template']
+            
+            try:
+                return assembler.assemble(template_name, context)
+            except Exception as e:
+                logging.error(f"Failed to assemble prompt from template '{template_name}': {e}")
+                raise ValueError(f"Failed to assemble prompt: {e}")
+        
+        # Legacy mode: use prompt_file
+        elif 'prompt_file' in config:
+            prompt_file = config['prompt_file']
+            return load_prompt_file(prompt_file)
+        else:
+            raise ValueError("Either prompt_file or prompt_template must be specified in config")
+    
+    else:
+        # Legacy mode: direct file name
+        return load_prompt_file(config_or_file)
+
+
+def load_prompt_file(prompt_file: str) -> str:
+    """
+    Load prompt text from file in the prompts directory (legacy mode).
     
     Args:
         prompt_file: Name of the prompt file (without path)
@@ -4711,31 +4755,10 @@ Use --wizard to run the interactive configuration wizard.
                 logging.info(f"Detected mode: {mode.upper()}")
                 logging.info(f"Logging initialized. Main log: {log_filename}, AI log: {ai_log_filename}")
                 
-                # Load prompt text (will support template assembly in Phase 2)
-                prompt_file = config.get('prompt_file')
-                prompt_template = config.get('prompt_template')
-                
-                if prompt_template:
-                    # Phase 2: Will use PromptAssemblyEngine for context assembly
-                    # For now, load template directly (without context variable replacement)
-                    try:
-                        # Try loading from templates directory
-                        template_path = os.path.join(os.path.dirname(__file__), "prompts", "templates", f"{prompt_template}.md")
-                        if os.path.exists(template_path):
-                            with open(template_path, 'r', encoding='utf-8') as f:
-                                prompt_text = f.read()
-                            logging.warning("Template loaded without context assembly. Context variables ({{VARIABLE}}) will not be replaced until Phase 2.")
-                        else:
-                            raise FileNotFoundError(f"Template not found: {template_path}")
-                    except Exception as e:
-                        logging.error(f"Could not load template '{prompt_template}': {e}")
-                        raise ValueError(f"Template '{prompt_template}' not found: {e}")
-                elif prompt_file:
-                    prompt_text = load_prompt_text(prompt_file)
-                else:
-                    raise ValueError("Either prompt_file or prompt_template must be specified")
-                
-                logging.info(f"Prompt loaded: {prompt_file or prompt_template} ({len(prompt_text)} characters)")
+                # Load prompt text (supports both template assembly and legacy file loading)
+                prompt_text = load_prompt_text(config)
+                prompt_source = config.get('prompt_template') or config.get('prompt_file', 'unknown')
+                logging.info(f"Prompt loaded: {prompt_source} ({len(prompt_text)} characters)")
                 
                 # Get logs directory
                 logs_dir = "logs"
@@ -4773,10 +4796,10 @@ Use --wizard to run the interactive configuration wizard.
             logging.info(f"Detected mode: {mode.upper()}")
             logging.info(f"Logging initialized. Main log: {log_filename}, AI log: {ai_log_filename}")
             
-            # Load prompt text
-            prompt_file = config['prompt_file']
-            prompt_text = load_prompt_text(prompt_file)
-            logging.info(f"Prompt file loaded: {prompt_file} ({len(prompt_text)} characters)")
+            # Load prompt text (supports both template assembly and legacy file loading)
+            prompt_text = load_prompt_text(config)
+            prompt_source = config.get('prompt_template') or config.get('prompt_file', 'unknown')
+            logging.info(f"Prompt loaded: {prompt_source} ({len(prompt_text)} characters)")
             
             # Get logs directory for save_transcription_locally
             logs_dir = "logs"
