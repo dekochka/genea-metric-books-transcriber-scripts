@@ -76,20 +76,39 @@ class ModeSelectionStep(WizardStep):
         image_dir = os.path.expanduser(image_dir)
         local_data["image_dir"] = image_dir
         
-        # API key (optional - can use env var)
-        use_env_key = questionary.confirm(
-            "Use GEMINI_API_KEY environment variable?",
-            default=True
-        ).ask()
+        # API key - check if env var is set first
+        env_api_key = os.environ.get('GEMINI_API_KEY')
         
-        if not use_env_key:
+        if env_api_key:
+            # Environment variable is set - ask if user wants to use it
+            use_env_key = questionary.confirm(
+                "Use GEMINI_API_KEY environment variable?",
+                default=True
+            ).ask()
+            
+            if not use_env_key:
+                # User wants to provide their own key instead
+                self.console.print("[dim]Get your API key from: https://aistudio.google.com/api-keys[/dim]")
+                api_key = questionary.text(
+                    "Enter Gemini API key:",
+                    default=""
+                ).ask()
+                if api_key:
+                    local_data["api_key"] = api_key
+            # If use_env_key is True, we don't set api_key in local_data, 
+            # so the code will use the env var at runtime
+        else:
+            # Environment variable is not set - ask for API key directly
             self.console.print("[dim]Get your API key from: https://aistudio.google.com/api-keys[/dim]")
             api_key = questionary.text(
-                "Enter Gemini API key (or press Enter to skip and use env var):",
+                "Enter Gemini API key:",
                 default=""
             ).ask()
             if api_key:
                 local_data["api_key"] = api_key
+            else:
+                # User didn't provide key and env var is not set
+                self.console.print("[yellow]⚠ Warning: No API key provided. You'll need to set GEMINI_API_KEY environment variable before running transcription.[/yellow]")
         
         # Output directory (optional)
         output_dir = questionary.path(
