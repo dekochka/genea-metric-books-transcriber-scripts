@@ -369,16 +369,39 @@ def setup_logging(config: dict) -> tuple:
     Returns:
         Tuple of (log_filename, ai_log_filename, ai_logger)
     """
+    # Detect mode for log filename
+    mode = detect_mode(config)
+    
+    # Check if logs should be saved to source directory
+    save_logs_to_source = False
+    if mode == 'local':
+        save_logs_to_source = config.get('local', {}).get('save_logs_to_source', False)
+    elif mode == 'googlecloud':
+        save_logs_to_source = config.get('googlecloud', {}).get('save_logs_to_source', False)
+    
+    # Determine logs directory
+    if save_logs_to_source:
+        if mode == 'local':
+            # Use image directory for LOCAL mode
+            image_dir = config.get('local', {}).get('image_dir', 'local')
+            LOGS_DIR = os.path.abspath(image_dir)
+        else:
+            # For GOOGLECLOUD mode, we'll still use local logs directory initially
+            # Logs will be uploaded to Drive after completion
+            LOGS_DIR = "logs"
+    else:
+        # Use configured output_dir for LOCAL mode, or default "logs"
+        if mode == 'local':
+            LOGS_DIR = config.get('local', {}).get('output_dir', 'logs')
+        else:
+            LOGS_DIR = "logs"
+    
     # Create logs directory if it doesn't exist
-    LOGS_DIR = "logs"
     if not os.path.exists(LOGS_DIR):
         os.makedirs(LOGS_DIR)
     
     # Generate timestamp for log files
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # Detect mode for log filename
-    mode = detect_mode(config)
     
     # Logging setup - use date-time-transcribe-session-{identifier}.log format
     if mode == 'googlecloud':
@@ -2849,6 +2872,48 @@ def upload_image_to_drive(drive_service, image_bytes, filename: str, drive_folde
         return None
 
 
+def upload_log_file_to_drive(drive_service, log_file_path: str, drive_folder_id: str) -> str:
+    """
+    Upload a log file to Google Drive and return the file ID.
+    
+    Args:
+        drive_service: Google Drive API service
+        log_file_path: Local path to the log file
+        drive_folder_id: Google Drive folder ID where to upload
+        
+    Returns:
+        File ID of uploaded log file, or None if upload fails
+    """
+    try:
+        from googleapiclient.http import MediaFileUpload
+        
+        if not os.path.exists(log_file_path):
+            logging.warning(f"Log file not found: {log_file_path}")
+            return None
+        
+        filename = os.path.basename(log_file_path)
+        
+        file_metadata = {
+            'name': filename,
+            'parents': [drive_folder_id]
+        }
+        
+        media = MediaFileUpload(log_file_path, mimetype='text/plain', resumable=True)
+        
+        file = drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, name'
+        ).execute()
+        
+        file_id = file.get('id')
+        logging.info(f"Uploaded log file '{filename}' to Google Drive folder (ID: {file_id})")
+        return file_id
+    except Exception as e:
+        logging.error(f"Error uploading log file to Drive: {str(e)}")
+        return None
+
+
 def insert_title_page_image_and_transcribe(docs_service, drive_service, doc_id: str, config: dict, insert_index: int, genai_client, prompt_text: str):
     """
     Insert title page image into Google Doc and transcribe it.
@@ -4919,7 +4984,7 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
     return transcribed_pages
 
 
-def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
+def main(config: dict, prompt_text: str, ai_logger, logs_dir: str, log_filename: str = None, ai_log_filename: str = None):
     """
     Main function to process images and create transcription document.
     Now supports dual-mode operation (LOCAL and GOOGLECLOUD) using strategy pattern.
@@ -5034,6 +5099,22 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
             if mode == 'googlecloud':
                 transcribed_pages = process_batches_googlecloud(images, handlers, prompt_text, normalized_config, ai_logger)
                 # For GOOGLECLOUD mode, metrics are calculated inside process_batches_googlecloud
+                
+                # Upload log files to Google Drive if save_logs_to_source is enabled
+                save_logs_to_source = normalized_config.get('googlecloud', {}).get('save_logs_to_source', False)
+                if save_logs_to_source:
+                    drive_service = handlers.get('drive_service')
+                    drive_folder_id = normalized_config.get('googlecloud', {}).get('drive_folder_id')
+                    if drive_service and drive_folder_id:
+                        try:
+                            # Upload main log file
+                            if log_filename and os.path.exists(log_filename):
+                                upload_log_file_to_drive(drive_service, log_filename, drive_folder_id)
+                            # Upload AI responses log file
+                            if ai_log_filename and os.path.exists(ai_log_filename):
+                                upload_log_file_to_drive(drive_service, ai_log_filename, drive_folder_id)
+                        except Exception as upload_error:
+                            logging.warning(f"Failed to upload log files to Google Drive: {upload_error}")
             else:  # local mode
                 transcribed_pages, start_time, end_time, usage_metadata_list, timing_list = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger)
             
@@ -5223,7 +5304,7 @@ See config/config.yaml.example for a template.
                 logs_dir = "logs"
                 
                 # Run main function
-                main(config, prompt_text, ai_logger, logs_dir)
+                main(config, prompt_text, ai_logger, logs_dir, log_filename, ai_log_filename)
             else:
                 print("Wizard cancelled or failed. Exiting.")
                 sys.exit(1)
@@ -5269,7 +5350,7 @@ See config/config.yaml.example for a template.
             logs_dir = "logs"
             
             # Run main function
-            main(config, prompt_text, ai_logger, logs_dir)
+            main(config, prompt_text, ai_logger, logs_dir, log_filename, ai_log_filename)
         except FileNotFoundError as e:
             print(f"Error: {e}", file=sys.stderr)
             print(f"Please provide a valid configuration file path.", file=sys.stderr)
