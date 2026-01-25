@@ -4417,7 +4417,15 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
     ai_logger.info(f"End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Calculate final metrics and finalize output
-    final_metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
+    # Calculate metrics if we have timing data (even if usage_metadata is missing, we still have timing)
+    # Only skip if both lists are empty (no images processed)
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Calculating metrics: timing_list has {len(timing_list)} items, usage_metadata_list has {len(usage_metadata_list)} items")
+    if timing_list or usage_metadata_list:
+        final_metrics = calculate_metrics(usage_metadata_list, timing_list)
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Metrics calculated: {final_metrics}")
+    else:
+        logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] No timing or usage metadata available, skipping metrics calculation")
+        final_metrics = None
     
     # Finalize output (update overview section)
     if output.doc_id and len(transcribed_pages) > 0:
