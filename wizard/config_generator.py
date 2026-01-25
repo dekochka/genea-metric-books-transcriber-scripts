@@ -59,6 +59,10 @@ class ConfigGenerator:
         mode = wizard_data.get("mode", "local")
         config["mode"] = mode
         
+        # Language preference (if set in wizard)
+        if "language" in wizard_data:
+            config["language"] = wizard_data["language"]
+        
         # Mode-specific configuration
         if mode == "local":
             if "local" in wizard_data:

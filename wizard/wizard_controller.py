@@ -117,6 +117,9 @@ class WizardController:
                 if step_data is not None:
                     self.collected_data.update(step_data)
             
+            # Store language preference in collected data
+            self.collected_data["language"] = self.lang
+            
             # Generate config file
             self.console.print(f"\n[bold green]{t('wizard.all_steps_completed', self.lang)}[/bold green]")
             

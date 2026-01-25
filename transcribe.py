@@ -3081,7 +3081,7 @@ def create_doc(docs_service, drive_service, title, config: dict):
         raise
 
 
-def _log_run_summary(output, transcribed_pages, metrics, start_time, end_time, error_info, mode):
+def _log_run_summary(output, transcribed_pages, metrics, start_time, end_time, error_info, mode, lang='en'):
     """
     Log comprehensive Run Summary to main logger.
     
@@ -3093,21 +3093,24 @@ def _log_run_summary(output, transcribed_pages, metrics, start_time, end_time, e
         end_time: Session end datetime
         error_info: Optional error info dict
         mode: 'local' or 'googlecloud'
+        lang: Language code ('en' or 'uk')
     """
+    from wizard.i18n import t
+    
     logging.info("")
     logging.info("=" * 80)
-    logging.info("RUN SUMMARY")
+    logging.info(t('log.run_summary', lang))
     logging.info("=" * 80)
     
     # Status
     if error_info:
-        logging.info("Status: INTERRUPTED BY ERROR")
-        logging.info(f"  Error Type: {error_info.get('type', 'Unknown')}")
-        logging.info(f"  Error Message: {error_info.get('message', 'Unknown error')}")
+        logging.info(t('log.status_interrupted', lang))
+        logging.info(f"  {t('log.error_type', lang)} {error_info.get('type', 'Unknown')}")
+        logging.info(f"  {t('log.error_message', lang)} {error_info.get('message', 'Unknown error')}")
         if error_info.get('next_image_number'):
-            logging.info(f"  Resume: Update config 'image_start_number' to {error_info['next_image_number']}")
+            logging.info(f"  {t('log.resume_hint', lang, number=error_info['next_image_number'])}")
     else:
-        logging.info("Status: COMPLETED SUCCESSFULLY")
+        logging.info(t('log.status_completed', lang))
     
     # Statistics
     total_images = len(transcribed_pages)
@@ -3115,22 +3118,22 @@ def _log_run_summary(output, transcribed_pages, metrics, start_time, end_time, e
     failed = total_images - successful
     
     logging.info("")
-    logging.info("Statistics:")
-    logging.info(f"  Total images processed: {total_images}")
-    logging.info(f"  Successful transcriptions: {successful}")
-    logging.info(f"  Failed transcriptions: {failed}")
+    logging.info(t('log.statistics', lang))
+    logging.info(f"  {t('log.total_images_processed', lang)} {total_images}")
+    logging.info(f"  {t('log.successful_transcriptions', lang)} {successful}")
+    logging.info(f"  {t('log.failed_transcriptions', lang)} {failed}")
     
     # Timing
     if start_time and end_time:
         elapsed = (end_time - start_time).total_seconds()
-        logging.info(f"  Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        logging.info(f"  End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        logging.info(f"  Total duration: {elapsed:.1f} seconds ({elapsed/60:.1f} minutes)")
+        logging.info(f"  {t('log.start_time', lang)} {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logging.info(f"  {t('log.end_time', lang)} {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logging.info(f"  {t('log.total_duration', lang, seconds=elapsed, minutes=elapsed/60)}")
     
     # Metrics
     if metrics and isinstance(metrics, dict) and len(metrics) > 0:
         logging.info("")
-        logging.info("Metrics:")
+        logging.info(t('log.metrics', lang))
         for key, value in metrics.items():
             if isinstance(value, (int, float)):
                 if 'token' in key.lower() or 'count' in key.lower():
@@ -3145,11 +3148,11 @@ def _log_run_summary(output, transcribed_pages, metrics, start_time, end_time, e
                 logging.info(f"  {key}: {value}")
     elif metrics is None:
         logging.info("")
-        logging.info("Metrics: (Not available)")
+        logging.info(t('log.metrics_not_available', lang))
     
     # Outputs produced
     logging.info("")
-    logging.info("Outputs Produced:")
+    logging.info(t('log.outputs_produced', lang))
     
     def _collect_outputs(strategy, outputs_list):
         """Recursively collect output paths from strategy (handles CompositeOutput)."""
@@ -3159,17 +3162,17 @@ def _log_run_summary(output, transcribed_pages, metrics, start_time, end_time, e
         else:
             # LogFileOutput
             if hasattr(strategy, 'log_file_path') and strategy.log_file_path:
-                outputs_list.append(('Log File', strategy.log_file_path))
+                outputs_list.append((t('log.output_type_log_file', lang), strategy.log_file_path))
             # MarkdownOutput
             if hasattr(strategy, 'final_file_path') and strategy.final_file_path:
-                outputs_list.append(('Markdown File', strategy.final_file_path))
+                outputs_list.append((t('log.output_type_markdown', lang), strategy.final_file_path))
             # WordOutput
             if hasattr(strategy, 'doc_path') and strategy.doc_path:
-                outputs_list.append(('Word Document', strategy.doc_path))
+                outputs_list.append((t('log.output_type_word', lang), strategy.doc_path))
             # GoogleDocsOutput
             if hasattr(strategy, 'doc_id') and strategy.doc_id:
                 doc_url = f"https://docs.google.com/document/d/{strategy.doc_id}"
-                outputs_list.append(('Google Doc', doc_url))
+                outputs_list.append((t('log.output_type_google_doc', lang), doc_url))
     
     outputs = []
     _collect_outputs(output, outputs)
@@ -3178,7 +3181,7 @@ def _log_run_summary(output, transcribed_pages, metrics, start_time, end_time, e
         for output_type, output_path in outputs:
             logging.info(f"  {output_type}: {output_path}")
     else:
-        logging.info("  (No outputs generated)")
+        logging.info(f"  {t('log.no_outputs', lang)}")
     
     logging.info("=" * 80)
     logging.info("")
@@ -4305,7 +4308,7 @@ def write_to_doc(docs_service, drive_service, doc_id, pages, config: dict, promp
 
 # ------------------------- SHARED PROCESSING LOGIC -------------------------
 
-def process_all_local(images: list, handlers: dict, prompt_text: str, config: dict, ai_logger) -> tuple:
+def process_all_local(images: list, handlers: dict, prompt_text: str, config: dict, ai_logger, lang: str = 'en') -> tuple:
     """
     Process all images in local mode (simpler processing, no batching).
     
@@ -4345,6 +4348,8 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
     PROMPT_COST_PER_1M_TOKENS = 0.15  # $0.15 per 1M input tokens (Gemini 3 Flash)
     COMPLETION_COST_PER_1M_TOKENS = 0.60  # $0.60 per 1M output tokens (Gemini 3 Flash)
     
+    from wizard.i18n import t
+    
     total_images = len(images)
     logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription of {total_images} images in LOCAL mode...")
     ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting transcription of {total_images} images (LOCAL mode) ===")
@@ -4370,7 +4375,7 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
         transient=False
     ) as progress:
         task = progress.add_task(
-            f"[cyan]Processing {total_images} images...",
+            f"[cyan]{t('log.processing_images', lang, count=total_images)}",
             total=total_images
         )
         
@@ -4389,10 +4394,10 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
             progress.update(
                 task,
                 advance=0,  # Don't advance yet, we'll do it after processing
-                description=f"[cyan]Processing: {image_name[:50]}...[/cyan]"
+                description=f"[cyan]{t('log.processing_image', lang, name=image_name[:50])}[/cyan]"
             )
             
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Processing image {global_idx}/{total_images}: '{image_name}'")
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] {t('log.processing_image_detail', lang, current=global_idx, total=total_images, name=image_name)}")
             ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing image {global_idx}/{total_images}: {image_name} ===")
             
             try:
@@ -4631,7 +4636,7 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
     return transcribed_pages, start_time, end_time, usage_metadata_list, timing_list
 
 
-def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, config: dict, ai_logger) -> list:
+def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, config: dict, ai_logger, lang: str = 'en') -> list:
     """
     Process images in batches for Google Cloud mode (existing batch processing logic).
     
@@ -4979,7 +4984,7 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
     start_time = output.start_time if hasattr(output, 'start_time') and output.start_time else None
     
     # Log comprehensive Run Summary
-    _log_run_summary(output, transcribed_pages, final_metrics, start_time, end_time, None, 'googlecloud')
+    _log_run_summary(output, transcribed_pages, final_metrics, start_time, end_time, None, 'googlecloud', lang)
     
     return transcribed_pages
 
@@ -4990,6 +4995,9 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str, log_filename:
     Now supports dual-mode operation (LOCAL and GOOGLECLOUD) using strategy pattern.
     """
     try:
+        # Get language preference from config (default to 'en')
+        lang = config.get('language', 'en')
+        
         # Detect mode
         mode = detect_mode(config)
         logging.info(f"Detected mode: {mode.upper()}")
@@ -5097,7 +5105,7 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str, log_filename:
         try:
             # Process images using mode-specific processing function
             if mode == 'googlecloud':
-                transcribed_pages = process_batches_googlecloud(images, handlers, prompt_text, normalized_config, ai_logger)
+                transcribed_pages = process_batches_googlecloud(images, handlers, prompt_text, normalized_config, ai_logger, lang)
                 # For GOOGLECLOUD mode, metrics are calculated inside process_batches_googlecloud
                 
                 # Upload log files to Google Drive if save_logs_to_source is enabled
@@ -5116,7 +5124,7 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str, log_filename:
                         except Exception as upload_error:
                             logging.warning(f"Failed to upload log files to Google Drive: {upload_error}")
             else:  # local mode
-                transcribed_pages, start_time, end_time, usage_metadata_list, timing_list = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger)
+                transcribed_pages, start_time, end_time, usage_metadata_list, timing_list = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger, lang)
             
             # Log session completion (to ai_logger)
             ai_logger.info(f"=== Transcription Session Completed ===")
@@ -5206,7 +5214,7 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str, log_filename:
                     logging.error(f"Finalize traceback:\n{traceback.format_exc()}")
                 
                 # Log comprehensive Run Summary for LOCAL mode
-                _log_run_summary(output, transcribed_pages, metrics, start_time, end_time, error_info, mode)
+                _log_run_summary(output, transcribed_pages, metrics, start_time, end_time, error_info, mode, lang)
         
         # Re-raise the original exception if there was one (outside finally block)
         if caught_exception:
