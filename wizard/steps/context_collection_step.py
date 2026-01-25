@@ -48,10 +48,17 @@ class ContextCollectionStep(WizardStep):
         mode_data = self.controller.get_data(mode, {})
         
         # Ask if user wants to extract from title page (both modes support this now)
-        use_title_page = questionary.confirm(
+        # Use select instead of confirm for better reliability and clarity
+        # Default is Yes (first choice)
+        use_title_page_choice = questionary.select(
             "Do you want to extract context from a title page image?",
-            default=False
+            choices=[
+                questionary.Choice("Yes - Extract from title page image", value=True),
+                questionary.Choice("No - Enter information manually", value=False),
+            ]
         ).ask()
+        
+        use_title_page = use_title_page_choice if use_title_page_choice is not None else True
         
         if use_title_page:
             # Try title page extraction

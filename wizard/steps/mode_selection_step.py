@@ -119,6 +119,15 @@ class ModeSelectionStep(WizardStep):
         if output_dir:
             local_data["output_dir"] = os.path.expanduser(output_dir)
         
+        # Ask if logs should be saved to source image directory
+        save_logs_to_source = questionary.confirm(
+            "Save logs to source image directory?",
+            default=True
+        ).ask()
+        
+        if save_logs_to_source is not None:
+            local_data["save_logs_to_source"] = save_logs_to_source
+        
         # OCR model (optional, with default)
         ocr_model = questionary.select(
             "Select OCR model:",
@@ -174,6 +183,15 @@ class ModeSelectionStep(WizardStep):
             return {}  # Return empty to trigger retry
         
         gc_data["drive_folder_id"] = folder_id
+        
+        # Ask if logs should be saved to source Google Drive folder
+        save_logs_to_source = questionary.confirm(
+            "Save logs to source Google Drive folder?",
+            default=True
+        ).ask()
+        
+        if save_logs_to_source is not None:
+            gc_data["save_logs_to_source"] = save_logs_to_source
         
         # Region (optional, with default)
         self.console.print("\n[bold]Vertex AI Region[/bold]")
