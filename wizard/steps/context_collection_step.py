@@ -212,7 +212,26 @@ class ContextCollectionStep(WizardStep):
             Final context dictionary (extracted + user edits, or manual entry)
         """
         try:
-            # Get title page information
+            # Initialize services first (needed for both getting title page info and extraction)
+            if mode == "googlecloud":
+                # Initialize Google services for title page extraction
+                self.console.print("[dim]Initializing Google services for title page extraction...[/dim]")
+                try:
+                    services = self._initialize_google_services(config)
+                    if not services:
+                        self.console.print("[yellow]⚠ Failed to initialize Google services. Falling back to manual entry.[/yellow]")
+                        return self._collect_context_manually()
+                    
+                    drive_service, genai_client = services
+                    # Add services to config for use in extraction
+                    config['drive_service'] = drive_service
+                    config['genai_client'] = genai_client
+                except Exception as e:
+                    self.console.print(f"[yellow]⚠ Error initializing Google services: {e}[/yellow]")
+                    logging.error(f"Error initializing Google services for title page extraction: {e}", exc_info=True)
+                    return self._collect_context_manually()
+            
+            # Get title page information (now we have services if needed)
             if mode == "local":
                 title_page_info = self._get_title_page_for_local(config.get('image_dir'))
             elif mode == "googlecloud":
@@ -244,22 +263,13 @@ class ContextCollectionStep(WizardStep):
                 
                 extractor = TitlePageExtractor(api_key=api_key, model_id=config.get('ocr_model_id', 'gemini-3-flash-preview'))
             else:  # googlecloud
-                # Initialize Google services for title page extraction
-                self.console.print("[dim]Initializing Google services for title page extraction...[/dim]")
-                try:
-                    services = self._initialize_google_services(config)
-                    if not services:
-                        self.console.print("[yellow]⚠ Failed to initialize Google services. Falling back to manual entry.[/yellow]")
-                        return self._collect_context_manually()
-                    
-                    drive_service, genai_client = services
-                    extractor = TitlePageExtractor(genai_client=genai_client, model_id=config.get('ocr_model_id', 'gemini-3-flash-preview'))
-                    # Add drive_service to config for title page extraction
-                    config['drive_service'] = drive_service
-                except Exception as e:
-                    self.console.print(f"[yellow]⚠ Error initializing Google services: {e}[/yellow]")
-                    logging.error(f"Error initializing Google services for title page extraction: {e}", exc_info=True)
+                # Use already initialized services
+                genai_client = config.get('genai_client')
+                if not genai_client:
+                    self.console.print("[yellow]⚠ Gemini client not available. Falling back to manual entry.[/yellow]")
                     return self._collect_context_manually()
+                
+                extractor = TitlePageExtractor(genai_client=genai_client, model_id=config.get('ocr_model_id', 'gemini-3-flash-preview'))
             
             # Extract context
             self.console.print("\n[dim]Extracting context from title page...[/dim]")

@@ -221,11 +221,24 @@ class TitlePageExtractor:
             
             # Make API call
             logging.info(f"Extracting context from title page: {filename}")
-            response = self.client.models.generate_content(
-                model=self.model_id,
-                contents=[content],
-                config=config
-            )
+            # Suppress warnings about thought_signature (these are informational from google_genai library)
+            import warnings
+            import logging as std_logging
+            # Suppress both Python warnings and google_genai library warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=".*thought_signature.*")
+                warnings.filterwarnings("ignore", category=UserWarning, module="google_genai")
+                # Also suppress logging warnings from google_genai
+                old_level = std_logging.getLogger("google_genai.types").level
+                std_logging.getLogger("google_genai.types").setLevel(std_logging.ERROR)
+                try:
+                    response = self.client.models.generate_content(
+                        model=self.model_id,
+                        contents=[content],
+                        config=config
+                    )
+                finally:
+                    std_logging.getLogger("google_genai.types").setLevel(old_level)
             
             # Extract response text
             response_text = response.text if hasattr(response, 'text') and response.text else ""

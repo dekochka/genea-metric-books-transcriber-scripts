@@ -141,16 +141,18 @@ class ModeSelectionStep(WizardStep):
         self.console.print("[dim]You can paste the full URL or just the folder ID[/dim]")
         drive_input = questionary.text(
             "Enter Google Drive folder URL or folder ID:",
+            validate=lambda x: len(x.strip()) > 0 if x else False
         ).ask()
         
         if not drive_input:
-            return {}
+            self.console.print("[red]Error: Drive folder ID is required.[/red]")
+            return {}  # Return empty to trigger retry
         
         # Extract folder ID from URL if provided
         folder_id = self._extract_folder_id(drive_input)
         if not folder_id:
-            self.console.print("[yellow]Could not extract folder ID. Please provide a valid URL or folder ID.[/yellow]")
-            return {}
+            self.console.print("[red]Error: Could not extract folder ID. Please provide a valid URL or folder ID.[/red]")
+            return {}  # Return empty to trigger retry
         
         gc_data["drive_folder_id"] = folder_id
         
@@ -266,9 +268,12 @@ class ModeSelectionStep(WizardStep):
                 errors.append("Google Cloud mode settings missing")
             else:
                 gc = data["googlecloud"]
-                if "project_id" not in gc:
-                    errors.append("Project ID not specified")
-                if "drive_folder_id" not in gc:
-                    errors.append("Drive folder ID not specified")
+                if not gc:  # Empty dict
+                    errors.append("Google Cloud mode settings missing - please complete all required fields")
+                else:
+                    if "project_id" not in gc:
+                        errors.append("Project ID not specified")
+                    if "drive_folder_id" not in gc:
+                        errors.append("Drive folder ID not specified")
         
         return len(errors) == 0, errors

@@ -62,10 +62,20 @@ class ConfigGenerator:
         # Mode-specific configuration
         if mode == "local":
             if "local" in wizard_data:
-                config["local"] = wizard_data["local"]
+                # Remove any non-serializable objects (like service clients)
+                local_config = wizard_data["local"].copy()
+                # Remove service objects that can't be serialized (by name)
+                local_config = {k: v for k, v in local_config.items() 
+                               if k not in ['drive_service', 'genai_client', 'docs_service']}
+                config["local"] = local_config
         elif mode == "googlecloud":
             if "googlecloud" in wizard_data:
-                config["googlecloud"] = wizard_data["googlecloud"]
+                # Remove any non-serializable objects (like service clients, thread locks)
+                gc_config = wizard_data["googlecloud"].copy()
+                # Remove service objects that can't be serialized (by name)
+                gc_config = {k: v for k, v in gc_config.items() 
+                            if k not in ['drive_service', 'genai_client', 'docs_service']}
+                config["googlecloud"] = gc_config
         
         # Context section
         if "context" in wizard_data:
