@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.5.1] - 2026-01-26
+
+### Fixed
+
+- Fixed `httpx.ReadTimeout` not triggering retry mechanism in Vertex AI transcription
+- Timeout errors from `httpx`/`httpcore` now properly retry with exponential backoff
+- All 3 retry attempts (1 min → 2 min → 5 min) now work correctly for httpx timeout errors
+
+**Note:** This version replaces v0.5-beta-wizard-mode with the retry fix included.
+
+## [v0.5-beta-wizard-mode] - 2026-01-26
+
+### Added
+
+#### Interactive Wizard Mode (Default)
+- **Guided Configuration**: Step-by-step interactive wizard eliminates manual YAML editing
+- **Context Separation**: Project-specific context (villages, surnames, archive details) separated from static prompt templates
+- **AI-Powered Title Page Extraction**: Automatically extract context from title page images using Gemini Vision API
+- **Pre-flight Validation**: Comprehensive validation before processing starts (API keys, file paths, prompt assembly)
+- **Visual Feedback**: Rich terminal output with progress bars, cost estimation, and formatted tables
+- **Comprehensive Run Summary**: End-of-run summary with completion status, statistics, metrics, and output locations
+
+#### Prompt Assembly Engine
+- **Static Templates**: Reusable prompt templates with `{{VARIABLE}}` placeholders
+- **Dynamic Context Injection**: Project-specific data stored in YAML config, not in prompt files
+- **Backward Compatible**: Existing prompt files continue to work via `prompt_file` field
+
+#### Enhanced User Experience
+- **Real-time Cost Estimation**: Live calculation during processing
+- **Helpful Hints**: Contextual guidance and examples throughout wizard
+- **Review & Edit Flow**: Accept, modify, or reject AI-extracted context
+- **Progress Tracking**: Enhanced progress bars showing current file, percentage, time estimates, and cost
+
+### Fixed
+
+- Fixed progress bar showing incorrect counts (e.g., "4/2" instead of "2/2")
+- Fixed progress bar redrawing during document writing operations
+- Fixed timeout retry mechanism in Vertex AI transcription (all 3 retry attempts now work correctly)
+- Fixed serialization errors when saving configs with Google service objects
+- Suppressed informational warnings from `google_genai` library during title page extraction
+- Fixed cost estimation display during processing
+
+### Changed
+
+- **Wizard mode is now the default** - Use `--wizard-off` flag to disable
+- Enhanced configuration structure with nested `context` section
+- Auto-generated `archive_index` from context data
+- Improved error messages with actionable solutions
+- Enhanced logging with Run Summary at end of transcription
+
+### Documentation
+
+- Updated README.md with wizard mode quick start and examples
+- Updated README-UKRAINIAN.md with Ukrainian translation of wizard documentation
+- Updated docs/CONFIGURATION.md with new context structure examples
+- Added docs/WIZARD-QUICK-START.md quick start guide
+- Added projects/wizard-mode/PR_DESCRIPTION.md with comprehensive feature documentation
+
+### Performance
+
+- Wizard execution: < 1 second (excluding title page extraction)
+- Title page extraction: ~5-10 seconds (API call dependent)
+- No impact on transcription performance
+
 ## [v0.4-beta-dual-mode] - 2026-01-24
 
 ### Added
@@ -212,6 +276,8 @@ See [Migration Guide](docs/MIGRATION.md) for detailed instructions.
 
 ## Version History
 
+- **v0.5.1** (2026-01-26): Fixed httpx.ReadTimeout retry handling - replaces v0.5-beta-wizard-mode
+- **v0.5-beta-wizard-mode** (2026-01-26): Interactive wizard mode, context separation, AI title page extraction, enhanced UX
 - **v0.4-beta-dual-mode** (2026-01-24): Multi-format output, enhanced error handling, Windows compatibility, OAuth documentation
 - **v0.3-beta-local** (2026-01-24): Tested and certified LOCAL mode with multi-format output
 - **v0.3-beta** (2026-01-24): Dual-mode operation, strategy pattern refactoring, comprehensive testing

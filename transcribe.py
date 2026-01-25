@@ -195,8 +195,18 @@ def validate_config(config: dict, mode: str) -> tuple[bool, list[str]]:
     errors = []
     
     # Shared required fields
-    if 'prompt_file' not in config:
-        errors.append("prompt_file is required")
+    # Support both prompt_file (legacy) and prompt_template (wizard mode)
+    if 'prompt_file' not in config and 'prompt_template' not in config:
+        errors.append("Either prompt_file or prompt_template must be specified")
+    elif 'prompt_template' in config:
+        # Validate template exists
+        template_name = config['prompt_template']
+        templates_dir = os.path.join(os.path.dirname(__file__), "prompts", "templates")
+        template_path = os.path.join(templates_dir, f"{template_name}.md")
+        if not os.path.exists(template_path):
+            errors.append(f"Prompt template not found: {template_path}")
+        # Note: Context validation will be added in Phase 3
+        # For now, context is optional (wizard may not have collected it yet)
     
     if 'archive_index' not in config:
         errors.append("archive_index is required")
@@ -285,9 +295,53 @@ def validate_config(config: dict, mode: str) -> tuple[bool, list[str]]:
     return len(errors) == 0, errors
 
 
-def load_prompt_text(prompt_file: str) -> str:
+def load_prompt_text(config_or_file: Any) -> str:
     """
-    Load prompt text from file in the prompts directory.
+    Load prompt text from config or file.
+    
+    Supports both modes:
+    - Legacy: prompt_file (direct file reference)
+    - Wizard: prompt_template + context (template assembly)
+    
+    Args:
+        config_or_file: Either a config dict (wizard mode) or prompt file name (legacy mode)
+        
+    Returns:
+        Prompt text as string, or fallback minimal prompt if file not found
+    """
+    # Check if it's a config dict (wizard mode) or string (legacy mode)
+    if isinstance(config_or_file, dict):
+        config = config_or_file
+        
+        # Wizard mode: assemble from template
+        if 'prompt_template' in config:
+            from wizard.prompt_assembler import PromptAssemblyEngine
+            
+            assembler = PromptAssemblyEngine()
+            context = config.get('context', {})
+            template_name = config['prompt_template']
+            
+            try:
+                return assembler.assemble(template_name, context)
+            except Exception as e:
+                logging.error(f"Failed to assemble prompt from template '{template_name}': {e}")
+                raise ValueError(f"Failed to assemble prompt: {e}")
+        
+        # Legacy mode: use prompt_file
+        elif 'prompt_file' in config:
+            prompt_file = config['prompt_file']
+            return load_prompt_file(prompt_file)
+        else:
+            raise ValueError("Either prompt_file or prompt_template must be specified in config")
+    
+    else:
+        # Legacy mode: direct file name
+        return load_prompt_file(config_or_file)
+
+
+def load_prompt_file(prompt_file: str) -> str:
+    """
+    Load prompt text from file in the prompts directory (legacy mode).
     
     Args:
         prompt_file: Name of the prompt file (without path)
@@ -339,14 +393,25 @@ def setup_logging(config: dict) -> tuple:
         dir_name_short = dir_name[:20] if len(dir_name) > 20 else dir_name
         log_filename = os.path.join(LOGS_DIR, f"{timestamp}-transcribe-session-{dir_name_short}.log")
     
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
-        handlers=[
-            logging.StreamHandler(),
-            logging.FileHandler(log_filename)
-        ]
-    )
+    # Clear any existing handlers to ensure clean logging setup
+    # This is important when running from wizard mode where logging might already be configured
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+        handler.close()
+    
+    # Configure logging with file and console handlers
+    file_handler = logging.FileHandler(log_filename, encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'))
+    
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'))
+    
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
     
     # Set up separate logger for AI responses
     ai_logger = logging.getLogger('ai_responses')
@@ -1450,11 +1515,16 @@ class CompositeOutput(OutputStrategy):
     
     def write_batch(self, pages: list[dict], batch_num: int, is_first: bool) -> None:
         """Write batch to all strategies."""
+        if not pages:
+            logging.warning(f"CompositeOutput.write_batch called with empty pages list (batch {batch_num})")
+        
         for strategy in self.strategies:
             try:
                 strategy.write_batch(pages, batch_num, is_first)
             except Exception as e:
                 logging.error(f"Error writing batch to {strategy.__class__.__name__}: {e}")
+                import traceback
+                logging.error(traceback.format_exc())
     
     def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
         """Finalize all strategies."""
@@ -1501,29 +1571,51 @@ class MarkdownOutput(OutputStrategy):
         if not self.temp_body_file:
             raise ValueError("Markdown output not initialized")
         
-        with open(self.temp_body_file, 'a', encoding='utf-8') as f:
-            for page in pages:
-                f.write(f"\n---\n\n## {page['name']}\n\n")
-                link = page.get('webViewLink', page.get('path', ''))
-                if link:
-                    # For local files, use relative path (just filename) since markdown is in same directory
-                    # This prevents path duplication when markdown is opened in browser/viewer
-                    # Markdown file is saved in target_dir (image_dir), same as images
-                    if link.startswith('http://') or link.startswith('https://'):
-                        # Keep Google Drive URLs as-is (GOOGLECLOUD mode)
-                        pass
-                    else:
-                        # For local files (file:// URLs, absolute paths, or relative paths),
-                        # use just the filename since markdown and images are in the same directory
-                        link = page['name']
-                    f.write(f"**Source:** [{page['name']}]({link})\n\n")
-                # Preserve newlines by adding two spaces before newlines for markdown line breaks
-                text = page.get('text', '')
-                # Replace single newlines with two spaces + newline (markdown line break)
-                # but preserve paragraph breaks (double newlines)
-                text = text.replace('\n\n', '\n\n')  # Preserve paragraph breaks
-                text = text.replace('\n', '  \n')  # Convert single newlines to markdown line breaks
-                f.write(f"{text}\n")
+        if not pages:
+            logging.warning(f"MarkdownOutput.write_batch called with empty pages list (batch {batch_num})")
+            return
+        
+        try:
+            with open(self.temp_body_file, 'a', encoding='utf-8') as f:
+                for page in pages:
+                    if not page:
+                        logging.warning(f"MarkdownOutput.write_batch: skipping empty page in batch {batch_num}")
+                        continue
+                    
+                    page_name = page.get('name', 'Unknown')
+                    f.write(f"\n---\n\n## {page_name}\n\n")
+                    link = page.get('webViewLink', page.get('path', ''))
+                    if link:
+                        # For local files, use relative path (just filename) since markdown is in same directory
+                        # This prevents path duplication when markdown is opened in browser/viewer
+                        # Markdown file is saved in target_dir (image_dir), same as images
+                        if link.startswith('http://') or link.startswith('https://'):
+                            # Keep Google Drive URLs as-is (GOOGLECLOUD mode)
+                            pass
+                        else:
+                            # For local files (file:// URLs, absolute paths, or relative paths),
+                            # use just the filename since markdown and images are in the same directory
+                            link = page_name
+                        f.write(f"**Source:** [{page_name}]({link})\n\n")
+                    
+                    # Preserve newlines by adding two spaces before newlines for markdown line breaks
+                    text = page.get('text', '')
+                    if not text:
+                        logging.warning(f"MarkdownOutput.write_batch: page '{page_name}' has empty text field")
+                        text = "[No transcription text available]"
+                    
+                    # Replace single newlines with two spaces + newline (markdown line break)
+                    # but preserve paragraph breaks (double newlines)
+                    text = text.replace('\n\n', '\n\n')  # Preserve paragraph breaks
+                    text = text.replace('\n', '  \n')  # Convert single newlines to markdown line breaks
+                    f.write(f"{text}\n")
+            
+            logging.debug(f"MarkdownOutput.write_batch: wrote {len(pages)} page(s) to temp file {self.temp_body_file}")
+        except Exception as e:
+            logging.error(f"MarkdownOutput.write_batch failed for batch {batch_num}: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            raise
     
     def finalize(self, all_pages: list[dict], metrics: dict, start_time=None, end_time=None, error_info=None) -> None:
         """Finalize markdown file with overview at top."""
@@ -1586,36 +1678,56 @@ class WordOutput(OutputStrategy):
         if not self.doc:
             raise ValueError("Word output not initialized")
         
+        if not pages:
+            logging.warning(f"WordOutput.write_batch called with empty pages list (batch {batch_num})")
+            return
+        
         archive_index = self.config.get('archive_index', '')
         
-        for idx, page in enumerate(pages, start=1):
-            # Calculate page number (cumulative across batches)
-            page_number = (batch_num - 1) + idx if batch_num > 0 else idx
+        try:
+            for idx, page in enumerate(pages, start=1):
+                if not page:
+                    logging.warning(f"WordOutput.write_batch: skipping empty page in batch {batch_num}")
+                    continue
+                
+                # Calculate page number (cumulative across batches)
+                page_number = (batch_num - 1) + idx if batch_num > 0 else idx
+                
+                page_name = page.get('name', 'Unknown')
+                # Add page header like "ф487оп1спр545стр1" (matching Google Docs format)
+                if archive_index:
+                    page_header = f"{archive_index}стр{page_number}"
+                else:
+                    page_header = page_name
+                
+                self.doc.add_heading(page_header, level=2)
+                
+                # Add source link
+                link = page.get('webViewLink', page.get('path', ''))
+                if link:
+                    p = self.doc.add_paragraph()
+                    p.add_run('Src Img Url: ').bold = True
+                    p.add_run(page_name)
+                    self.doc.add_paragraph()
+                
+                # Add transcription text with bold formatting for **text**
+                text = page.get('text', '')
+                if not text:
+                    logging.warning(f"WordOutput.write_batch: page '{page_name}' has empty text field")
+                    text = "[No transcription text available]"
+                
+                self._add_formatted_text(text)
+                
+                # Add separator
+                self.doc.add_paragraph('_' * 80)
             
-            # Add page header like "ф487оп1спр545стр1" (matching Google Docs format)
-            if archive_index:
-                page_header = f"{archive_index}стр{page_number}"
-            else:
-                page_header = page['name']
-            
-            self.doc.add_heading(page_header, level=2)
-            
-            # Add source link
-            link = page.get('webViewLink', page.get('path', ''))
-            if link:
-                p = self.doc.add_paragraph()
-                p.add_run('Src Img Url: ').bold = True
-                p.add_run(page['name'])
-                self.doc.add_paragraph()
-            
-            # Add transcription text with bold formatting for **text**
-            text = page.get('text', '')
-            self._add_formatted_text(text)
-            
-            # Add separator
-            self.doc.add_paragraph('_' * 80)
-        
-        self.doc.save(self.doc_path)
+            self.doc.save(self.doc_path)
+            logging.debug(f"WordOutput.write_batch: wrote {len(pages)} page(s) to Word document {self.doc_path}")
+        except Exception as e:
+            logging.error(f"WordOutput.write_batch failed for batch {batch_num}: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            raise
     
     def _add_formatted_text(self, text: str) -> None:
         """
@@ -2477,14 +2589,6 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
         ),
     )
     
-    # Timeout handler
-    def timeout_handler(signum, frame):
-        elapsed = time.time() - function_start_time
-        error_msg = f"Vertex AI API call timed out after {timeout_seconds/60:.1f} minutes (total elapsed: {elapsed:.1f}s) for {file_name}"
-        logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] {error_msg}")
-        ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] TIMEOUT: {error_msg}")
-        raise TimeoutError(error_msg)
-    
     max_retries = 3
     retry_delay = 30  # seconds
     # Exponential backoff timeouts: 1 min, 2 min, 5 min
@@ -2493,14 +2597,23 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
     for attempt in range(max_retries):
         attempt_start_time = time.time()
         timeout_seconds = timeout_seconds_list[attempt]
+        
+        # Define timeout handler inside loop to properly capture timeout_seconds
+        def timeout_handler(signum, frame):
+            elapsed = time.time() - function_start_time
+            error_msg = f"Vertex AI API call timed out after {timeout_seconds/60:.1f} minutes (total elapsed: {elapsed:.1f}s) for {file_name}"
+            logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] {error_msg}")
+            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] TIMEOUT: {error_msg}")
+            raise TimeoutError(error_msg)
+        
         try:
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} for image '{file_name}'")
-            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} starting for {file_name}")
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} for image '{file_name}' (timeout: {timeout_seconds/60:.1f} min)")
+            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} starting for {file_name} (timeout: {timeout_seconds/60:.1f} min)")
             
             # Set up timeout with exponential backoff (1 min, 2 min, 5 min)
             signal.signal(signal.SIGALRM, timeout_handler)
             signal.alarm(timeout_seconds)
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Timeout set to {timeout_seconds/60:.1f} minutes for '{file_name}'")
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Timeout set to {timeout_seconds/60:.1f} minutes for '{file_name}' (attempt {attempt + 1}/{max_retries})")
             
             api_call_start = time.time()
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Making API call to Vertex AI for '{file_name}'...")
@@ -2593,25 +2706,64 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
             ai_logger.debug(f"Traceback for {file_name}:\n{traceback.format_exc()}")
             
             if attempt < max_retries - 1:
-                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay} seconds... (exponential backoff)")
-                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Will retry in {retry_delay}s with exponential backoff")
+                next_timeout = timeout_seconds_list[attempt + 1]
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay} seconds... (exponential backoff, next timeout: {next_timeout/60:.1f} min)")
+                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Will retry in {retry_delay}s with exponential backoff (next timeout: {next_timeout/60:.1f} min)")
                 time.sleep(retry_delay)
                 retry_delay *= 2  # Exponential backoff
-                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retry delay completed, starting next attempt...")
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retry delay completed, starting attempt {attempt + 2}/{max_retries}...")
+                continue  # Explicitly continue to next iteration
             else:
                 error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] All {max_retries} attempts failed for '{file_name}' after {total_elapsed:.1f}s total: {error_type}: {str(e)}"
                 ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] === AI Error for {file_name} ===")
                 ai_logger.error(f"Error type: {error_type}")
                 ai_logger.error(f"Error message: {str(e)}")
                 ai_logger.error(f"Total elapsed time: {total_elapsed:.1f}s")
+                ai_logger.error(f"Attempts made: {max_retries}")
                 ai_logger.error(f"Full traceback:\n{traceback.format_exc()}")
                 ai_logger.error(f"=== End AI Error for {file_name} ===\n")
                 logging.error(error_msg)
+                logging.error(f"All {max_retries} retry attempts exhausted for '{file_name}'")
                 logging.error(f"Full traceback:\n{traceback.format_exc()}")
                 # Return error text with None for timing and metadata
                 return f"[Error during transcription: {str(e)}]", None, None
-                
+        
         except Exception as e:
+            # Check if this is a timeout-related exception from httpx/httpcore
+            # httpx.ReadTimeout and httpcore.ReadTimeout should be retried
+            error_type = type(e).__name__
+            error_module = type(e).__module__
+            error_str = str(e).lower()
+            
+            # Detect timeout errors from various sources
+            is_timeout_error = (
+                'Timeout' in error_type or  # TimeoutError, ReadTimeout, etc.
+                'ReadTimeout' in error_type or  # httpx.ReadTimeout, httpcore.ReadTimeout
+                ('timeout' in error_str and ('httpx' in error_module or 'httpcore' in error_module))  # Timeout errors from httpx/httpcore
+            )
+            
+            # If it's a timeout error, treat it like TimeoutError and retry
+            if is_timeout_error and attempt < max_retries - 1:
+                # Cancel any pending timeout
+                signal.alarm(0)
+                
+                attempt_elapsed = time.time() - attempt_start_time
+                total_elapsed = time.time() - function_start_time
+                
+                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} failed for '{file_name}' after {attempt_elapsed:.1f}s (total elapsed: {total_elapsed:.1f}s): {error_type}: {str(e)}"
+                logging.warning(error_msg)
+                ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1} failed for {file_name}: {error_type}: {str(e)}")
+                ai_logger.warning(f"Attempt elapsed time: {attempt_elapsed:.1f}s, Total function time: {total_elapsed:.1f}s")
+                
+                next_timeout = timeout_seconds_list[attempt + 1]
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retrying in {retry_delay} seconds... (exponential backoff, next timeout: {next_timeout/60:.1f} min)")
+                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Will retry in {retry_delay}s with exponential backoff (next timeout: {next_timeout/60:.1f} min)")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retry delay completed, starting attempt {attempt + 2}/{max_retries}...")
+                continue  # Explicitly continue to next iteration
+                
+            # Not a timeout error or all retries exhausted - handle as unexpected error
             # Cancel any pending timeout
             signal.alarm(0)
             
@@ -2864,6 +3016,109 @@ def create_doc(docs_service, drive_service, title, config: dict):
         raise
 
 
+def _log_run_summary(output, transcribed_pages, metrics, start_time, end_time, error_info, mode):
+    """
+    Log comprehensive Run Summary to main logger.
+    
+    Args:
+        output: Output strategy object (may be CompositeOutput)
+        transcribed_pages: List of transcribed pages
+        metrics: Metrics dictionary
+        start_time: Session start datetime
+        end_time: Session end datetime
+        error_info: Optional error info dict
+        mode: 'local' or 'googlecloud'
+    """
+    logging.info("")
+    logging.info("=" * 80)
+    logging.info("RUN SUMMARY")
+    logging.info("=" * 80)
+    
+    # Status
+    if error_info:
+        logging.info("Status: INTERRUPTED BY ERROR")
+        logging.info(f"  Error Type: {error_info.get('type', 'Unknown')}")
+        logging.info(f"  Error Message: {error_info.get('message', 'Unknown error')}")
+        if error_info.get('next_image_number'):
+            logging.info(f"  Resume: Update config 'image_start_number' to {error_info['next_image_number']}")
+    else:
+        logging.info("Status: COMPLETED SUCCESSFULLY")
+    
+    # Statistics
+    total_images = len(transcribed_pages)
+    successful = len([p for p in transcribed_pages if p.get('text') and not p['text'].startswith('[Error')])
+    failed = total_images - successful
+    
+    logging.info("")
+    logging.info("Statistics:")
+    logging.info(f"  Total images processed: {total_images}")
+    logging.info(f"  Successful transcriptions: {successful}")
+    logging.info(f"  Failed transcriptions: {failed}")
+    
+    # Timing
+    if start_time and end_time:
+        elapsed = (end_time - start_time).total_seconds()
+        logging.info(f"  Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logging.info(f"  End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logging.info(f"  Total duration: {elapsed:.1f} seconds ({elapsed/60:.1f} minutes)")
+    
+    # Metrics
+    if metrics and isinstance(metrics, dict) and len(metrics) > 0:
+        logging.info("")
+        logging.info("Metrics:")
+        for key, value in metrics.items():
+            if isinstance(value, (int, float)):
+                if 'token' in key.lower() or 'count' in key.lower():
+                    logging.info(f"  {key}: {value:,}")
+                elif 'cost' in key.lower() or 'price' in key.lower():
+                    logging.info(f"  {key}: ${value:.4f}")
+                elif 'time' in key.lower() or 'duration' in key.lower() or 'elapsed' in key.lower():
+                    logging.info(f"  {key}: {value:.2f}s")
+                else:
+                    logging.info(f"  {key}: {value}")
+            else:
+                logging.info(f"  {key}: {value}")
+    elif metrics is None:
+        logging.info("")
+        logging.info("Metrics: (Not available)")
+    
+    # Outputs produced
+    logging.info("")
+    logging.info("Outputs Produced:")
+    
+    def _collect_outputs(strategy, outputs_list):
+        """Recursively collect output paths from strategy (handles CompositeOutput)."""
+        if isinstance(strategy, CompositeOutput):
+            for sub_strategy in strategy.strategies:
+                _collect_outputs(sub_strategy, outputs_list)
+        else:
+            # LogFileOutput
+            if hasattr(strategy, 'log_file_path') and strategy.log_file_path:
+                outputs_list.append(('Log File', strategy.log_file_path))
+            # MarkdownOutput
+            if hasattr(strategy, 'final_file_path') and strategy.final_file_path:
+                outputs_list.append(('Markdown File', strategy.final_file_path))
+            # WordOutput
+            if hasattr(strategy, 'doc_path') and strategy.doc_path:
+                outputs_list.append(('Word Document', strategy.doc_path))
+            # GoogleDocsOutput
+            if hasattr(strategy, 'doc_id') and strategy.doc_id:
+                doc_url = f"https://docs.google.com/document/d/{strategy.doc_id}"
+                outputs_list.append(('Google Doc', doc_url))
+    
+    outputs = []
+    _collect_outputs(output, outputs)
+    
+    if outputs:
+        for output_type, output_path in outputs:
+            logging.info(f"  {output_type}: {output_path}")
+    else:
+        logging.info("  (No outputs generated)")
+    
+    logging.info("=" * 80)
+    logging.info("")
+
+
 def calculate_metrics(usage_metadata_list, timing_list):
     """
     Calculate metrics from usage metadata and timing data.
@@ -2885,22 +3140,37 @@ def calculate_metrics(usage_metadata_list, timing_list):
     for usage_metadata in usage_metadata_list:
         if usage_metadata is None:
             continue
+        
+        # Handle both dict and object formats
+        if isinstance(usage_metadata, dict):
+            # Dictionary format (from LOCAL mode)
+            prompt_tokens = usage_metadata.get('prompt_tokens', 0) or 0
+            completion_tokens = usage_metadata.get('completion_tokens', 0) or 0
+            cached_tokens = usage_metadata.get('cached_tokens', 0) or 0
+            thoughts_tokens = usage_metadata.get('thoughts_tokens', 0) or 0
             
-        # Extract prompt tokens (input) - this includes both text and image tokens
-        if hasattr(usage_metadata, 'prompt_token_count') and usage_metadata.prompt_token_count:
-            total_input_tokens += usage_metadata.prompt_token_count
-        
-        # Extract cached tokens (billed at lower rate)
-        if hasattr(usage_metadata, 'cached_content_token_count') and usage_metadata.cached_content_token_count:
-            total_cached_tokens += usage_metadata.cached_content_token_count
-        
-        # Extract candidate tokens (output) - this is the visible response
-        if hasattr(usage_metadata, 'candidates_token_count') and usage_metadata.candidates_token_count:
-            total_output_tokens += usage_metadata.candidates_token_count
-        
-        # Extract thoughts tokens (billed as output) - reasoning tokens
-        if hasattr(usage_metadata, 'thoughts_token_count') and usage_metadata.thoughts_token_count:
-            total_output_tokens += usage_metadata.thoughts_token_count
+            total_input_tokens += prompt_tokens
+            total_output_tokens += completion_tokens
+            if thoughts_tokens:
+                total_output_tokens += thoughts_tokens
+            total_cached_tokens += cached_tokens
+        else:
+            # Object format (from GOOGLECLOUD mode)
+            # Extract prompt tokens (input) - this includes both text and image tokens
+            if hasattr(usage_metadata, 'prompt_token_count') and usage_metadata.prompt_token_count:
+                total_input_tokens += usage_metadata.prompt_token_count
+            
+            # Extract cached tokens (billed at lower rate)
+            if hasattr(usage_metadata, 'cached_content_token_count') and usage_metadata.cached_content_token_count:
+                total_cached_tokens += usage_metadata.cached_content_token_count
+            
+            # Extract candidate tokens (output) - this is the visible response
+            if hasattr(usage_metadata, 'candidates_token_count') and usage_metadata.candidates_token_count:
+                total_output_tokens += usage_metadata.candidates_token_count
+            
+            # Extract thoughts tokens (billed as output) - reasoning tokens
+            if hasattr(usage_metadata, 'thoughts_token_count') and usage_metadata.thoughts_token_count:
+                total_output_tokens += usage_metadata.thoughts_token_count
     
     # Calculate costs
     # Input tokens (excluding cached, which are billed separately)
@@ -3187,12 +3457,20 @@ Images with Errors ({len(failed_pages)}):
     if metrics:
         overview_content += f"""
 Metrics:
-Total Time: {metrics.get('total_time', 0):.1f} seconds
+Total Time: {metrics.get('total_time', 0):.1f} seconds ({metrics.get('total_time', 0)/60:.1f} minutes)
 Average Time per Page: {metrics.get('avg_time_per_page', 0):.2f} seconds
 """
         if 'total_input_tokens' in metrics:
             overview_content += f"Total Input Tokens: {metrics['total_input_tokens']:,}\n"
             overview_content += f"Total Output Tokens: {metrics['total_output_tokens']:,}\n"
+            if metrics.get('total_cached_tokens', 0) > 0:
+                overview_content += f"Total Cached Tokens: {metrics['total_cached_tokens']:,}\n"
+            if 'estimated_cost_per_run' in metrics:
+                overview_content += f"Estimated Cost per Run: ${metrics['estimated_cost_per_run']:.6f}\n"
+            if 'estimated_cost_per_page' in metrics:
+                overview_content += f"Estimated Cost per Page: ${metrics['estimated_cost_per_page']:.6f}\n"
+            if 'page_count' in metrics:
+                overview_content += f"Pages Processed: {metrics['page_count']}\n"
     
     overview_content += f"""
 Prompt Used:
@@ -3966,6 +4244,9 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
     """
     Process all images in local mode (simpler processing, no batching).
     
+    Returns:
+        tuple: (transcribed_pages, start_time, end_time, usage_metadata_list, timing_list)
+    
     Args:
         images: List of image metadata dictionaries
         handlers: Dictionary of strategy handlers (from ModeFactory)
@@ -3986,207 +4267,303 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
     start_time = datetime.now()
     last_image_end_time = None
     
+    # Cost tracking
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_tokens = 0
+    
+    # Gemini 3 Flash pricing (as of January 2026)
+    # Pricing for gemini-3-flash-preview model
+    # Note: Official Google pricing shows $0.50/$3.00, but this project uses $0.15/$0.60
+    # as documented in README.md (may reflect early access pricing, discounts, or project-specific rates)
+    # This is different from Gemini 1.5 Flash ($0.075/$0.30)
+    PROMPT_COST_PER_1M_TOKENS = 0.15  # $0.15 per 1M input tokens (Gemini 3 Flash)
+    COMPLETION_COST_PER_1M_TOKENS = 0.60  # $0.60 per 1M output tokens (Gemini 3 Flash)
+    
     total_images = len(images)
     logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription of {total_images} images in LOCAL mode...")
     ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting transcription of {total_images} images (LOCAL mode) ===")
     
-    for global_idx, img_info in enumerate(images, 1):
-        image_start_time = datetime.now()
-        image_name = img_info['name']
+    # Set up Rich progress bar
+    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
+    from rich.console import Console
+    
+    console = Console()
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TextColumn("•"),
+        TextColumn("[cyan]{task.completed}/{task.total}"),
+        TextColumn("•"),
+        TimeElapsedColumn(),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+        console=console,
+        transient=False
+    ) as progress:
+        task = progress.add_task(
+            f"[cyan]Processing {total_images} images...",
+            total=total_images
+        )
         
-        # Log gap detection
-        if last_image_end_time:
-            gap_seconds = (image_start_time - last_image_end_time).total_seconds()
-            if gap_seconds > 60:  # Log if gap is more than 1 minute
-                logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Large time gap detected: {gap_seconds:.1f} seconds ({gap_seconds/60:.1f} minutes) between previous image and '{image_name}'")
-                ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Time gap of {gap_seconds:.1f}s ({gap_seconds/60:.1f} min) before {image_name}")
-        
-        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Processing image {global_idx}/{total_images}: '{image_name}'")
-        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing image {global_idx}/{total_images}: {image_name} ===")
-        
-        try:
-            # Get image bytes
-            download_start = datetime.now()
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Loading image '{image_name}'...")
-            img_bytes = image_source.get_image_bytes(img_info)
-            download_elapsed = (datetime.now() - download_start).total_seconds()
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' loaded in {download_elapsed:.1f}s, starting transcription...")
+        for global_idx, img_info in enumerate(images, 1):
+            image_start_time = datetime.now()
+            image_name = img_info['name']
             
-            # Transcribe image
-            transcription_start = datetime.now()
-            text, elapsed_time, usage_metadata = ai_client.transcribe(img_bytes, image_name, prompt_text)
-            transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
+            # Log gap detection
+            if last_image_end_time:
+                gap_seconds = (image_start_time - last_image_end_time).total_seconds()
+                if gap_seconds > 60:  # Log if gap is more than 1 minute
+                    logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Large time gap detected: {gap_seconds:.1f} seconds ({gap_seconds/60:.1f} minutes) between previous image and '{image_name}'")
+                    ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Time gap of {gap_seconds:.1f}s ({gap_seconds/60:.1f} min) before {image_name}")
             
-            # Check for error responses from transcribe()
-            if text is None:
-                text = "[No transcription text received]"
-            elif isinstance(text, str) and text.startswith("[Error during transcription:"):
-                # Critical error - stop execution
-                error_msg = text
+            # Update progress bar
+            progress.update(
+                task,
+                advance=0,  # Don't advance yet, we'll do it after processing
+                description=f"[cyan]Processing: {image_name[:50]}...[/cyan]"
+            )
+            
+            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Processing image {global_idx}/{total_images}: '{image_name}'")
+            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing image {global_idx}/{total_images}: {image_name} ===")
+            
+            try:
+                # Get image bytes
+                download_start = datetime.now()
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Loading image '{image_name}'...")
+                img_bytes = image_source.get_image_bytes(img_info)
+                download_elapsed = (datetime.now() - download_start).total_seconds()
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' loaded in {download_elapsed:.1f}s, starting transcription...")
+                
+                # Transcribe image
+                transcription_start = datetime.now()
+                text, elapsed_time, usage_metadata = ai_client.transcribe(img_bytes, image_name, prompt_text)
+                transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
+                
+                # Check for error responses from transcribe()
+                if text is None:
+                    text = "[No transcription text received]"
+                elif isinstance(text, str) and text.startswith("[Error during transcription:"):
+                    # Critical error - stop execution
+                    error_msg = text
+                    image_end_time = datetime.now()
+                    image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                    
+                    logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] ✗ Failed to transcribe image {global_idx}/{total_images}: '{image_name}' after {transcription_elapsed:.1f}s")
+                    logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {error_msg}")
+                    
+                    # Check if it's an API key error - stop immediately
+                    if "API key" in error_msg or "API_KEY" in error_msg or "INVALID_ARGUMENT" in error_msg:
+                        logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL: Invalid API key detected. Stopping execution.")
+                        logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Please check your API key in the configuration file or GEMINI_API_KEY environment variable.")
+                        raise ValueError(f"Invalid API key: {error_msg}")
+                    
+                    # For other errors, raise exception to stop processing
+                    raise RuntimeError(f"Transcription failed for {image_name}: {error_msg}")
+                
+                # Get image URL for output
+                image_url = image_source.get_image_url(img_info)
+                
+                transcribed_pages.append({
+                    'name': image_name,
+                    'webViewLink': image_url,
+                    'text': text
+                })
+                
+                # Collect metrics
+                timing_list.append(elapsed_time)
+                usage_metadata_list.append(usage_metadata)
+                
+                # Track token usage for cost estimation
+                current_cost = 0.0
+                if usage_metadata:
+                    # Handle both dict (LOCAL mode) and Pydantic object (GOOGLECLOUD mode)
+                    if isinstance(usage_metadata, dict):
+                        prompt_tokens = usage_metadata.get('prompt_tokens', 0) or 0
+                        completion_tokens = usage_metadata.get('completion_tokens', 0) or 0
+                    else:
+                        # GOOGLECLOUD mode: usage_metadata is a Pydantic object
+                        prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0) or 0
+                        completion_tokens = getattr(usage_metadata, 'candidates_token_count', 0) or 0
+                    
+                    total_prompt_tokens += prompt_tokens
+                    total_completion_tokens += completion_tokens
+                    total_tokens += prompt_tokens + completion_tokens
+                    
+                    # Calculate current cost
+                    current_cost = (total_prompt_tokens / 1_000_000 * PROMPT_COST_PER_1M_TOKENS) + \
+                                  (total_completion_tokens / 1_000_000 * COMPLETION_COST_PER_1M_TOKENS)
+                
                 image_end_time = datetime.now()
                 image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                last_image_end_time = image_end_time
                 
-                logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] ✗ Failed to transcribe image {global_idx}/{total_images}: '{image_name}' after {transcription_elapsed:.1f}s")
-                logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {error_msg}")
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {global_idx}/{total_images}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
+                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
                 
-                # Check if it's an API key error - stop immediately
-                if "API key" in error_msg or "API_KEY" in error_msg or "INVALID_ARGUMENT" in error_msg:
-                    logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL: Invalid API key detected. Stopping execution.")
-                    logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Please check your API key in the configuration file or GEMINI_API_KEY environment variable.")
-                    raise ValueError(f"Invalid API key: {error_msg}")
+                # Update progress bar with cost info
+                cost_str = f"Est. cost: ${current_cost:.4f}" if usage_metadata and current_cost > 0 else ""
+                progress.update(
+                    task,
+                    advance=1,
+                    description=f"[cyan]Processed: {image_name[:40]}... {cost_str}[/cyan]"
+                )
                 
-                # For other errors, raise exception to stop processing
-                raise RuntimeError(f"Transcription failed for {image_name}: {error_msg}")
-            
-            # Get image URL for output
-            image_url = image_source.get_image_url(img_info)
-            
-            transcribed_pages.append({
-                'name': image_name,
-                'webViewLink': image_url,
-                'text': text
-            })
-            
-            # Collect metrics
-            timing_list.append(elapsed_time)
-            usage_metadata_list.append(usage_metadata)
-            
-            image_end_time = datetime.now()
-            image_total_elapsed = (image_end_time - image_start_time).total_seconds()
-            last_image_end_time = image_end_time
-            
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {global_idx}/{total_images}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
-            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
-            
-            # Write transcription incrementally to log file
-            if output:
-                try:
-                    output.write_batch([transcribed_pages[-1]], batch_num=global_idx, is_first=(global_idx == 1))
-                except Exception as e:
-                    logging.warning(f"Failed to write transcription incrementally: {e}")
-            
-            # Log progress
-            progress_pct = (global_idx / total_images) * 100
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {global_idx}/{total_images} images ({progress_pct:.1f}%)")
-            
-        except (ValueError, RuntimeError) as e:
-            # Critical errors (API key, etc.) - stop execution immediately
-            image_end_time = datetime.now()
-            image_total_elapsed = (image_end_time - image_start_time).total_seconds()
-            error_type = type(e).__name__
-            
-            # Check if this is a 503 Service Unavailable error
-            error_str = str(e)
-            is_503_error = 'status 503' in error_str or '503' in error_str
-            
-            if is_503_error and output:
-                # Write user-friendly 503 error message to transcription log
-                current_img_num = extract_image_number(image_name) or global_idx
-                friendly_message = ("[SERVICE TEMPORARILY UNAVAILABLE]\n\n"
-                    "The Gemini API service is currently unavailable (HTTP 503). "
-                    "This is a temporary issue on Google's side, not a problem with your configuration.\n\n"
-                    "What to do next:\n"
-                    "1. Wait 5-10 minutes for the service to recover\n"
-                    "2. Check Google Cloud Status page: https://status.cloud.google.com/\n"
-                    "3. Retry the transcription by running the script again\n"
-                    "4. If the issue persists, try again later\n\n"
-                    f"To resume from this image when the service is available:\n"
-                    f"- Update your config: image_start_number = {current_img_num}\n"
-                    "- Then run the script again\n\n"
-                    f"Error details: {error_str}")
-                try:
-                    image_url = image_source.get_image_url(img_info)
-                    output.write_batch([{
-                        'name': image_name,
-                        'webViewLink': image_url,
-                        'text': friendly_message
-                    }], batch_num=global_idx, is_first=(global_idx == 1))
-                    logging.info(f"Wrote 503 error message to transcription log for {image_name}")
-                except Exception as write_error:
-                    logging.warning(f"Failed to write 503 error message to log: {write_error}")
-            
-            error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL ERROR transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
-            logging.error(error_msg)
-            logging.error(f"Full traceback:\n{traceback.format_exc()}")
-            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL ERROR processing {image_name}: {error_type}: {str(e)}")
-            ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
-            
-            # Re-raise to stop execution
-            raise
-        except Exception as e:
-            image_end_time = datetime.now()
-            image_total_elapsed = (image_end_time - image_start_time).total_seconds()
-            last_image_end_time = image_end_time
-            error_type = type(e).__name__
-            
-            # Calculate next image number to start from in case of failure
-            current_image_number = extract_image_number(image_name)
-            if current_image_number is not None:
-                next_image_number = current_image_number + 1
-            else:
-                # Fallback: use position-based calculation
-                image_start_number = config.get('image_start_number', 1)
-                next_image_number = image_start_number + global_idx
-            
-            error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
-            logging.error(error_msg)
-            logging.error(f"Full traceback:\n{traceback.format_exc()}")
-            logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number} (filename number from '{image_name}')")
-            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
-            ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image (current image filename number: {current_image_number})")
-            ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
-            
-            # Check if this is a 503 Service Unavailable error
-            error_str = str(e)
-            is_503_error = 'status 503' in error_str or '503' in error_str
-            
-            # Add error message as text - use friendly message for 503 errors
-            image_url = image_source.get_image_url(img_info)
-            if is_503_error:
-                friendly_message = ("[SERVICE TEMPORARILY UNAVAILABLE]\n\n"
-                    "The Gemini API service is currently unavailable (HTTP 503). "
-                    "This is a temporary issue on Google's side, not a problem with your configuration.\n\n"
-                    "What to do next:\n"
-                    "1. Wait 5-10 minutes for the service to recover\n"
-                    "2. Check Google Cloud Status page: https://status.cloud.google.com/\n"
-                    "3. Retry the transcription by running the script again\n"
-                    "4. If the issue persists, try again later\n\n"
-                    f"To resume from this image when the service is available:\n"
-                    f"- Update your config: image_start_number = {next_image_number}\n"
-                    "- Then run the script again\n\n"
-                    f"Error details: {error_str}")
-                error_text = friendly_message
-            else:
-                error_text = f"[Error during transcription: {str(e)}]"
-            
-            transcribed_pages.append({
-                'name': image_name,
-                'webViewLink': image_url,
-                'text': error_text
-            })
-            
-            # Write to log file immediately if 503 error
-            if is_503_error and output:
-                try:
-                    output.write_batch([transcribed_pages[-1]], batch_num=global_idx, is_first=(global_idx == 1))
-                    logging.info(f"Wrote 503 error message to transcription log for {image_name}")
-                except Exception as write_error:
-                    logging.warning(f"Failed to write 503 error message to log: {write_error}")
-            timing_list.append(None)
-            usage_metadata_list.append(None)
+                # Write transcription incrementally to log file
+                if output:
+                    try:
+                        # Verify the page has text before writing
+                        last_page = transcribed_pages[-1]
+                        if not last_page.get('text'):
+                            logging.warning(f"Page '{last_page.get('name', 'unknown')}' has no text, skipping write_batch")
+                        else:
+                            output.write_batch([last_page], batch_num=global_idx, is_first=(global_idx == 1))
+                    except Exception as e:
+                        logging.error(f"Failed to write transcription incrementally: {e}")
+                        import traceback
+                        logging.error(traceback.format_exc())
+                
+                # Log progress
+                progress_pct = (global_idx / total_images) * 100
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {global_idx}/{total_images} images ({progress_pct:.1f}%)")
+                
+            except (ValueError, RuntimeError) as e:
+                # Critical errors (API key, etc.) - stop execution immediately
+                image_end_time = datetime.now()
+                image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                error_type = type(e).__name__
+                
+                # Check if this is a 503 Service Unavailable error
+                error_str = str(e)
+                is_503_error = 'status 503' in error_str or '503' in error_str
+                
+                if is_503_error and output:
+                    # Write user-friendly 503 error message to transcription log
+                    current_img_num = extract_image_number(image_name) or global_idx
+                    friendly_message = ("[SERVICE TEMPORARILY UNAVAILABLE]\n\n"
+                        "The Gemini API service is currently unavailable (HTTP 503). "
+                        "This is a temporary issue on Google's side, not a problem with your configuration.\n\n"
+                        "What to do next:\n"
+                        "1. Wait 5-10 minutes for the service to recover\n"
+                        "2. Check Google Cloud Status page: https://status.cloud.google.com/\n"
+                        "3. Retry the transcription by running the script again\n"
+                        "4. If the issue persists, try again later\n\n"
+                        f"To resume from this image when the service is available:\n"
+                        f"- Update your config: image_start_number = {current_img_num}\n"
+                        "- Then run the script again\n\n"
+                        f"Error details: {error_str}")
+                    try:
+                        image_url = image_source.get_image_url(img_info)
+                        output.write_batch([{
+                            'name': image_name,
+                            'webViewLink': image_url,
+                            'text': friendly_message
+                        }], batch_num=global_idx, is_first=(global_idx == 1))
+                        logging.info(f"Wrote 503 error message to transcription log for {image_name}")
+                    except Exception as write_error:
+                        logging.warning(f"Failed to write 503 error message to log: {write_error}")
+                
+                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL ERROR transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
+                logging.error(error_msg)
+                logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] CRITICAL ERROR processing {image_name}: {error_type}: {str(e)}")
+                ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
+                
+                # Advance progress bar before re-raising
+                progress.update(task, advance=1)
+                
+                # Re-raise to stop execution
+                raise
+            except Exception as e:
+                image_end_time = datetime.now()
+                image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                last_image_end_time = image_end_time
+                error_type = type(e).__name__
+                
+                # Calculate next image number to start from in case of failure
+                current_image_number = extract_image_number(image_name)
+                if current_image_number is not None:
+                    next_image_number = current_image_number + 1
+                else:
+                    # Fallback: use position-based calculation
+                    image_start_number = config.get('image_start_number', 1)
+                    next_image_number = image_start_number + global_idx
+                
+                error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
+                logging.error(error_msg)
+                logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number} (filename number from '{image_name}')")
+                ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
+                ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image (current image filename number: {current_image_number})")
+                ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
+                
+                # Check if this is a 503 Service Unavailable error
+                error_str = str(e)
+                is_503_error = 'status 503' in error_str or '503' in error_str
+                
+                # Add error message as text - use friendly message for 503 errors
+                image_url = image_source.get_image_url(img_info)
+                if is_503_error:
+                    friendly_message = ("[SERVICE TEMPORARILY UNAVAILABLE]\n\n"
+                        "The Gemini API service is currently unavailable (HTTP 503). "
+                        "This is a temporary issue on Google's side, not a problem with your configuration.\n\n"
+                        "What to do next:\n"
+                        "1. Wait 5-10 minutes for the service to recover\n"
+                        "2. Check Google Cloud Status page: https://status.cloud.google.com/\n"
+                        "3. Retry the transcription by running the script again\n"
+                        "4. If the issue persists, try again later\n\n"
+                        f"To resume from this image when the service is available:\n"
+                        f"- Update your config: image_start_number = {next_image_number}\n"
+                        "- Then run the script again\n\n"
+                        f"Error details: {error_str}")
+                    error_text = friendly_message
+                else:
+                    error_text = f"[Error during transcription: {str(e)}]"
+                
+                transcribed_pages.append({
+                    'name': image_name,
+                    'webViewLink': image_url,
+                    'text': error_text
+                })
+                
+                # Write to log file immediately if 503 error
+                if is_503_error and output:
+                    try:
+                        output.write_batch([transcribed_pages[-1]], batch_num=global_idx, is_first=(global_idx == 1))
+                        logging.info(f"Wrote 503 error message to transcription log for {image_name}")
+                    except Exception as write_error:
+                        logging.warning(f"Failed to write 503 error message to log: {write_error}")
+                
+                timing_list.append(None)
+                usage_metadata_list.append(None)
+                
+                # Advance progress bar even on error
+                progress.update(task, advance=1)
     
     # Record end time
     end_time = datetime.now()
     total_elapsed = (end_time - start_time).total_seconds()
     
+    # Calculate final cost
+    final_cost = (total_prompt_tokens / 1_000_000 * PROMPT_COST_PER_1M_TOKENS) + \
+                 (total_completion_tokens / 1_000_000 * COMPLETION_COST_PER_1M_TOKENS)
+    
     logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Completed all images: {len(transcribed_pages)} images processed in {total_elapsed:.1f} seconds ({total_elapsed/60:.1f} minutes)")
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Token usage: {total_tokens:,} total ({total_prompt_tokens:,} prompt + {total_completion_tokens:,} completion)")
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Estimated cost: ${final_cost:.4f}")
+    
     ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === All images transcription completed ===")
     ai_logger.info(f"Total images: {len(transcribed_pages)}")
     ai_logger.info(f"Total time: {total_elapsed:.1f}s ({total_elapsed/60:.1f} min)")
+    ai_logger.info(f"Total tokens: {total_tokens:,} ({total_prompt_tokens:,} prompt + {total_completion_tokens:,} completion)")
+    ai_logger.info(f"Estimated cost: ${final_cost:.4f}")
     ai_logger.info(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     ai_logger.info(f"End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     
-    return transcribed_pages, start_time, end_time
+    return transcribed_pages, start_time, end_time, usage_metadata_list, timing_list
 
 
 def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, config: dict, ai_logger) -> list:
@@ -4230,194 +4607,300 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
     total_images = len(images)
     num_batches = (total_images + batch_size_for_doc - 1) // batch_size_for_doc  # Ceiling division
     
-    try:
-        for batch_num in range(num_batches):
-            batch_start_idx = batch_num * batch_size_for_doc
-            batch_end_idx = min(batch_start_idx + batch_size_for_doc, total_images)
-            batch_images = images[batch_start_idx:batch_end_idx]
-            batch_size = len(batch_images)
-            
-            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing batch {batch_num + 1}/{num_batches} (images {batch_start_idx + 1}-{batch_end_idx} of {total_images}) ===")
-            ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch {batch_num + 1}/{num_batches}: Processing images {batch_start_idx + 1}-{batch_end_idx} ===")
-            
-            # Track batch-level transcribed pages and metrics
-            batch_transcribed_pages = []
-            batch_usage_metadata_list = []
-            batch_timing_list = []
-            
-            for batch_idx, img in enumerate(batch_images, 1):
-                global_idx = batch_start_idx + batch_idx
-                image_start_time = datetime.now()
-                image_name = img['name']
-                
-                # Log gap detection
-                if last_image_end_time:
-                    gap_seconds = (image_start_time - last_image_end_time).total_seconds()
-                    if gap_seconds > 60:  # Log if gap is more than 1 minute
-                        logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Large time gap detected: {gap_seconds:.1f} seconds ({gap_seconds/60:.1f} minutes) between previous image and '{image_name}'")
-                        ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Time gap of {gap_seconds:.1f}s ({gap_seconds/60:.1f} min) before {image_name}")
-                
-                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Processing image {global_idx}/{total_images} (batch {batch_num + 1}, item {batch_idx}/{batch_size}): '{image_name}'")
-                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing image {global_idx}/{total_images}: {image_name} ===")
-                
-                try:
-                    download_start = datetime.now()
-                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{image_name}'...")
-                    img_bytes = image_source.get_image_bytes(img)
-                    download_elapsed = (datetime.now() - download_start).total_seconds()
-                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' downloaded in {download_elapsed:.1f}s, starting transcription...")
-                    
-                    transcription_start = datetime.now()
-                    text, elapsed_time, usage_metadata = ai_client.transcribe(img_bytes, image_name, prompt_text)
-                    transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
-                    
-                    # Ensure text is not None
-                    if text is None:
-                        text = "[No transcription text received]"
-                    
-                    batch_transcribed_pages.append({
-                        'name': img['name'],
-                        'webViewLink': img['webViewLink'],
-                        'text': text
-                    })
-                    
-                    # Collect metrics
-                    batch_timing_list.append(elapsed_time)
-                    batch_usage_metadata_list.append(usage_metadata)
-                    
-                    image_end_time = datetime.now()
-                    image_total_elapsed = (image_end_time - image_start_time).total_seconds()
-                    last_image_end_time = image_end_time
-                    
-                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {global_idx}/{total_images}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
-                    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
-                    
-                    # Log progress
-                    progress_pct = (global_idx / total_images) * 100
-                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {global_idx}/{total_images} images ({progress_pct:.1f}%)")
-                    
-                except Exception as e:
-                    image_end_time = datetime.now()
-                    image_total_elapsed = (image_end_time - image_start_time).total_seconds()
-                    last_image_end_time = image_end_time
-                    error_type = type(e).__name__
-                    
-                    # Calculate next image number to start from in case of failure
-                    current_image_number = extract_image_number(image_name)
-                    if current_image_number is not None:
-                        next_image_number = current_image_number + 1
-                    else:
-                        # Fallback: if we can't extract number, use position-based calculation
-                        next_image_number = image_start_number + global_idx
-                    
-                    error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
-                    logging.error(error_msg)
-                    logging.error(f"Full traceback:\n{traceback.format_exc()}")
-                    logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number} (filename number from '{image_name}')")
-                    ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
-                    ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image (current image filename number: {current_image_number})")
-                    ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
-                    
-                    # Add error message as text
-                    batch_transcribed_pages.append({
-                        'name': img['name'],
-                        'webViewLink': img['webViewLink'],
-                        'text': f"[Error during transcription: {str(e)}]"
-                    })
-                    # Add None for metrics on error
-                    batch_timing_list.append(None)
-                    batch_usage_metadata_list.append(None)
-            
-            # After batch is transcribed, write to document
-            if batch_transcribed_pages:
-                # Accumulate all transcribed pages and metrics
-                transcribed_pages.extend(batch_transcribed_pages)
-                usage_metadata_list.extend(batch_usage_metadata_list)
-                timing_list.extend(batch_timing_list)
-                
-                if first_batch:
-                    # Document should already be initialized in main() before processing starts
-                    # Just write the first batch with overview (pass all pages so far)
-                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed ({len(batch_transcribed_pages)} images). Writing to document with overview...")
-                    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed, writing to document...")
-                    
-                    # Verify document is initialized
-                    if not output.doc_id:
-                        # Fallback: initialize if somehow not initialized (shouldn't happen)
-                        logging.warning("Document not initialized, initializing now...")
-                        output.initialize(config)
-                    
-                    # Write first batch with overview (pass all pages so far)
-                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing first batch ({len(batch_transcribed_pages)} images) to document with overview...")
-                    output.write_batch(transcribed_pages, 1, True)
-                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ First batch written to document")
-                    first_batch = False
-                else:
-                    # Append subsequent batches to existing document
-                    if output.doc_id:
-                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing batch {batch_num + 1} ({len(batch_transcribed_pages)} images) to document...")
-                        # Pass all transcribed pages so far (write_batch will calculate start_idx)
-                        output.write_batch(transcribed_pages, batch_num + 1, False)
-                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Batch {batch_num + 1} written to document")
-                    else:
-                        # Document creation failed earlier, save locally
-                        logging.warning(f"Cannot write batch {batch_num + 1} to document (doc creation failed). Saving locally...")
-                        # Append to local file if it exists, or create new one
-                        run_date = datetime.now().strftime("%Y%m%d")
-                        doc_name = f"{document_name} {run_date}"
-                        save_transcription_locally(batch_transcribed_pages, doc_name, config, prompt_text, "logs", None, None, None)
+    # Cost tracking
+    total_prompt_tokens = 0
+    total_completion_tokens = 0
+    total_tokens = 0
     
-    except Exception as batch_error:
-        # Log error and resume information
-        error_type = type(batch_error).__name__
-        images_processed = len(transcribed_pages) if 'transcribed_pages' in locals() else 0
+    # Gemini 3 Flash pricing (as of January 2026)
+    # Pricing for gemini-3-flash-preview model
+    # Note: Official Google pricing shows $0.50/$3.00, but this project uses $0.15/$0.60
+    # as documented in README.md (may reflect early access pricing, discounts, or project-specific rates)
+    # This is different from Gemini 1.5 Flash ($0.075/$0.30)
+    PROMPT_COST_PER_1M_TOKENS = 0.15  # $0.15 per 1M input tokens (Gemini 3 Flash)
+    COMPLETION_COST_PER_1M_TOKENS = 0.60  # $0.60 per 1M output tokens (Gemini 3 Flash)
+    
+    # Set up Rich progress bar
+    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn, TimeRemainingColumn
+    from rich.console import Console
+    
+    console = Console()
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TextColumn("•"),
+        TextColumn("[cyan]{task.completed}/{task.total}"),
+        TextColumn("•"),
+        TimeElapsedColumn(),
+        TextColumn("•"),
+        TimeRemainingColumn(),
+        console=console,
+        transient=False
+    ) as progress:
+        task = progress.add_task(
+            f"[cyan]Processing {total_images} images in {num_batches} batches...",
+            total=total_images
+        )
         
-        # Calculate next image number from the last successfully processed image
-        next_image_number = None
-        if images_processed > 0 and 'transcribed_pages' in locals():
-            last_image_name = transcribed_pages[-1]['name']
-            last_image_number = extract_image_number(last_image_name)
-            if last_image_number is not None:
-                next_image_number = last_image_number + 1
-            else:
-                # Fallback: use position-based calculation
+        try:
+            for batch_num in range(num_batches):
+                batch_start_idx = batch_num * batch_size_for_doc
+                batch_end_idx = min(batch_start_idx + batch_size_for_doc, total_images)
+                batch_images = images[batch_start_idx:batch_end_idx]
+                batch_size = len(batch_images)
+                
+                logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing batch {batch_num + 1}/{num_batches} (images {batch_start_idx + 1}-{batch_end_idx} of {total_images}) ===")
+                ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch {batch_num + 1}/{num_batches}: Processing images {batch_start_idx + 1}-{batch_end_idx} ===")
+                
+                # Track batch-level transcribed pages and metrics
+                batch_transcribed_pages = []
+                batch_usage_metadata_list = []
+                batch_timing_list = []
+                
+                for batch_idx, img in enumerate(batch_images, 1):
+                    global_idx = batch_start_idx + batch_idx
+                    image_start_time = datetime.now()
+                    image_name = img['name']
+                    
+                    # Log gap detection
+                    if last_image_end_time:
+                        gap_seconds = (image_start_time - last_image_end_time).total_seconds()
+                        if gap_seconds > 60:  # Log if gap is more than 1 minute
+                            logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Large time gap detected: {gap_seconds:.1f} seconds ({gap_seconds/60:.1f} minutes) between previous image and '{image_name}'")
+                            ai_logger.warning(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING: Time gap of {gap_seconds:.1f}s ({gap_seconds/60:.1f} min) before {image_name}")
+                    
+                    # Update progress bar (without advancing)
+                    progress.update(
+                        task,
+                        advance=0,
+                        description=f"[cyan]Batch {batch_num + 1}/{num_batches}: {image_name[:40]}...[/cyan]"
+                    )
+                    
+                    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Processing image {global_idx}/{total_images} (batch {batch_num + 1}, item {batch_idx}/{batch_size}): '{image_name}'")
+                    ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Processing image {global_idx}/{total_images}: {image_name} ===")
+                    
+                    try:
+                        download_start = datetime.now()
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Downloading image '{image_name}'...")
+                        img_bytes = image_source.get_image_bytes(img)
+                        download_elapsed = (datetime.now() - download_start).total_seconds()
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Image '{image_name}' downloaded in {download_elapsed:.1f}s, starting transcription...")
+                        
+                        transcription_start = datetime.now()
+                        text, elapsed_time, usage_metadata = ai_client.transcribe(img_bytes, image_name, prompt_text)
+                        transcription_elapsed = (datetime.now() - transcription_start).total_seconds()
+                        
+                        # Ensure text is not None
+                        if text is None:
+                            text = "[No transcription text received]"
+                        
+                        batch_transcribed_pages.append({
+                            'name': img['name'],
+                            'webViewLink': img['webViewLink'],
+                            'text': text
+                        })
+                        
+                        # Collect metrics
+                        batch_timing_list.append(elapsed_time)
+                        batch_usage_metadata_list.append(usage_metadata)
+                        
+                        # Track token usage for cost estimation
+                        current_cost = 0.0
+                        if usage_metadata:
+                            # Handle both dict (LOCAL mode) and Pydantic object (GOOGLECLOUD mode)
+                            if isinstance(usage_metadata, dict):
+                                prompt_tokens = usage_metadata.get('prompt_tokens', 0) or 0
+                                completion_tokens = usage_metadata.get('completion_tokens', 0) or 0
+                            else:
+                                # GOOGLECLOUD mode: usage_metadata is a Pydantic object (GenerateContentResponseUsageMetadata)
+                                # Access attributes directly, not as dict
+                                prompt_tokens = getattr(usage_metadata, 'prompt_token_count', 0) or 0
+                                completion_tokens = getattr(usage_metadata, 'candidates_token_count', 0) or 0
+                            
+                            total_prompt_tokens += prompt_tokens
+                            total_completion_tokens += completion_tokens
+                            total_tokens += prompt_tokens + completion_tokens
+                            
+                            # Calculate current cost
+                            current_cost = (total_prompt_tokens / 1_000_000 * PROMPT_COST_PER_1M_TOKENS) + \
+                                          (total_completion_tokens / 1_000_000 * COMPLETION_COST_PER_1M_TOKENS)
+                        
+                        image_end_time = datetime.now()
+                        image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                        last_image_end_time = image_end_time
+                        
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Successfully completed image {global_idx}/{total_images}: '{image_name}' (transcription: {transcription_elapsed:.1f}s, total: {image_total_elapsed:.1f}s)")
+                        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
+                        
+                        # Update progress bar with cost info (advance once per image)
+                        cost_str = f"Est. cost: ${current_cost:.4f}" if usage_metadata and current_cost > 0 else ""
+                        progress.update(
+                            task,
+                            advance=1,
+                            description=f"[cyan]Batch {batch_num + 1}/{num_batches}: {image_name[:30]}... {cost_str}[/cyan]"
+                        )
+                        
+                        # Log progress
+                        progress_pct = (global_idx / total_images) * 100
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Progress: {global_idx}/{total_images} images ({progress_pct:.1f}%)")
+                        
+                    except Exception as e:
+                        image_end_time = datetime.now()
+                        image_total_elapsed = (image_end_time - image_start_time).total_seconds()
+                        last_image_end_time = image_end_time
+                        error_type = type(e).__name__
+                        
+                        # Calculate next image number to start from in case of failure
+                        current_image_number = extract_image_number(image_name)
+                        if current_image_number is not None:
+                            next_image_number = current_image_number + 1
+                        else:
+                            # Fallback: if we can't extract number, use position-based calculation
+                            next_image_number = image_start_number + global_idx
+                        
+                        error_msg = f"[{datetime.now().strftime('%H:%M:%S')}] Error transcribing image {global_idx}/{total_images} '{image_name}' after {image_total_elapsed:.1f}s: {error_type}: {str(e)}"
+                        logging.error(error_msg)
+                        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+                        logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number} (filename number from '{image_name}')")
+                        ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR processing {image_name}: {error_type}: {str(e)}")
+                        ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image (current image filename number: {current_image_number})")
+                        ai_logger.error(f"Traceback:\n{traceback.format_exc()}")
+                        
+                        # Add error message as text
+                        batch_transcribed_pages.append({
+                            'name': img['name'],
+                            'webViewLink': img['webViewLink'],
+                            'text': f"[Error during transcription: {str(e)}]"
+                        })
+                        # Add None for metrics on error
+                        batch_timing_list.append(None)
+                        batch_usage_metadata_list.append(None)
+                        
+                        # Advance progress bar on error (only once, not in success path)
+                        progress.update(task, advance=1)
+                
+                # After batch is transcribed, write to document
+                if batch_transcribed_pages:
+                    # Accumulate all transcribed pages and metrics
+                    transcribed_pages.extend(batch_transcribed_pages)
+                    usage_metadata_list.extend(batch_usage_metadata_list)
+                    timing_list.extend(batch_timing_list)
+                    
+                    if first_batch:
+                        # Document should already be initialized in main() before processing starts
+                        # Just write the first batch with overview (pass all pages so far)
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed ({len(batch_transcribed_pages)} images). Writing to document with overview...")
+                        ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] First batch completed, writing to document...")
+                        
+                        # Verify document is initialized
+                        if not output.doc_id:
+                            # Fallback: initialize if somehow not initialized (shouldn't happen)
+                            logging.warning("Document not initialized, initializing now...")
+                            output.initialize(config)
+                        
+                        # Write first batch with overview (pass all pages so far)
+                        # Update progress bar to show we're writing (but don't advance)
+                        progress.update(
+                            task,
+                            advance=0,
+                            description=f"[cyan]Writing batch {batch_num + 1}/{num_batches} to document...[/cyan]"
+                        )
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing first batch ({len(batch_transcribed_pages)} images) to document with overview...")
+                        output.write_batch(transcribed_pages, 1, True)
+                        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ First batch written to document")
+                        first_batch = False
+                    else:
+                        # Append subsequent batches to existing document
+                        if output.doc_id:
+                            # Update progress bar to show we're writing (but don't advance)
+                            progress.update(
+                                task,
+                                advance=0,
+                                description=f"[cyan]Writing batch {batch_num + 1}/{num_batches} to document...[/cyan]"
+                            )
+                            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Writing batch {batch_num + 1} ({len(batch_transcribed_pages)} images) to document...")
+                            # Pass all transcribed pages so far (write_batch will calculate start_idx)
+                            output.write_batch(transcribed_pages, batch_num + 1, False)
+                            logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Batch {batch_num + 1} written to document")
+                        else:
+                            # Document creation failed earlier, save locally
+                            logging.warning(f"Cannot write batch {batch_num + 1} to document (doc creation failed). Saving locally...")
+                            # Append to local file if it exists, or create new one
+                            run_date = datetime.now().strftime("%Y%m%d")
+                            doc_name = f"{document_name} {run_date}"
+                            save_transcription_locally(batch_transcribed_pages, doc_name, config, prompt_text, "logs", None, None, None)
+        
+        except Exception as batch_error:
+            # Log error and resume information
+            error_type = type(batch_error).__name__
+            images_processed = len(transcribed_pages) if 'transcribed_pages' in locals() else 0
+            
+            # Calculate next image number from the last successfully processed image
+            next_image_number = None
+            if images_processed > 0 and 'transcribed_pages' in locals():
+                last_image_name = transcribed_pages[-1]['name']
+                last_image_number = extract_image_number(last_image_name)
+                if last_image_number is not None:
+                    next_image_number = last_image_number + 1
+                else:
+                    # Fallback: use position-based calculation
+                    next_image_number = image_start_number + images_processed
+            elif images_processed > 0:
+                # Fallback if we can't get the last image name
                 next_image_number = image_start_number + images_processed
-        elif images_processed > 0:
-            # Fallback if we can't get the last image name
-            next_image_number = image_start_number + images_processed
-        
-        logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error processing batch: {error_type}: {str(batch_error)}")
-        logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
-        if next_image_number is not None:
-            last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
-            logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number}{last_image_info}")
-        logging.error(f"Full traceback:\n{traceback.format_exc()}")
-        
-        ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch Processing Error ===")
-        ai_logger.error(f"Error type: {error_type}")
-        ai_logger.error(f"Error message: {str(batch_error)}")
-        ai_logger.error(f"Images processed before error: {images_processed}")
-        if next_image_number is not None:
-            ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image")
-        ai_logger.error(f"Full traceback:\n{traceback.format_exc()}")
-        ai_logger.error(f"=== End Batch Processing Error ===")
-        
-        # Re-raise to be caught by outer exception handler
-        raise
+            
+            logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] Error processing batch: {error_type}: {str(batch_error)}")
+            logging.error(f"RESUME INFO: Processed {images_processed} images successfully before error")
+            if next_image_number is not None:
+                last_image_info = f" (last processed: {transcribed_pages[-1]['name'] if images_processed > 0 and 'transcribed_pages' in locals() else 'unknown'})"
+                logging.error(f"RESUME INFO: To resume from this point, update config image_start_number = {next_image_number}{last_image_info}")
+            logging.error(f"Full traceback:\n{traceback.format_exc()}")
+            
+            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] === Batch Processing Error ===")
+            ai_logger.error(f"Error type: {error_type}")
+            ai_logger.error(f"Error message: {str(batch_error)}")
+            ai_logger.error(f"Images processed before error: {images_processed}")
+            if next_image_number is not None:
+                ai_logger.error(f"RESUME INFO: Update config image_start_number = {next_image_number} to resume from next image")
+            ai_logger.error(f"Full traceback:\n{traceback.format_exc()}")
+            ai_logger.error(f"=== End Batch Processing Error ===")
+            
+            # Re-raise to be caught by outer exception handler
+            raise
     
     # Record end time
     end_time = datetime.now()
     batch_total_elapsed = (end_time - start_time).total_seconds()
     
+    # Calculate final cost
+    final_cost = (total_prompt_tokens / 1_000_000 * PROMPT_COST_PER_1M_TOKENS) + \
+                 (total_completion_tokens / 1_000_000 * COMPLETION_COST_PER_1M_TOKENS)
+    
     logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Completed all batches: {len(transcribed_pages)} images processed in {batch_total_elapsed:.1f} seconds ({batch_total_elapsed/60:.1f} minutes)")
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Token usage: {total_tokens:,} total ({total_prompt_tokens:,} prompt + {total_completion_tokens:,} completion)")
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Estimated cost: ${final_cost:.4f}")
+    
     ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === All batches transcription completed ===")
     ai_logger.info(f"Total images: {len(transcribed_pages)}")
     ai_logger.info(f"Total time: {batch_total_elapsed:.1f}s ({batch_total_elapsed/60:.1f} min)")
+    ai_logger.info(f"Total tokens: {total_tokens:,} ({total_prompt_tokens:,} prompt + {total_completion_tokens:,} completion)")
+    ai_logger.info(f"Estimated cost: ${final_cost:.4f}")
     ai_logger.info(f"Start time: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
     ai_logger.info(f"End time: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Calculate final metrics and finalize output
-    final_metrics = calculate_metrics(usage_metadata_list, timing_list) if usage_metadata_list else None
+    # Calculate metrics if we have timing data (even if usage_metadata is missing, we still have timing)
+    # Only skip if both lists are empty (no images processed)
+    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Calculating metrics: timing_list has {len(timing_list)} items, usage_metadata_list has {len(usage_metadata_list)} items")
+    if timing_list or usage_metadata_list:
+        final_metrics = calculate_metrics(usage_metadata_list, timing_list)
+        logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Metrics calculated: {final_metrics}")
+    else:
+        logging.warning(f"[{datetime.now().strftime('%H:%M:%S')}] No timing or usage metadata available, skipping metrics calculation")
+        final_metrics = None
     
     # Finalize output (update overview section)
     if output.doc_id and len(transcribed_pages) > 0:
@@ -4425,6 +4908,13 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
         output.finalize(transcribed_pages, final_metrics)
         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Output finalized successfully.")
         logging.info(f"Final metrics: {final_metrics}")
+    
+    # Calculate end time for summary
+    end_time = datetime.now()
+    start_time = output.start_time if hasattr(output, 'start_time') and output.start_time else None
+    
+    # Log comprehensive Run Summary
+    _log_run_summary(output, transcribed_pages, final_metrics, start_time, end_time, None, 'googlecloud')
     
     return transcribed_pages
 
@@ -4536,21 +5026,27 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
         end_time = None
         error_info = None
         caught_exception = None
+        usage_metadata_list = []
+        timing_list = []
         
         try:
             # Process images using mode-specific processing function
             if mode == 'googlecloud':
                 transcribed_pages = process_batches_googlecloud(images, handlers, prompt_text, normalized_config, ai_logger)
+                # For GOOGLECLOUD mode, metrics are calculated inside process_batches_googlecloud
             else:  # local mode
-                transcribed_pages, start_time, end_time = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger)
+                transcribed_pages, start_time, end_time, usage_metadata_list, timing_list = process_all_local(images, handlers, prompt_text, normalized_config, ai_logger)
             
-            # Log session completion
+            # Log session completion (to ai_logger)
             ai_logger.info(f"=== Transcription Session Completed ===")
             ai_logger.info(f"Session end timestamp: {datetime.now().isoformat()}")
             ai_logger.info(f"Total images processed: {len(transcribed_pages)}")
             ai_logger.info(f"Successful transcriptions: {len([p for p in transcribed_pages if p['text'] and not p['text'].startswith('[Error')])}")
             ai_logger.info(f"Failed transcriptions: {len([p for p in transcribed_pages if not p['text'] or p['text'].startswith('[Error')])}")
             ai_logger.info(f"=== Session Summary ===\n")
+            
+            # For GOOGLECLOUD mode, Run Summary is already logged in process_batches_googlecloud
+            # For LOCAL mode, Run Summary will be logged in the finally block after finalization
             
         except Exception as e:
             # Save the exception for re-raising after finalization
@@ -4607,13 +5103,29 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str):
         finally:
             # Always finalize output (even on errors) for LOCAL mode
             if mode == 'local':
-                metrics = {}  # Can be enhanced to extract from process_all_local
+                # Calculate metrics from usage metadata and timing data
+                metrics = {}
+                if usage_metadata_list and timing_list:
+                    try:
+                        metrics = calculate_metrics(usage_metadata_list, timing_list)
+                        logging.info(f"Calculated metrics for finalization: {metrics}")
+                    except Exception as metrics_error:
+                        logging.warning(f"Failed to calculate metrics: {metrics_error}")
+                        import traceback
+                        logging.warning(traceback.format_exc())
+                        metrics = {}
+                else:
+                    logging.warning(f"Cannot calculate metrics: usage_metadata_list={len(usage_metadata_list) if usage_metadata_list else 0} items, timing_list={len(timing_list) if timing_list else 0} items")
+                
                 try:
                     output.finalize(transcribed_pages, metrics, start_time, end_time, error_info)
                     logging.info(f"Output finalized for LOCAL mode (with {'error' if error_info else 'success'})")
                 except Exception as finalize_error:
                     logging.error(f"Error during output finalization: {finalize_error}")
                     logging.error(f"Finalize traceback:\n{traceback.format_exc()}")
+                
+                # Log comprehensive Run Summary for LOCAL mode
+                _log_run_summary(output, transcribed_pages, metrics, start_time, end_time, error_info, mode)
         
         # Re-raise the original exception if there was one (outside finally block)
         if caught_exception:
@@ -4633,8 +5145,13 @@ if __name__ == '__main__':
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Example usage:
-  python transcribe.py config/config.yaml
+  python transcribe.py                    # Run interactive wizard (default)
+  python transcribe.py config/config.yaml  # Use config file
+  python transcribe.py --wizard-off config/config.yaml  # Explicitly disable wizard
   
+Wizard mode is enabled by default. The wizard guides you through creating a configuration.
+Use --wizard-off to disable wizard mode and require a config file.
+
 The config file must be a YAML file containing all required configuration parameters.
 See config/config.yaml.example for a template.
         """
@@ -4642,50 +5159,134 @@ See config/config.yaml.example for a template.
     parser.add_argument(
         'config_file',
         type=str,
-        help='Path to YAML configuration file (e.g., config/config.yaml)'
+        nargs='?',  # Optional - wizard mode is default
+        help='Path to YAML configuration file (e.g., config/config.yaml). If not provided, wizard mode runs by default.'
+    )
+    parser.add_argument(
+        '--wizard-off',
+        action='store_true',
+        help='Disable wizard mode and require a config file (traditional mode)'
+    )
+    parser.add_argument(
+        '--output',
+        type=str,
+        help='Output path for generated config file (wizard mode only)'
     )
     
     args = parser.parse_args()
     
-    try:
-        # Load configuration first (needed for logging setup)
-        config = load_config(args.config_file)
+    # Determine if wizard mode should run
+    # Wizard mode runs by default unless:
+    # 1. --wizard-off is explicitly set, OR
+    # 2. A config file is provided (traditional mode)
+    run_wizard = not args.wizard_off and not args.config_file
+    
+    # Handle wizard mode (default behavior)
+    if run_wizard:
+        try:
+            from wizard.wizard_controller import WizardController
+            from wizard.steps.mode_selection_step import ModeSelectionStep
+            from wizard.steps.processing_settings_step import ProcessingSettingsStep
+            
+            # Create wizard controller
+            controller = WizardController()
+            
+            # Add steps
+            controller.add_step(ModeSelectionStep(controller))
+            from wizard.steps.context_collection_step import ContextCollectionStep
+            controller.add_step(ContextCollectionStep(controller))
+            controller.add_step(ProcessingSettingsStep(controller))
+            
+            # Run wizard
+            config_path = controller.run(output_path=args.output)
+            
+            if config_path:
+                # Continue with normal flow using generated config
+                config = load_config(config_path)
+                
+                # Detect mode for logging purposes
+                mode = detect_mode(config)
+                
+                # Set up logging
+                log_filename, ai_log_filename, ai_logger = setup_logging(config)
+                
+                logging.info(f"Configuration loaded from: {config_path}")
+                logging.info(f"Detected mode: {mode.upper()}")
+                logging.info(f"Logging initialized. Main log: {log_filename}, AI log: {ai_log_filename}")
+                
+                # Load prompt text (supports both template assembly and legacy file loading)
+                prompt_text = load_prompt_text(config)
+                prompt_source = config.get('prompt_template') or config.get('prompt_file', 'unknown')
+                logging.info(f"Prompt loaded: {prompt_source} ({len(prompt_text)} characters)")
+                
+                # Get logs directory
+                logs_dir = "logs"
+                
+                # Run main function
+                main(config, prompt_text, ai_logger, logs_dir)
+            else:
+                print("Wizard cancelled or failed. Exiting.")
+                sys.exit(1)
+                
+        except ImportError as e:
+            print(f"Error: Wizard mode not available: {e}", file=sys.stderr)
+            print("Please ensure all wizard dependencies are installed.", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error in wizard mode: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+    
+    # Traditional mode (config file provided or wizard-off flag set)
+    elif args.config_file or args.wizard_off:
+        if not args.config_file:
+            print("Error: --wizard-off requires a configuration file.", file=sys.stderr)
+            print("Usage: python transcribe.py --wizard-off config/config.yaml", file=sys.stderr)
+            sys.exit(1)
         
-        # Detect mode for logging purposes (before logging setup to determine log filename)
-        mode = detect_mode(config)
-        
-        # Set up logging - MUST be done before any logging calls
-        log_filename, ai_log_filename, ai_logger = setup_logging(config)
-        
-        # Now we can log
-        logging.info(f"Configuration loaded from: {args.config_file}")
-        logging.info(f"Detected mode: {mode.upper()}")
-        logging.info(f"Logging initialized. Main log: {log_filename}, AI log: {ai_log_filename}")
-        
-        # Load prompt text
-        prompt_file = config['prompt_file']
-        prompt_text = load_prompt_text(prompt_file)
-        logging.info(f"Prompt file loaded: {prompt_file} ({len(prompt_text)} characters)")
-        
-        # Get logs directory for save_transcription_locally
-        logs_dir = "logs"
-        
-        # Run main function
-        main(config, prompt_text, ai_logger, logs_dir)
-        
-    except FileNotFoundError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        print(f"Please provide a valid configuration file path.", file=sys.stderr)
-        sys.exit(1)
-    except KeyError as e:
-        print(f"Error: Missing required configuration key: {e}", file=sys.stderr)
-        print(f"Please check your configuration file against config/config.yaml.example", file=sys.stderr)
-        sys.exit(1)
-    except yaml.YAMLError as e:
-        print(f"Error: Invalid YAML in configuration file: {e}", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        logging.error(f"Fatal error: {e}")
-        logging.error(f"Full traceback:\n{traceback.format_exc()}")
+        try:
+            # Load configuration first (needed for logging setup)
+            config = load_config(args.config_file)
+            
+            # Detect mode for logging purposes (before logging setup to determine log filename)
+            mode = detect_mode(config)
+            
+            # Set up logging - MUST be done before any logging calls
+            log_filename, ai_log_filename, ai_logger = setup_logging(config)
+            
+            # Now we can log
+            logging.info(f"Configuration loaded from: {args.config_file}")
+            logging.info(f"Detected mode: {mode.upper()}")
+            logging.info(f"Logging initialized. Main log: {log_filename}, AI log: {ai_log_filename}")
+            
+            # Load prompt text (supports both template assembly and legacy file loading)
+            prompt_text = load_prompt_text(config)
+            prompt_source = config.get('prompt_template') or config.get('prompt_file', 'unknown')
+            logging.info(f"Prompt loaded: {prompt_source} ({len(prompt_text)} characters)")
+            
+            # Get logs directory for save_transcription_locally
+            logs_dir = "logs"
+            
+            # Run main function
+            main(config, prompt_text, ai_logger, logs_dir)
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            print(f"Please provide a valid configuration file path.", file=sys.stderr)
+            sys.exit(1)
+        except KeyError as e:
+            print(f"Error: Missing required configuration key: {e}", file=sys.stderr)
+            print(f"Please check your configuration file against config/config.yaml.example", file=sys.stderr)
+            sys.exit(1)
+        except yaml.YAMLError as e:
+            print(f"Error: Invalid YAML in configuration file: {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            logging.error(f"Fatal error: {e}")
+            logging.error(f"Full traceback:\n{traceback.format_exc()}")
+            sys.exit(1)
+    else:
+        # This should not happen with new default behavior, but keep as fallback
+        parser.print_help()
         sys.exit(1)

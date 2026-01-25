@@ -135,14 +135,86 @@ googlecloud:
 
 These settings apply to both LOCAL and GOOGLECLOUD modes:
 
+### Prompt Configuration
+
+You can use either the traditional `prompt_file` approach or the new wizard-generated `prompt_template` + `context` approach:
+
+**Option 1: Traditional Prompt File (Legacy)**
 ```yaml
-# Prompt file (required)
+# Prompt file (required for legacy configs)
 # Path to prompt file in prompts/ folder (without full path)
 prompt_file: "f487o1s545-Turilche.md"
+```
 
+**Option 2: Prompt Template + Context (Wizard-Generated)**
+```yaml
+# Prompt template (wizard mode)
+# Name of template in prompts/templates/ folder (without .md extension)
+prompt_template: "metric-book-birth"
+
+# Context section (wizard mode)
+# Project-specific information separated from static prompt template
+context:
+  archive_reference: "Ф. 487, оп. 1, спр. 545"
+  document_type: "Метрична книга про народження"
+  date_range: "1888 (липень - грудень) - 1924 (січень - квітень)"
+  main_villages:
+    - name: "Турильче"
+      variants: ["Turilche", "Turilcze"]
+  additional_villages:
+    - name: "Вербивка"
+      variants: ["Werbivka", "Werbowce", "Wierzbówka", "Вербивці"]
+    - name: "Нивра"
+      variants: ["Niwra", "Нивра"]
+    - name: "Вовківці"
+      variants: ["Wołkowce", "Вовкивци", "Волковцы"]
+    - name: "Слободка"
+      variants: ["Slobodka"]
+    - name: "Троица"
+      variants: ["Triyca"]
+    - name: "Подфилипье"
+      variants: ["Pidfilipje"]
+  common_surnames:
+    - "Боєчко"
+    - "Войтків"
+    - "Гаврилюк"
+    - "Головатий"
+    - "Захарчук"
+    - "Камінський"
+    - "Куфлей"
+    - "Наконечний"
+    - "Остапів"
+    - "Пакалюк"
+    - "Патралюк"
+    - "Росткович"
+    - "Саранчук"
+    - "Сенищ"
+    - "Собесяк"
+    - "Стельмах"
+    - "Угрин"
+    - "Фігуш"
+    - "Ципняк"
+    - "Чепесюк"
+    - "Павлюк"
+    - "Романюк"
+    - "Демків"
+    - "Балко"
+  title_page_filename: "cover-title-page.jpg"  # Optional
+```
+
+**Benefits of Template + Context Approach:**
+- Static prompt templates don't need editing for each project
+- Context (villages, surnames) is stored in config, not in prompt file
+- Easier to reuse prompt templates across multiple projects
+- Context can be extracted automatically from title page images
+
+### Processing Settings
+
+```yaml
 # Archive index reference (optional)
 # Format: ф[FOND]оп[OPIS]спр[DELO] or custom format
 # Used for document headers and record links
+# Auto-generated from archive_reference if using wizard mode
 archive_index: "ф487оп1спр545"
 
 # Processing settings
@@ -208,7 +280,46 @@ The tool automatically converts legacy configs to the new nested format internal
 
 ## Configuration Examples
 
-### Minimal LOCAL Mode Config
+### Wizard-Generated Config (Recommended)
+
+```yaml
+mode: "local"
+
+local:
+  api_key: "${GEMINI_API_KEY}"
+  image_dir: "data_samples/test_input_sample"
+  output_dir: "logs"
+  ocr_model_id: "gemini-3-flash-preview"
+
+context:
+  archive_reference: "Ф. 487, оп. 1, спр. 545"
+  document_type: "Метрична книга про народження"
+  date_range: "1888 (липень - грудень) - 1924 (січень - квітень)"
+  main_villages:
+    - name: "Турильче"
+      variants: ["Turilche", "Turilcze"]
+  additional_villages:
+    - name: "Вербивка"
+      variants: ["Werbivka", "Werbowce", "Wierzbówka", "Вербивці"]
+    - name: "Нивра"
+      variants: ["Niwra", "Нивра"]
+  common_surnames:
+    - "Чепесюк"
+    - "Павлюк"
+    - "Романюк"
+    - "Демків"
+    - "Балко"
+    - "Гаврилюк"
+    - "Боєчко"
+    - "Войтків"
+
+prompt_template: "metric-book-birth"
+archive_index: "ф487оп1спр545"
+image_start_number: 1
+image_count: 10
+```
+
+### Minimal LOCAL Mode Config (Legacy)
 
 ```yaml
 mode: "local"
@@ -233,7 +344,27 @@ local:
   output_dir: "logs"
   ocr_model_id: "gemini-3-flash-preview"
 
-prompt_file: "f487o1s545-Turilche.md"
+context:
+  archive_reference: "Ф. 487, оп. 1, спр. 545"
+  document_type: "Метрична книга про народження"
+  date_range: "1888 (липень - грудень) - 1924 (січень - квітень)"
+  main_villages:
+    - name: "Турильче"
+      variants: ["Turilche", "Turilcze"]
+  additional_villages:
+    - name: "Вербивка"
+      variants: ["Werbivka", "Werbowce", "Wierzbówka", "Вербивці"]
+    - name: "Нивра"
+      variants: ["Niwra", "Нивра"]
+  common_surnames:
+    - "Чепесюк"
+    - "Павлюк"
+    - "Романюк"
+    - "Демків"
+    - "Балко"
+    - "Гаврилюк"
+
+prompt_template: "metric-book-birth"
 archive_index: "ф487оп1спр545"
 image_start_number: 1
 image_count: 50
@@ -267,18 +398,42 @@ googlecloud:
   region: "global"
   ocr_model_id: "gemini-3-flash-preview"
   adc_file: "application_default_credentials.json"
-  document_name: "Turilche Birth Records 1894"
+  document_name: "Turilche Birth Records 1888-1924"
   title_page_filename: "cover-title-page.jpg"
   batch_size_for_doc: 10
   max_images: 1000
 
-prompt_file: "f487o1s545-Turilche.md"
+context:
+  archive_reference: "Ф. 487, оп. 1, спр. 545"
+  document_type: "Метрична книга про народження"
+  date_range: "1888 (липень - грудень) - 1924 (січень - квітень)"
+  main_villages:
+    - name: "Турильче"
+      variants: ["Turilche", "Turilcze"]
+  additional_villages:
+    - name: "Вербивка"
+      variants: ["Werbivka", "Werbowce", "Wierzbówka", "Вербивці"]
+    - name: "Нивра"
+      variants: ["Niwra", "Нивра"]
+  common_surnames:
+    - "Чепесюк"
+    - "Павлюк"
+    - "Романюк"
+    - "Демків"
+    - "Балко"
+    - "Гаврилюк"
+    - "Боєчко"
+    - "Войтків"
+
+prompt_template: "metric-book-birth"
 archive_index: "ф487оп1спр545"
 image_start_number: 1
 image_count: 120
 retry_mode: false
 retry_image_list: []
 ```
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>
+grep
 
 ## Validation
 

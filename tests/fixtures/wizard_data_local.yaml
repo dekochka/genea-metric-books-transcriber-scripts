@@ -1,0 +1,19 @@
+# Test fixture: Wizard data for LOCAL mode
+# Used in integration tests
+
+mode: "local"
+image_dir: "data_samples/test_input_sample"
+api_key: "test-api-key"
+context:
+  archive_reference: "Test Archive Reference"
+  document_type: "Test Document Type"
+  date_range: "1900-1920"
+  main_villages:
+    - name: "Test Village"
+      variants: ["TestVillage"]
+  common_surnames:
+    - "TestSurname"
+prompt_template: "metric-book-birth"
+archive_index: "test123"
+image_start_number: 1
+image_count: 3
