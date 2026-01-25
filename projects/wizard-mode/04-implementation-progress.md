@@ -224,6 +224,14 @@
   - [x] Created WIZARD-QUICK-START.md guide
   - [x] Added examples and migration information
 - [ ] **Task 7.4:** Manual Testing & Bug Fixes
+  - **Status:** Being handled by user
+  - **Test Scenarios:**
+    - [ ] New user runs wizard from scratch
+    - [ ] User extracts context from title page
+    - [ ] User manually enters all context
+    - [ ] User edits generated config
+    - [ ] User runs transcription with wizard-generated config
+    - [ ] Existing configs still work
 
 **Notes:**
 - Unit tests implemented for all wizard components
