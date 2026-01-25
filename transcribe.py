@@ -4962,25 +4962,27 @@ if __name__ == '__main__':
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Example usage:
-  python transcribe.py config/config.yaml
-  python transcribe.py --wizard
+  python transcribe.py                    # Run interactive wizard (default)
+  python transcribe.py config/config.yaml  # Use config file
+  python transcribe.py --wizard-off config/config.yaml  # Explicitly disable wizard
   
+Wizard mode is enabled by default. The wizard guides you through creating a configuration.
+Use --wizard-off to disable wizard mode and require a config file.
+
 The config file must be a YAML file containing all required configuration parameters.
 See config/config.yaml.example for a template.
-
-Use --wizard to run the interactive configuration wizard.
         """
     )
     parser.add_argument(
         'config_file',
         type=str,
-        nargs='?',  # Make optional when --wizard is used
-        help='Path to YAML configuration file (e.g., config/config.yaml)'
+        nargs='?',  # Optional - wizard mode is default
+        help='Path to YAML configuration file (e.g., config/config.yaml). If not provided, wizard mode runs by default.'
     )
     parser.add_argument(
-        '--wizard',
+        '--wizard-off',
         action='store_true',
-        help='Run interactive configuration wizard'
+        help='Disable wizard mode and require a config file (traditional mode)'
     )
     parser.add_argument(
         '--output',
@@ -4990,8 +4992,14 @@ Use --wizard to run the interactive configuration wizard.
     
     args = parser.parse_args()
     
-    # Handle wizard mode
-    if args.wizard:
+    # Determine if wizard mode should run
+    # Wizard mode runs by default unless:
+    # 1. --wizard-off is explicitly set, OR
+    # 2. A config file is provided (traditional mode)
+    run_wizard = not args.wizard_off and not args.config_file
+    
+    # Handle wizard mode (default behavior)
+    if run_wizard:
         try:
             from wizard.wizard_controller import WizardController
             from wizard.steps.mode_selection_step import ModeSelectionStep
@@ -5047,8 +5055,13 @@ Use --wizard to run the interactive configuration wizard.
             traceback.print_exc()
             sys.exit(1)
     
-    # Normal mode (existing flow)
-    elif args.config_file:
+    # Traditional mode (config file provided or wizard-off flag set)
+    elif args.config_file or args.wizard_off:
+        if not args.config_file:
+            print("Error: --wizard-off requires a configuration file.", file=sys.stderr)
+            print("Usage: python transcribe.py --wizard-off config/config.yaml", file=sys.stderr)
+            sys.exit(1)
+        
         try:
             # Load configuration first (needed for logging setup)
             config = load_config(args.config_file)
@@ -5091,5 +5104,6 @@ Use --wizard to run the interactive configuration wizard.
             logging.error(f"Full traceback:\n{traceback.format_exc()}")
             sys.exit(1)
     else:
+        # This should not happen with new default behavior, but keep as fallback
         parser.print_help()
         sys.exit(1)

@@ -24,8 +24,22 @@ Wizard mode is an interactive configuration tool that guides you through setting
 
 ### Step 1: Run the Wizard
 
+Wizard mode is enabled by default. Simply run:
+
 ```bash
-python3 transcribe.py --wizard
+python3 transcribe.py
+```
+
+**Note:** If you want to use a config file instead (traditional mode), provide the config file path:
+
+```bash
+python3 transcribe.py config/my-config.yaml
+```
+
+To explicitly disable wizard mode and require a config file:
+
+```bash
+python3 transcribe.py --wizard-off config/my-config.yaml
 ```
 
 ### Step 2: Follow the Interactive Prompts
