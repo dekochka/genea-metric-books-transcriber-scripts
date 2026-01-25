@@ -156,18 +156,49 @@ prompt_template: "metric-book-birth"
 # Project-specific information separated from static prompt template
 context:
   archive_reference: "Ф. 487, оп. 1, спр. 545"
-  document_type: "Birth records"
-  date_range: "1850-1900"
+  document_type: "Метрична книга про народження"
+  date_range: "1888 (липень - грудень) - 1924 (січень - квітень)"
   main_villages:
-    - name: "Княжа"
-      variants: ["Knyazha", "Kniazha"]
+    - name: "Турильче"
+      variants: ["Turilche", "Turilcze"]
   additional_villages:
-    - name: "Шубино"
-      variants: []
+    - name: "Вербивка"
+      variants: ["Werbivka", "Werbowce", "Wierzbówka", "Вербивці"]
+    - name: "Нивра"
+      variants: ["Niwra", "Нивра"]
+    - name: "Вовківці"
+      variants: ["Wołkowce", "Вовкивци", "Волковцы"]
+    - name: "Слободка"
+      variants: ["Slobodka"]
+    - name: "Троица"
+      variants: ["Triyca"]
+    - name: "Подфилипье"
+      variants: ["Pidfilipje"]
   common_surnames:
-    - "Іванов"
-    - "Петров"
-    - "Сидоров"
+    - "Боєчко"
+    - "Войтків"
+    - "Гаврилюк"
+    - "Головатий"
+    - "Захарчук"
+    - "Камінський"
+    - "Куфлей"
+    - "Наконечний"
+    - "Остапів"
+    - "Пакалюк"
+    - "Патралюк"
+    - "Росткович"
+    - "Саранчук"
+    - "Сенищ"
+    - "Собесяк"
+    - "Стельмах"
+    - "Угрин"
+    - "Фігуш"
+    - "Ципняк"
+    - "Чепесюк"
+    - "Павлюк"
+    - "Романюк"
+    - "Демків"
+    - "Балко"
   title_page_filename: "cover-title-page.jpg"  # Optional
 ```
 
@@ -262,17 +293,28 @@ local:
 
 context:
   archive_reference: "Ф. 487, оп. 1, спр. 545"
-  document_type: "Birth records"
-  date_range: "1850-1900"
+  document_type: "Метрична книга про народження"
+  date_range: "1888 (липень - грудень) - 1924 (січень - квітень)"
   main_villages:
-    - name: "Княжа"
-      variants: ["Knyazha"]
+    - name: "Турильче"
+      variants: ["Turilche", "Turilcze"]
+  additional_villages:
+    - name: "Вербивка"
+      variants: ["Werbivka", "Werbowce", "Wierzbówka", "Вербивці"]
+    - name: "Нивра"
+      variants: ["Niwra", "Нивра"]
   common_surnames:
-    - "Іванов"
-    - "Петров"
+    - "Чепесюк"
+    - "Павлюк"
+    - "Романюк"
+    - "Демків"
+    - "Балко"
+    - "Гаврилюк"
+    - "Боєчко"
+    - "Войтків"
 
 prompt_template: "metric-book-birth"
-archive_index: "487-1-545"
+archive_index: "ф487оп1спр545"
 image_start_number: 1
 image_count: 10
 ```
@@ -302,7 +344,27 @@ local:
   output_dir: "logs"
   ocr_model_id: "gemini-3-flash-preview"
 
-prompt_file: "f487o1s545-Turilche.md"
+context:
+  archive_reference: "Ф. 487, оп. 1, спр. 545"
+  document_type: "Метрична книга про народження"
+  date_range: "1888 (липень - грудень) - 1924 (січень - квітень)"
+  main_villages:
+    - name: "Турильче"
+      variants: ["Turilche", "Turilcze"]
+  additional_villages:
+    - name: "Вербивка"
+      variants: ["Werbivka", "Werbowce", "Wierzbówka", "Вербивці"]
+    - name: "Нивра"
+      variants: ["Niwra", "Нивра"]
+  common_surnames:
+    - "Чепесюк"
+    - "Павлюк"
+    - "Романюк"
+    - "Демків"
+    - "Балко"
+    - "Гаврилюк"
+
+prompt_template: "metric-book-birth"
 archive_index: "ф487оп1спр545"
 image_start_number: 1
 image_count: 50
@@ -336,18 +398,42 @@ googlecloud:
   region: "global"
   ocr_model_id: "gemini-3-flash-preview"
   adc_file: "application_default_credentials.json"
-  document_name: "Turilche Birth Records 1894"
+  document_name: "Turilche Birth Records 1888-1924"
   title_page_filename: "cover-title-page.jpg"
   batch_size_for_doc: 10
   max_images: 1000
 
-prompt_file: "f487o1s545-Turilche.md"
+context:
+  archive_reference: "Ф. 487, оп. 1, спр. 545"
+  document_type: "Метрична книга про народження"
+  date_range: "1888 (липень - грудень) - 1924 (січень - квітень)"
+  main_villages:
+    - name: "Турильче"
+      variants: ["Turilche", "Turilcze"]
+  additional_villages:
+    - name: "Вербивка"
+      variants: ["Werbivka", "Werbowce", "Wierzbówka", "Вербивці"]
+    - name: "Нивра"
+      variants: ["Niwra", "Нивра"]
+  common_surnames:
+    - "Чепесюк"
+    - "Павлюк"
+    - "Романюк"
+    - "Демків"
+    - "Балко"
+    - "Гаврилюк"
+    - "Боєчко"
+    - "Войтків"
+
+prompt_template: "metric-book-birth"
 archive_index: "ф487оп1спр545"
 image_start_number: 1
 image_count: 120
 retry_mode: false
 retry_image_list: []
 ```
+<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>
+grep
 
 ## Validation
 
