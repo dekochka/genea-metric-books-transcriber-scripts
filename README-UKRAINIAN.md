@@ -123,11 +123,41 @@ Notes: Obstetrix non approbata Parasceva Demkiw.
 
 Модель штучного інтелекту витягує та транскрибує той самий запис **російською, українською та латинською мовами**, зберігаючи імена, дати, родинні зв'язки та історичний контекст з оригінального рукописного документа.
 
-### Швидкий старт
+### Швидкий старт (Windows)
+
+**Новачок у Python?** Виконайте ці кроки для початку роботи:
+
+1. **Завантажте проект:**
+   - Перейдіть на https://github.com/dekochka/genea-metric-books-transcriber-scripts
+   - Натисніть "Code" → "Download ZIP"
+   - Розпакуйте ZIP-архів у папку (наприклад, `C:\Users\ВашеІм'я\Documents\genea-transcriber\`)
+
+2. **Встановіть Python:**
+   - Див. [Інструкції з встановлення Python](#крок-1-встановлення-python) нижче для детальної настройки Windows
+   - Завантажте Python 3.10+ з https://www.python.org/downloads/
+   - **Важливо:** Під час встановлення обов'язково поставте галочку "Add Python to PATH"
+
+3. **Налаштуйте проект:**
+   - Відкрийте PowerShell у папці проекту
+   - Виконайте: `python -m venv venv`
+   - Активуйте: `.\venv\Scripts\Activate.ps1` (або використайте Command Prompt: `venv\Scripts\activate`)
+   - Встановіть залежності: `pip install -r requirements.txt`
+
+4. **Отримайте API ключ:**
+   - Перейдіть на https://aistudio.google.com/api-keys
+   - Створіть та скопіюйте ваш API ключ
+
+5. **Запустіть майстра:**
+   - `python transcribe.py`
+   - Слідуйте інтерактивним підказкам
+
+Для детальних інструкцій з встановлення див. розділ [Інструкції з встановлення Python](#крок-1-встановлення-python) нижче.
+
+---
 
 **Режим Майстра (Рекомендовано - Інтерактивна конфігурація - За замовчуванням):**
 1. Отримайте API ключ Gemini з [Google AI Studio](https://aistudio.google.com/api-keys) - **Налаштування Google Cloud не потрібне!**
-2. Запустіть: `python3 transcribe.py` (режим майстра увімкнено за замовчуванням)
+2. Запустіть: `python transcribe.py` (режим майстра увімкнено за замовчуванням)
 3. Слідуйте інтерактивним підказкам для:
    - Вибору режиму обробки (LOCAL або GOOGLECLOUD)
    - Вибору папки з зображеннями/папки Drive
@@ -139,20 +169,20 @@ Notes: Obstetrix non approbata Parasceva Demkiw.
 
 **LOCAL Mode (Ручна конфігурація):**
 1. Отримайте API ключ Gemini з [Google AI Studio](https://aistudio.google.com/app/apikey) - **Налаштування Google Cloud не потрібне!**
-2. Встановіть змінну середовища: `export GEMINI_API_KEY="ваш-ключ"`
-3. Скопіюйте приклад конфігурації: `cp config/config.local.example.yaml config/my-config.yaml`
+2. Встановіть змінну середовища: `$env:GEMINI_API_KEY="ваш-ключ"` (PowerShell) або `set GEMINI_API_KEY=ваш-ключ` (Command Prompt)
+3. Скопіюйте приклад конфігурації: `copy config\config.local.example.yaml config\my-config.yaml` (Windows)
 4. Відредагуйте конфігурацію з шляхом до вашої папки з зображеннями
 5. **Підготуйте файл інструкцій (prompt file)** - Див. [Налаштування конфігурації - Підготовка файлу інструкцій](#крок-7-налаштування-конфігурації) для деталей. **Важливо**: Файл інструкцій значно впливає на якість та точність транскрипції. Налаштуйте його з назвами сіл, поширеними прізвищами та специфікою типу записів для вашої метричної книги.
-6. Запустіть: `python3 transcribe.py config/my-config.yaml` або `python3 transcribe.py --wizard-off config/my-config.yaml`
+6. Запустіть: `python transcribe.py config\my-config.yaml` або `python transcribe.py --wizard-off config\my-config.yaml`
 7. Моніторинг прогресу: Перевіряйте логи в папці `logs/` та файли виводу (Markdown, Word) у вашій папці з зображеннями
 
 **GOOGLECLOUD Mode (Розширений - Повна інтеграція з Google Docs та Google Drive):**
 1. Налаштуйте проект Google Cloud з необхідними API
 2. Автентифікуйтеся за допомогою gcloud ADC або OAuth
-3. Скопіюйте приклад конфігурації: `cp config/config.googlecloud.example.yaml config/my-config.yaml`
+3. Скопіюйте приклад конфігурації: `copy config\config.googlecloud.example.yaml config\my-config.yaml` (Windows)
 4. Відредагуйте конфігурацію з ID вашої папки Google Drive
 5. **Підготуйте файл інструкцій (prompt file)** - Див. [Налаштування конфігурації - Підготовка файлу інструкцій](#крок-7-налаштування-конфігурації) для деталей. **Важливо**: Файл інструкцій значно впливає на якість та точність транскрипції. Налаштуйте його з назвами сіл, поширеними прізвищами та специфікою типу записів для вашої метричної книги.
-6. Запустіть: `python3 transcribe.py config/my-config.yaml` або `python3 transcribe.py --wizard-off config/my-config.yaml`
+6. Запустіть: `python transcribe.py config\my-config.yaml` або `python transcribe.py --wizard-off config\my-config.yaml`
 7. Моніторинг прогресу: Перевіряйте логи в папці `logs/` та Google Doc у вашій папці Google Drive
 
 Див. розділ [Налаштування конфігурації](#крок-7-налаштування-конфігурації) для детальних інструкцій з налаштування.

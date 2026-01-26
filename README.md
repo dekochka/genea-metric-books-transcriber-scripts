@@ -11,11 +11,41 @@ A recovery script can rebuild the Google Doc from AI logs if the main run fails 
 
 A specialized tool for transcribing handwritten genealogical records (birth, death, and marriage certificates) from 19th and 20th century Eastern European archives. The script automates the process of extracting structured data from historical documents using Google's latest Gemini AI vision models.
 
-### Quick Start
+### Quick Start (Windows)
+
+**New to Python?** Follow these steps to get started:
+
+1. **Download the project:**
+   - Go to https://github.com/dekochka/genea-metric-books-transcriber-scripts
+   - Click "Code" → "Download ZIP"
+   - Extract the ZIP file to a folder (e.g., `C:\Users\YourName\Documents\genea-transcriber\`)
+
+2. **Install Python:**
+   - See [Python Installation Instructions](#python-installation-instructions) below for detailed Windows setup
+   - Download Python 3.10+ from https://www.python.org/downloads/
+   - **Important:** Check "Add Python to PATH" during installation
+
+3. **Set up the project:**
+   - Open PowerShell in the project folder
+   - Run: `python -m venv venv`
+   - Activate: `.\venv\Scripts\Activate.ps1` (or use Command Prompt: `venv\Scripts\activate`)
+   - Install dependencies: `pip install -r requirements.txt`
+
+4. **Get your API key:**
+   - Go to https://aistudio.google.com/api-keys
+   - Create and copy your API key
+
+5. **Run the wizard:**
+   - `python transcribe.py`
+   - Follow the interactive prompts
+
+For detailed installation instructions, see [Python Installation Instructions](#python-installation-instructions) section.
+
+---
 
 **Wizard Mode (Recommended - Interactive Configuration - Default):**
 1. Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/api-keys) - **No Google Cloud setup needed!**
-2. Run: `python3 transcribe.py` (wizard mode is the default)
+2. Run: `python transcribe.py` (wizard mode is the default)
 3. Follow the interactive prompts to:
    - Select processing mode (LOCAL or GOOGLECLOUD)
    - Choose image directory/Drive folder
@@ -27,20 +57,20 @@ A specialized tool for transcribing handwritten genealogical records (birth, dea
 
 **LOCAL Mode (Manual Configuration):**
 1. Get a Gemini API key from [Google AI Studio](https://aistudio.google.com/app/apikey) - **No Google Cloud setup needed!**
-2. Set environment variable: `export GEMINI_API_KEY="your-key"`
-3. Copy example config: `cp config/config.local.example.yaml config/my-config.yaml`
+2. Set environment variable: `$env:GEMINI_API_KEY="your-key"` (PowerShell) or `set GEMINI_API_KEY=your-key` (Command Prompt)
+3. Copy example config: `copy config\config.local.example.yaml config\my-config.yaml` (Windows)
 4. Edit config with your image directory path
 5. **Prepare prompt file** - See [Prompt File Configuration](#1-prepare-prompt-file) for details. **Important**: The prompt file significantly impacts transcription quality and precision. Customize it with village names, common surnames, and record type specifics for your metric book.
-6. Run: `python3 transcribe.py config/my-config.yaml`
+6. Run: `python transcribe.py config\my-config.yaml`
 7. Monitor progress: Check logs in `logs/` directory and output files (Markdown, Word) in your image directory
 
 **GOOGLECLOUD Mode (Advanced - Full Google Integration with GDoc and GDrive):**
 1. Set up Google Cloud project with required APIs
 2. Authenticate using gcloud ADC or OAuth
-3. Copy example config: `cp config/config.googlecloud.example.yaml config/my-config.yaml`
+3. Copy example config: `copy config\config.googlecloud.example.yaml config\my-config.yaml` (Windows)
 4. Edit config with your Drive folder ID
 5. **Prepare prompt file** - See [Prompt File Configuration](#1-prepare-prompt-file) for details. **Important**: The prompt file significantly impacts transcription quality and precision. Customize it with village names, common surnames, and record type specifics for your metric book.
-6. Run: `python3 transcribe.py config/my-config.yaml`
+6. Run: `python transcribe.py config\my-config.yaml`
 7. Monitor progress: Check logs in `logs/` directory and the Google Doc in your Drive folder
 
 See [Configuration](#configuration) section for detailed setup instructions.
@@ -290,12 +320,102 @@ For **100 pages**:
 
 ## Installation
 
+### Python Installation Instructions
+
+#### Windows Installation
+
+1. **Download Python:**
+   - Go to https://www.python.org/downloads/
+   - Click "Download Python 3.12.x" (or latest version)
+   - The installer will download (about 25 MB)
+
+2. **Install Python:**
+   - Double-click the downloaded file (e.g., `python-3.12.0-amd64.exe`)
+   - **⚠️ IMPORTANT:** Check the box "Add Python to PATH" at the bottom
+   - Click "Install Now"
+   - Wait for installation to complete (1-2 minutes)
+   - Click "Close" when done
+
+3. **Verify Installation:**
+   - Press `Win + R`, type `cmd`, press Enter
+   - Type: `python --version`
+   - You should see: `Python 3.12.x` (or similar)
+   - ✅ If you see a version number, Python is installed correctly
+   - ❌ If you see "not recognized", Python wasn't added to PATH - reinstall with "Add Python to PATH" checked
+
+**Alternative:** If `python` doesn't work, try `py` or `python3`:
+```cmd
+py --version
+```
+
+#### macOS/Linux Installation
+
+**macOS:**
+- Open Terminal
+- Type: `brew install python3` (if you have Homebrew)
+- Or download from https://www.python.org/downloads/macos/
+
+**Linux:**
 ```bash
-cd /Users/<you>/repos/personalprojects/genea_gcloud_gemini_transcriber
+sudo apt update
+sudo apt install python3 python3-venv python3-pip
+```
+
+### Project Setup
+
+**Windows (PowerShell or Command Prompt):**
+```powershell
+# Navigate to project folder
+cd C:\Users\YourName\Documents\genea-transcriber
+
+# Create virtual environment
+python -m venv venv
+
+# Activate virtual environment
+# PowerShell:
+.\venv\Scripts\Activate.ps1
+# OR Command Prompt:
+venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+**macOS/Linux (Terminal):**
+```bash
+cd /path/to/genea-transcriber
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+### Troubleshooting
+
+#### "Python is not recognized" (Windows)
+- **Problem:** Python wasn't added to PATH during installation
+- **Solution:** 
+  1. Uninstall Python (Settings → Apps → Python → Uninstall)
+  2. Reinstall Python, making sure to check "Add Python to PATH"
+  3. Restart your computer
+  4. Try again
+
+#### PowerShell Execution Policy Error (Windows)
+- **Error:** "cannot be loaded because running scripts is disabled"
+- **Quick Fix:** Use Command Prompt instead of PowerShell:
+  ```cmd
+  venv\Scripts\activate
+  ```
+- **Permanent Fix:** Run PowerShell as Administrator:
+  ```powershell
+  Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+  ```
+
+#### "pip is not recognized"
+- **Problem:** pip wasn't installed or PATH issue
+- **Solution:**
+  1. Make sure Python was installed with "pip" option checked (it's checked by default)
+  2. Try: `python -m pip install -r requirements.txt` instead
+  3. If that doesn't work, reinstall Python with "Add Python to PATH" checked
 
 ## Configuration
 
