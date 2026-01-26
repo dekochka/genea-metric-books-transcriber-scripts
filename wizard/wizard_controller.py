@@ -201,7 +201,8 @@ class WizardController:
         welcome_text = Text()
         welcome_text.append(f"{t('wizard.welcome.title', self.lang)}\n", style="bold cyan")
         welcome_text.append(f"{t('wizard.welcome.description', self.lang)}\n", style="white")
-        welcome_text.append(f"{t('wizard.welcome.cancel_hint', self.lang)}\n", style="dim")
+        welcome_text.append(f"{t('wizard.welcome.cancel_hint', self.lang)}\n\n", style="dim")
+        welcome_text.append(f"{t('wizard.welcome.disclaimer', self.lang)}\n", style="bold yellow")
         
         self.console.print(Panel(welcome_text, title="Welcome", border_style="cyan"))
 
