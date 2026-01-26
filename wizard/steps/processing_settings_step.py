@@ -10,6 +10,7 @@ import questionary
 from rich.console import Console
 
 from wizard.steps.base_step import WizardStep
+from wizard.i18n import t
 
 
 class ProcessingSettingsStep(WizardStep):
@@ -27,7 +28,8 @@ class ProcessingSettingsStep(WizardStep):
         Returns:
             Dictionary with processing settings
         """
-        self.console.print("\n[bold]Step 3: Processing Settings[/bold]\n")
+        lang = self.controller.get_language()
+        self.console.print(f"\n[bold]{t('processing.title', lang)}[/bold]\n")
         
         data = {}
         
@@ -35,7 +37,7 @@ class ProcessingSettingsStep(WizardStep):
         templates = self._list_available_templates()
         if templates:
             template_choice = questionary.select(
-                "Select prompt template:",
+                t('processing.template_prompt', lang),
                 choices=[
                     questionary.Choice(
                         f"{t['name']} - {t['description']}",
@@ -50,8 +52,8 @@ class ProcessingSettingsStep(WizardStep):
         else:
             # Fallback: ask for template name
             template_name = questionary.text(
-                "Enter prompt template name (e.g., 'metric-book-birth'):",
-                default="metric-book-birth"
+                t('processing.template_name_prompt', lang),
+                default=t('processing.template_name_default', lang)
             ).ask()
             
             if template_name:
@@ -66,19 +68,19 @@ class ProcessingSettingsStep(WizardStep):
             # Convert "Ф. 487, оп. 1, спр. 545" to "ф487оп1спр545"
             archive_index = self._normalize_archive_reference(archive_reference)
             data["archive_index"] = archive_index
-            self.console.print(f"[dim]Auto-generated archive index: {archive_index}[/dim]")
+            self.console.print(f"[dim]{t('processing.archive_index_auto', lang, index=archive_index)}[/dim]")
         else:
             # Fallback: ask user if no archive reference available
             archive_index = questionary.text(
-                "Enter archive index (e.g., 'ф487оп1спр545'):",
+                t('processing.archive_index_prompt', lang),
             ).ask()
             if archive_index:
                 data["archive_index"] = archive_index
         
         # Image start number
         image_start = questionary.text(
-            "Enter starting image number (default: 1):",
-            default="1"
+            t('processing.image_start_prompt', lang),
+            default=t('processing.image_start_default', lang)
         ).ask()
         
         try:
@@ -88,7 +90,7 @@ class ProcessingSettingsStep(WizardStep):
         
         # Image count
         image_count = questionary.text(
-            "Enter number of images to process:",
+            t('processing.image_count_prompt', lang),
         ).ask()
         
         try:
@@ -100,8 +102,8 @@ class ProcessingSettingsStep(WizardStep):
         mode = self.controller.get_data("mode")
         if mode == "googlecloud":
             batch_size = questionary.text(
-                "Enter batch size for Google Doc writing (default: 3):",
-                default="3"
+                t('processing.batch_size_prompt', lang),
+                default=t('processing.batch_size_default', lang)
             ).ask()
             
             try:
@@ -111,7 +113,7 @@ class ProcessingSettingsStep(WizardStep):
             
             # Max images (optional)
             max_images = questionary.text(
-                "Enter maximum images to fetch from Drive (or press Enter to skip):",
+                t('processing.max_images_prompt', lang),
                 default=""
             ).ask()
             
