@@ -4822,6 +4822,8 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
     Returns:
         List of transcribed pages with metadata
     """
+    from wizard.i18n import t  # Import at function start to ensure it's always available
+    
     image_source = handlers['image_source']
     ai_client = handlers['ai_client']
     output = handlers['output']
@@ -4853,8 +4855,6 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_tokens = 0
-    
-    from wizard.i18n import t
     
     # Gemini 3 Flash pricing (as of January 2026)
     # Pricing for gemini-3-flash-preview model
