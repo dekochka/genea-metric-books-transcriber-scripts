@@ -489,8 +489,8 @@ class ContextCollectionStep(WizardStep):
             self.console.print(f"[red]Image directory not found: {image_dir}[/red]")
             return None
         
-        # List image files
-        image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+        # List image files (aligned with Google AI API supported MIME types)
+        image_extensions = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'}
         image_files = [
             f for f in os.listdir(image_dir)
             if os.path.splitext(f.lower())[1] in image_extensions

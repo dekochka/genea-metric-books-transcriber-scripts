@@ -155,7 +155,7 @@ class WizardController:
                 mode = detect_mode(config)
                 
                 validator = PreFlightValidator()
-                result = validator.validate(config, mode)
+                result = validator.validate(config, mode, self.lang)
                 
                 # Display results
                 validator.display_results(result)

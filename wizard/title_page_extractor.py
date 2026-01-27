@@ -224,13 +224,53 @@ class TitlePageExtractor:
             # Suppress warnings about thought_signature (these are informational from google_genai library)
             import warnings
             import logging as std_logging
-            # Suppress both Python warnings and google_genai library warnings
+            
+            # Suppress all google_genai warnings more aggressively
+            # The warnings are informational - thought_signature is a new feature in Gemini models
+            # that doesn't affect the text response we're extracting
+            google_genai_loggers = [
+                'google_genai.types',
+                'google_genai',
+                'google.genai.types',
+                'google.genai'
+            ]
+            
+            # Store original levels and add filters
+            original_levels = {}
+            original_handlers = {}
+            
+            # Create a filter to suppress thought_signature warnings
+            class ThoughtSignatureFilter:
+                def filter(self, record):
+                    msg = str(record.getMessage()).lower()
+                    # Filter out thought_signature warnings and non-text parts warnings
+                    if 'thought_signature' in msg or 'non-text parts' in msg:
+                        return False
+                    return True
+            
+            thought_filter = ThoughtSignatureFilter()
+            
+            # Apply filter to all google_genai loggers
+            for logger_name in google_genai_loggers:
+                logger = std_logging.getLogger(logger_name)
+                original_levels[logger_name] = logger.level
+                # Set to ERROR level to suppress WARNING messages
+                logger.setLevel(std_logging.ERROR)
+                # Add filter to catch any warnings that might slip through
+                logger.addFilter(thought_filter)
+                # Also disable propagation to prevent warnings from bubbling up
+                original_handlers[logger_name] = logger.propagate
+                logger.propagate = False
+            
+            # Suppress Python warnings - set up before the API call
+            warnings.filterwarnings("ignore", message=".*thought_signature.*")
+            warnings.filterwarnings("ignore", message=".*non-text parts.*")
+            warnings.filterwarnings("ignore", category=UserWarning)
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            
+            # Also suppress at the warnings module level
             with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message=".*thought_signature.*")
-                warnings.filterwarnings("ignore", category=UserWarning, module="google_genai")
-                # Also suppress logging warnings from google_genai
-                old_level = std_logging.getLogger("google_genai.types").level
-                std_logging.getLogger("google_genai.types").setLevel(std_logging.ERROR)
+                warnings.simplefilter("ignore")
                 try:
                     response = self.client.models.generate_content(
                         model=self.model_id,
@@ -238,7 +278,15 @@ class TitlePageExtractor:
                         config=config
                     )
                 finally:
-                    std_logging.getLogger("google_genai.types").setLevel(old_level)
+                    # Restore original levels and handlers
+                    for logger_name, original_level in original_levels.items():
+                        logger = std_logging.getLogger(logger_name)
+                        logger.setLevel(original_level)
+                        logger.propagate = original_handlers.get(logger_name, True)
+                        # Remove our filter
+                        for filter_obj in logger.filters[:]:
+                            if isinstance(filter_obj, ThoughtSignatureFilter):
+                                logger.removeFilter(filter_obj)
             
             # Extract response text
             response_text = response.text if hasattr(response, 'text') and response.text else ""

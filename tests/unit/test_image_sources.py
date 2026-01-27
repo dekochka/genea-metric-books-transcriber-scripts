@@ -36,6 +36,7 @@ class TestLocalImageSource:
         config = {
             'image_start_number': 1,
             'image_count': 3,
+            'image_sort_method': 'number_extracted',  # Use number-based selection
             'retry_mode': False,
             'retry_image_list': []
         }
@@ -46,21 +47,41 @@ class TestLocalImageSource:
             assert all('name' in img for img in images)
             assert all('path' in img for img in images)
     
-    def test_list_images_with_filtering(self, test_image_dir):
-        """Test list_images() with image_start_number and image_count."""
+    def test_list_images_with_filtering_by_number(self, test_image_dir):
+        """Test list_images() with image_start_number and image_count using number_extracted method."""
         source = LocalImageSource(test_image_dir)
         config = {
             'image_start_number': 2,
             'image_count': 2,
+            'image_sort_method': 'number_extracted',  # Filter by extracted number
             'retry_mode': False,
             'retry_image_list': []
         }
         images = source.list_images(config)
         assert len(images) == 2
         # Should start from image 2
-        image_numbers = [int(img['name'].replace('image', '').replace('.jpg', '')) 
-                        for img in images if 'image' in img['name']]
+        from transcribe import extract_image_number
+        image_numbers = [extract_image_number(img['name']) 
+                        for img in images if extract_image_number(img['name']) is not None]
+        assert len(image_numbers) == 2
         assert min(image_numbers) >= 2
+    
+    def test_list_images_with_filtering_by_position(self, test_image_dir):
+        """Test list_images() with position-based selection."""
+        source = LocalImageSource(test_image_dir)
+        config = {
+            'image_start_number': 2,
+            'image_count': 2,
+            'image_sort_method': 'name_asc',  # Use position-based selection
+            'retry_mode': False,
+            'retry_image_list': []
+        }
+        images = source.list_images(config)
+        # Should get 2 images starting from position 2 in sorted list
+        assert len(images) == 2
+        # Images should be sorted by name
+        names = [img['name'] for img in images]
+        assert names == sorted(names)
     
     def test_get_image_bytes(self, test_image_dir):
         """Test get_image_bytes() reads image file."""
@@ -102,7 +123,11 @@ class TestDriveImageSource:
         mock_list_images.return_value = mock_images
         
         source = DriveImageSource(mock_drive_service, "folder_id_123")
-        config = {'image_start_number': 1, 'image_count': 2}
+        config = {
+            'image_start_number': 1, 
+            'image_count': 2,
+            'image_sort_method': 'number_extracted'  # Include sort method
+        }
         result = source.list_images(config)
         
         mock_list_images.assert_called_once_with(mock_drive_service, config)
