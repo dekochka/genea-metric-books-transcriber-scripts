@@ -16,6 +16,7 @@ prompt_file: "f487o1s545-Turilche.md"
 archive_index: "ф487оп1спр545"
 image_start_number: 1
 image_count: 3
+image_sort_method: "number_extracted"  # Use number-based selection for tests
 batch_size_for_doc: 2
 max_images: 1000
 

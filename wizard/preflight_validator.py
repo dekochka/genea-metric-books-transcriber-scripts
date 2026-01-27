@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from wizard.i18n import t
 
 
 @dataclass
@@ -33,19 +34,22 @@ class PreFlightValidator:
     def __init__(self):
         """Initialize pre-flight validator."""
         self.console = Console()
+        self.lang = 'en'  # Default language
     
-    def validate(self, config: Dict[str, Any], mode: str) -> ValidationResult:
+    def validate(self, config: Dict[str, Any], mode: str, lang: str = 'en') -> ValidationResult:
         """
         Perform comprehensive pre-flight validation.
         
         Args:
             config: Configuration dictionary
             mode: Processing mode ('local' or 'googlecloud')
+            lang: Language code ('en' or 'uk') for i18n support
             
         Returns:
             ValidationResult with errors, warnings, and suggestions
         """
         result = ValidationResult(is_valid=True)
+        self.lang = lang
         
         # Validate authentication
         self._validate_authentication(config, mode, result)
@@ -75,9 +79,9 @@ class PreFlightValidator:
             api_key = local_config.get('api_key') or os.getenv('GEMINI_API_KEY')
             
             if not api_key:
-                result.errors.append("API key not found (check config or GEMINI_API_KEY env var)")
+                result.errors.append(t('validation.api_key_not_found', self.lang))
             elif len(api_key) < 10:
-                result.warnings.append("API key appears to be invalid (too short)")
+                result.warnings.append(t('validation.api_key_too_short', self.lang))
             else:
                 # Test API key with a simple request
                 try:
@@ -87,7 +91,7 @@ class PreFlightValidator:
                     list(client.models.list())
                     # If we get here, API key is valid
                 except Exception as e:
-                    result.errors.append(f"API key validation failed: {str(e)}")
+                    result.errors.append(t('validation.api_key_validation_failed', self.lang, error=str(e)))
         
         elif mode == 'googlecloud':
             # Check ADC file exists
@@ -95,9 +99,9 @@ class PreFlightValidator:
             adc_file = gc_config.get('adc_file')
             
             if not adc_file:
-                result.errors.append("ADC file not specified for GOOGLECLOUD mode")
+                result.errors.append(t('validation.adc_file_not_specified', self.lang))
             elif not os.path.exists(adc_file):
-                result.errors.append(f"ADC file not found: {adc_file}")
+                result.errors.append(t('validation.adc_file_not_found', self.lang, path=adc_file))
             else:
                 # Try to validate credentials
                 # Note: ADC files can be either service account JSON or OAuth user credentials
@@ -112,24 +116,24 @@ class PreFlightValidator:
                         from google.oauth2 import service_account
                         credentials = service_account.Credentials.from_service_account_file(adc_file)
                         if not credentials.valid:
-                            result.warnings.append("ADC credentials may be expired or invalid")
+                            result.warnings.append(t('validation.adc_credentials_invalid', self.lang))
                     # Check if it's OAuth user credentials (has refresh_token)
                     elif 'refresh_token' in creds_data:
                         # OAuth user credentials are valid - they'll be refreshed at runtime
                         # Just check that required fields exist
                         if 'client_id' not in creds_data or 'client_secret' not in creds_data:
-                            result.warnings.append("ADC file appears to be OAuth credentials but missing client_id or client_secret")
+                            result.warnings.append(t('validation.adc_oauth_missing_fields', self.lang))
                         else:
                             # OAuth credentials look valid
                             pass
                     else:
-                        result.warnings.append("ADC file format not recognized (neither service account nor OAuth user credentials)")
+                        result.warnings.append(t('validation.adc_format_unrecognized', self.lang))
                 except json.JSONDecodeError:
-                    result.errors.append(f"ADC file is not valid JSON: {adc_file}")
+                    result.errors.append(t('validation.adc_not_valid_json', self.lang, path=adc_file))
                 except Exception as e:
                     # Don't fail validation for credential format issues - they might work at runtime
                     # OAuth user credentials often fail service_account validation but work fine
-                    result.warnings.append(f"Could not fully validate ADC credentials: {str(e)} (may still work at runtime)")
+                    result.warnings.append(t('validation.adc_validation_partial', self.lang, error=str(e)))
     
     def _validate_paths(self, config: Dict[str, Any], mode: str, result: ValidationResult):
         """Validate file paths and directories."""
@@ -139,11 +143,11 @@ class PreFlightValidator:
             # Image directory
             image_dir = local_config.get('image_dir')
             if not image_dir:
-                result.errors.append("image_dir not specified")
+                result.errors.append(t('validation.image_dir_not_specified', self.lang))
             elif not os.path.isdir(image_dir):
-                result.errors.append(f"Image directory does not exist: {image_dir}")
+                result.errors.append(t('validation.image_dir_not_exists', self.lang, path=image_dir))
             elif not os.access(image_dir, os.R_OK):
-                result.errors.append(f"Image directory is not readable: {image_dir}")
+                result.errors.append(t('validation.image_dir_not_readable', self.lang, path=image_dir))
             
             # Output directory
             output_dir = local_config.get('output_dir', 'logs')
@@ -151,11 +155,11 @@ class PreFlightValidator:
             parent_dir = os.path.dirname(output_dir_abs)
             
             if parent_dir and not os.path.isdir(parent_dir):
-                result.errors.append(f"Output directory parent does not exist: {parent_dir}")
+                result.errors.append(t('validation.output_dir_parent_not_exists', self.lang, path=parent_dir))
             elif os.path.exists(output_dir_abs) and not os.access(output_dir_abs, os.W_OK):
-                result.warnings.append(f"Output directory may not be writable: {output_dir}")
+                result.warnings.append(t('validation.output_dir_not_writable', self.lang, path=output_dir))
             elif not os.path.exists(output_dir_abs):
-                result.suggestions.append(f"Output directory will be created: {output_dir}")
+                result.suggestions.append(t('validation.output_dir_will_be_created', self.lang, path=output_dir))
         
         elif mode == 'googlecloud':
             # For GOOGLECLOUD mode, paths are less critical
@@ -168,37 +172,37 @@ class PreFlightValidator:
         
         # Archive reference
         if not context.get('archive_reference'):
-            result.warnings.append("Archive reference not provided (may affect prompt quality)")
+            result.warnings.append(t('validation.archive_reference_not_provided', self.lang))
         
         # Document type
         if not context.get('document_type'):
-            result.warnings.append("Document type not provided (may affect prompt quality)")
+            result.warnings.append(t('validation.document_type_not_provided', self.lang))
         
         # Date range
         if not context.get('date_range'):
-            result.warnings.append("Date range not provided (may affect prompt quality)")
+            result.warnings.append(t('validation.date_range_not_provided', self.lang))
         
         # Main villages
         main_villages = context.get('main_villages', [])
         if not main_villages:
-            result.warnings.append("No main villages specified (may affect transcription accuracy)")
+            result.warnings.append(t('validation.no_main_villages', self.lang))
         elif len(main_villages) == 0:
-            result.warnings.append("Main villages list is empty")
+            result.warnings.append(t('validation.main_villages_empty', self.lang))
         
         # Validate village structure
         for i, village in enumerate(main_villages):
             if not isinstance(village, dict):
-                result.errors.append(f"Main village {i+1} is not a dictionary")
+                result.errors.append(t('validation.main_village_not_dict', self.lang, index=i+1))
             elif 'name' not in village:
-                result.errors.append(f"Main village {i+1} missing 'name' field")
+                result.errors.append(t('validation.main_village_missing_name', self.lang, index=i+1))
         
         # Additional villages (optional, but validate structure if present)
         additional_villages = context.get('additional_villages', [])
         for i, village in enumerate(additional_villages):
             if not isinstance(village, dict):
-                result.errors.append(f"Additional village {i+1} is not a dictionary")
+                result.errors.append(t('validation.additional_village_not_dict', self.lang, index=i+1))
             elif 'name' not in village:
-                result.errors.append(f"Additional village {i+1} missing 'name' field")
+                result.errors.append(t('validation.additional_village_missing_name', self.lang, index=i+1))
         
         # Title page filename (if specified, check if it exists)
         title_page_filename = context.get('title_page_filename')
@@ -209,7 +213,7 @@ class PreFlightValidator:
                 if image_dir:
                     title_page_path = os.path.join(image_dir, title_page_filename)
                     if not os.path.exists(title_page_path):
-                        result.warnings.append(f"Title page file not found: {title_page_path}")
+                        result.warnings.append(t('validation.title_page_not_found', self.lang, path=title_page_path))
     
     def _validate_prompt_assembly(self, config: Dict[str, Any], result: ValidationResult):
         """Validate prompt template and assembly."""
@@ -224,7 +228,7 @@ class PreFlightValidator:
         template_path = os.path.join(templates_dir, f"{template_name}.md")
         
         if not os.path.exists(template_path):
-            result.errors.append(f"Prompt template not found: {template_path}")
+            result.errors.append(t('validation.prompt_template_not_found', self.lang, path=template_path))
             return
         
         # Try to assemble prompt
@@ -241,12 +245,12 @@ class PreFlightValidator:
             import re
             remaining_vars = re.findall(r'\{\{(\w+)\}\}', assembled)
             if remaining_vars:
-                result.warnings.append(f"Unreplaced template variables found: {', '.join(remaining_vars)}")
+                result.warnings.append(t('validation.unreplaced_template_vars', self.lang, vars=', '.join(remaining_vars)))
             
         except FileNotFoundError as e:
-            result.errors.append(f"Prompt template file not found: {e}")
+            result.errors.append(t('validation.prompt_template_file_not_found', self.lang, error=str(e)))
         except Exception as e:
-            result.errors.append(f"Prompt assembly failed: {str(e)}")
+            result.errors.append(t('validation.prompt_assembly_failed', self.lang, error=str(e)))
     
     def _validate_images(self, config: Dict[str, Any], mode: str, result: ValidationResult):
         """Validate image files."""
@@ -258,15 +262,15 @@ class PreFlightValidator:
                 # Already reported in path validation
                 return
             
-            # List image files
-            image_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'}
+            # List image files (aligned with Google AI API supported MIME types)
+            image_extensions = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'}
             image_files = [
                 f for f in os.listdir(image_dir)
                 if os.path.splitext(f.lower())[1] in image_extensions
             ]
             
             if not image_files:
-                result.errors.append(f"No image files found in {image_dir}")
+                result.errors.append(t('validation.no_image_files', self.lang, path=image_dir))
                 return
             
             # Check image range
@@ -294,15 +298,15 @@ class PreFlightValidator:
                 
                 if image_start < min_number:
                     result.errors.append(
-                        f"Image start number {image_start} is less than minimum available number {min_number}"
+                        t('validation.image_start_less_than_min', self.lang, start=image_start, min=min_number)
                     )
                 elif image_start > max_number:
                     result.errors.append(
-                        f"Image start number {image_start} exceeds maximum available number {max_number}"
+                        t('validation.image_start_exceeds_max', self.lang, start=image_start, max=max_number)
                     )
                 elif requested_end > max_number:
                     result.warnings.append(
-                        f"Requested range {image_start}-{requested_end} extends beyond maximum available number {max_number}"
+                        t('validation.image_range_extends_beyond', self.lang, start=image_start, end=requested_end, max=max_number)
                     )
                 
                 # Check if specific numbers in range exist
@@ -314,11 +318,11 @@ class PreFlightValidator:
                 if missing_numbers:
                     if len(missing_numbers) <= 5:
                         result.warnings.append(
-                            f"Some requested image numbers are missing: {missing_numbers}"
+                            t('validation.some_image_numbers_missing', self.lang, numbers=missing_numbers)
                         )
                     else:
                         result.warnings.append(
-                            f"Many requested image numbers are missing ({len(missing_numbers)} out of {image_count})"
+                            t('validation.many_image_numbers_missing', self.lang, missing=len(missing_numbers), total=image_count)
                         )
             else:
                 # No numeric patterns detected - use position-based validation
@@ -337,13 +341,13 @@ class PreFlightValidator:
                 expected_count = len(image_files_sorted)
                 if image_count > expected_count:
                     result.warnings.append(
-                        f"Requested {image_count} images, but only {expected_count} found in directory"
+                        t('validation.requested_images_exceed_available', self.lang, requested=image_count, available=expected_count)
                     )
                 
                 # For position-based selection, check if start position is valid
                 if image_start > len(image_files_sorted):
                     result.errors.append(
-                        f"Image start position {image_start} exceeds available images ({len(image_files_sorted)})"
+                        t('validation.image_start_exceeds_available', self.lang, start=image_start, available=len(image_files_sorted))
                     )
         
         elif mode == 'googlecloud':
@@ -353,9 +357,9 @@ class PreFlightValidator:
             drive_folder_id = gc_config.get('drive_folder_id')
             
             if not drive_folder_id:
-                result.errors.append("drive_folder_id not specified for GOOGLECLOUD mode")
+                result.errors.append(t('validation.drive_folder_id_not_specified', self.lang))
             elif len(drive_folder_id) < 10:
-                result.warnings.append("drive_folder_id appears to be invalid (too short)")
+                result.warnings.append(t('validation.drive_folder_id_too_short', self.lang))
     
     def display_results(self, result: ValidationResult):
         """
@@ -365,32 +369,32 @@ class PreFlightValidator:
             result: ValidationResult to display
         """
         if result.is_valid and not result.warnings:
-            self.console.print("[green]✓ All validation checks passed![/green]")
+            self.console.print(f"[green]{t('validation.all_checks_passed', self.lang)}[/green]")
             return
         
         # Create table for results
-        table = Table(title="Pre-Flight Validation Results", show_header=True, header_style="bold cyan")
-        table.add_column("Type", style="bold")
-        table.add_column("Message", style="white")
+        table = Table(title=t('validation.results_title', self.lang), show_header=True, header_style="bold cyan")
+        table.add_column(t('validation.type_column', self.lang), style="bold")
+        table.add_column(t('validation.message_column', self.lang), style="white")
         
         # Add errors
         for error in result.errors:
-            table.add_row("[red]ERROR[/red]", error)
+            table.add_row(f"[red]{t('validation.type_error', self.lang)}[/red]", error)
         
         # Add warnings
         for warning in result.warnings:
-            table.add_row("[yellow]WARNING[/yellow]", warning)
+            table.add_row(f"[yellow]{t('validation.type_warning', self.lang)}[/yellow]", warning)
         
         # Add suggestions
         for suggestion in result.suggestions:
-            table.add_row("[blue]INFO[/blue]", suggestion)
+            table.add_row(f"[blue]{t('validation.type_info', self.lang)}[/blue]", suggestion)
         
         self.console.print(table)
         
         # Summary
         if result.errors:
-            self.console.print(f"\n[red]✗ Validation failed with {len(result.errors)} error(s)[/red]")
+            self.console.print(f"\n[red]{t('validation.failed_with_errors', self.lang, count=len(result.errors))}[/red]")
         elif result.warnings:
-            self.console.print(f"\n[yellow]⚠ Validation passed with {len(result.warnings)} warning(s)[/yellow]")
+            self.console.print(f"\n[yellow]{t('validation.passed_with_warnings', self.lang, count=len(result.warnings))}[/yellow]")
         else:
-            self.console.print("\n[green]✓ Validation passed[/green]")
+            self.console.print(f"\n[green]{t('validation.passed', self.lang)}[/green]")

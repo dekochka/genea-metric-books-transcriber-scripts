@@ -282,10 +282,11 @@ def validate_config(config: dict, mode: str) -> tuple[bool, list[str]]:
                     errors.append("drive_folder_id appears to be invalid")
             
             # Optional fields with defaults
-            if 'max_images' not in config:
-                config['max_images'] = 1000
-            elif not isinstance(config['max_images'], int) or config['max_images'] < 1:
-                errors.append("max_images must be a positive integer")
+            # max_images is now optional - will be auto-calculated if not provided
+            # But if provided, validate it
+            if 'max_images' in config:
+                if not isinstance(config['max_images'], int) or config['max_images'] < 1:
+                    errors.append("max_images must be a positive integer")
             
             if 'batch_size_for_doc' not in config:
                 config['batch_size_for_doc'] = 10
@@ -635,15 +636,19 @@ class LocalImageSource(ImageSourceStrategy):
                 '_modified_time': modified_time  # Internal: for sorting
             })
         
-        # Sort images based on selected method
-        all_images = self._sort_images(all_images, sort_method)
-        
-        sort_desc = {
-            'name_asc': 'by name (ascending)',
-            'created_date': 'by created date',
-            'modified_date': 'by modified date'
-        }.get(sort_method, 'by name (ascending)')
-        logging.info(f"Found {len(all_images)} total images in local directory (sorted {sort_desc})")
+        # NEW LOGIC: Sort images based on selected method
+        # For number_extracted: don't sort yet (will filter by number first, then sort)
+        # For other methods: sort first, then select by position
+        if sort_method != 'number_extracted':
+            all_images = self._sort_images(all_images, sort_method)
+            sort_desc = {
+                'name_asc': 'by name (ascending)',
+                'created_date': 'by created date',
+                'modified_date': 'by modified date'
+            }.get(sort_method, 'by name (ascending)')
+            logging.info(f"Found {len(all_images)} total images in local directory (sorted {sort_desc}, will select by position)")
+        else:
+            logging.info(f"Found {len(all_images)} total images in local directory (will filter by extracted number)")
         
         # RETRY MODE: If enabled, filter for specific failed images only
         if retry_mode:
@@ -736,44 +741,46 @@ class LocalImageSource(ImageSourceStrategy):
                 if image_start_number <= number < image_start_number + image_count:
                     numbered_images.append(img)
         
-        # Handle numbered images (same logic as Drive implementation)
+        # Handle selection based on sort method
         filtered_images = []
         
-        if numbered_images:
-            start_filename_pattern1 = f"image ({image_start_number}).jpg"
-            end_filename_pattern1 = f"image ({image_start_number + image_count - 1}).jpg"
-            start_filename_pattern2 = f"image{image_start_number:05d}.jpg"
-            end_filename_pattern2 = f"image{image_start_number + image_count - 1:05d}.jpg"
-            start_filename_pattern3 = f"{image_start_number}.jpg"
-            end_filename_pattern3 = f"{image_start_number + image_count - 1}.jpg"
-            
-            logging.info(f"Filtering numbered images from {start_filename_pattern1} to {end_filename_pattern1} OR {start_filename_pattern2} to {end_filename_pattern2} OR {start_filename_pattern3} to {end_filename_pattern3}")
-            
-            # Sort numbered images based on user's preference
-            sort_method = config.get('image_sort_method', 'number_extracted')
-            
-            if sort_method == 'number_extracted':
-                # Sort by extracted number (default when pattern detection works)
+        if sort_method == 'number_extracted':
+            # For number_extracted: filter by extracted number first, then sort by number
+            if numbered_images:
+                start_filename_pattern1 = f"image ({image_start_number}).jpg"
+                end_filename_pattern1 = f"image ({image_start_number + image_count - 1}).jpg"
+                start_filename_pattern2 = f"image{image_start_number:05d}.jpg"
+                end_filename_pattern2 = f"image{image_start_number + image_count - 1:05d}.jpg"
+                start_filename_pattern3 = f"{image_start_number}.jpg"
+                end_filename_pattern3 = f"{image_start_number + image_count - 1}.jpg"
+                
+                logging.info(f"Filtering numbered images from {start_filename_pattern1} to {end_filename_pattern1} OR {start_filename_pattern2} to {end_filename_pattern2} OR {start_filename_pattern3} to {end_filename_pattern3}")
+                
+                # Sort by extracted number
                 def extract_number_for_sorting(img):
                     filename = img['name']
                     number = extract_image_number(filename)
                     if number is not None:
                         return number
-                    # Fallback: return 0 if no number can be extracted (shouldn't happen for numbered_images)
                     return 0
                 numbered_images.sort(key=extract_number_for_sorting)
                 logging.info("Sorted numbered images by extracted number")
-            else:
-                # Use user-selected sorting method (name, created_date, modified_date)
-                numbered_images = self._sort_images(numbered_images, sort_method)
+                
+                filtered_images.extend(numbered_images)
+        else:
+            # For other methods: already sorted above, now select by position
+            start_pos = max(1, image_start_number) - 1
+            end_pos = min(len(all_images), start_pos + image_count)
+            position_selected = all_images[start_pos:end_pos]
+            
+            if position_selected:
                 sort_desc = {
                     'name_asc': 'by name (ascending)',
                     'created_date': 'by created date',
                     'modified_date': 'by modified date'
                 }.get(sort_method, 'by name (ascending)')
-                logging.info(f"Sorted numbered images {sort_desc} (user preference)")
-            
-            filtered_images.extend(numbered_images)
+                logging.info(f"Selected images by position (sorted {sort_desc}): positions {image_start_number} to {image_start_number + len(position_selected) - 1}")
+                filtered_images.extend(position_selected)
         
         # Handle timestamp images
         if timestamp_images:
@@ -805,20 +812,15 @@ class LocalImageSource(ImageSourceStrategy):
             if selected_timestamp_images:
                 logging.info(f"Selected {len(selected_timestamp_images)} timestamp images from position {image_start_number} to {start_pos + len(selected_timestamp_images)}")
         
-        # Fallback: if no images selected, use position-based selection
-        # Note: all_images are already sorted according to image_sort_method
-        if not filtered_images and all_images:
+        # Fallback: if no images selected and using number_extracted, try position-based
+        if not filtered_images and all_images and sort_method == 'number_extracted':
+            # Sort all images first for fallback
+            all_images_sorted = self._sort_images(all_images, 'name_asc')
             start_pos = max(1, image_start_number) - 1
-            end_pos = min(len(all_images), start_pos + image_count)
-            fallback_selected = all_images[start_pos:end_pos]
+            end_pos = min(len(all_images_sorted), start_pos + image_count)
+            fallback_selected = all_images_sorted[start_pos:end_pos]
             if fallback_selected:
-                sort_method = config.get('image_sort_method', 'name_asc')
-                sort_desc = {
-                    'name_asc': 'by name (ascending)',
-                    'created_date': 'by created date',
-                    'modified_date': 'by modified date'
-                }.get(sort_method, 'by name (ascending)')
-                logging.info(f"No numeric/timestamp matches; falling back to position selection (sorted {sort_desc}): items {image_start_number} to {image_start_number + len(fallback_selected) - 1}")
+                logging.info(f"No numeric matches; falling back to position selection (sorted by name): items {image_start_number} to {image_start_number + len(fallback_selected) - 1}")
                 filtered_images = fallback_selected
         
         logging.info(f"Selected {len(filtered_images)} total images for processing")
@@ -2365,9 +2367,20 @@ def list_images(drive_service, config: dict):
         raise KeyError("'drive_folder_id' not found in config (checked googlecloud.drive_folder_id and top-level)")
     
     document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
+    
+    # Auto-calculate max_images if not provided
+    # Use image_start_number + image_count + buffer to ensure we fetch enough images
     max_images = config.get('max_images')
     if max_images is None:
-        raise KeyError("'max_images' not found in config")
+        image_start_number = config.get('image_start_number', 1)
+        image_count = config.get('image_count', 1)
+        # Calculate needed: start + count - 1, plus buffer for non-matching images
+        # Buffer of 200 images to account for images that don't match the pattern
+        calculated_max = image_start_number + image_count + 200
+        # But cap at reasonable maximum (1,000) to avoid excessive API calls
+        max_images = min(calculated_max, 1000)
+        logging.info(f"Auto-calculated max_images: {max_images} (based on image_start_number={image_start_number}, image_count={image_count})")
+    
     retry_mode = config.get('retry_mode', False)
     retry_image_list = config.get('retry_image_list', [])
     image_start_number = config.get('image_start_number', 1)
@@ -2566,50 +2579,47 @@ def list_images(drive_service, config: dict):
             if image_start_number <= number < image_start_number + image_count:
                 numbered_images.append(img)
     
-    # Handle numbered images (existing logic)
+    # Handle selection based on sort method
     filtered_images = []
     
-    if numbered_images:
-        # Define expected filename patterns for logging
-        start_filename_pattern1 = f"image ({image_start_number}).jpg"
-        end_filename_pattern1 = f"image ({image_start_number + image_count - 1}).jpg"
-        start_filename_pattern2 = f"image{image_start_number:05d}.jpg"
-        end_filename_pattern2 = f"image{image_start_number + image_count - 1:05d}.jpg"
-        start_filename_pattern3 = f"{image_start_number}.jpg"
-        end_filename_pattern3 = f"{image_start_number + image_count - 1}.jpg"
-        
-        logging.info(f"Filtering numbered images from {start_filename_pattern1} to {end_filename_pattern1} OR {start_filename_pattern2} to {end_filename_pattern2} OR {start_filename_pattern3} to {end_filename_pattern3}")
-        
-        # Sort numbered images based on user's preference
-        sort_method = config.get('image_sort_method', 'number_extracted')
-        
-        if sort_method == 'number_extracted':
-            # Sort by extracted number (default when pattern detection works)
+    if sort_method == 'number_extracted':
+        # For number_extracted: filter by extracted number first, then sort by number
+        if numbered_images:
+            # Define expected filename patterns for logging
+            start_filename_pattern1 = f"image ({image_start_number}).jpg"
+            end_filename_pattern1 = f"image ({image_start_number + image_count - 1}).jpg"
+            start_filename_pattern2 = f"image{image_start_number:05d}.jpg"
+            end_filename_pattern2 = f"image{image_start_number + image_count - 1:05d}.jpg"
+            start_filename_pattern3 = f"{image_start_number}.jpg"
+            end_filename_pattern3 = f"{image_start_number + image_count - 1}.jpg"
+            
+            logging.info(f"Filtering numbered images from {start_filename_pattern1} to {end_filename_pattern1} OR {start_filename_pattern2} to {end_filename_pattern2} OR {start_filename_pattern3} to {end_filename_pattern3}")
+            
+            # Sort by extracted number
             def extract_number_for_sorting(img):
                 filename = img['name']
                 number = extract_image_number(filename)
                 if number is not None:
                     return number
-                # Fallback: return 0 if no number can be extracted (shouldn't happen for numbered_images)
                 return 0
             numbered_images.sort(key=extract_number_for_sorting)
             logging.info("Sorted numbered images by extracted number")
-        elif sort_method == 'name_asc':
-            # Sort by filename (already sorted by Drive API, but ensure consistency)
-            numbered_images.sort(key=lambda img: img['name'])
-            logging.info("Sorted numbered images by name (ascending)")
-        # Note: For Drive, created_date and modified_date sorting is handled at the API level
-        # when fetching all_images, so numbered_images are already in that order
-        else:
-            # For created_date/modified_date, images are already sorted by Drive API
-            # Just log the method used
+            
+            filtered_images.extend(numbered_images)
+    else:
+        # For other methods: all_images already sorted by Drive API, select by position
+        start_pos = max(1, image_start_number) - 1
+        end_pos = min(len(all_images), start_pos + image_count)
+        position_selected = all_images[start_pos:end_pos]
+        
+        if position_selected:
             sort_desc = {
+                'name_asc': 'by name (ascending)',
                 'created_date': 'by created date',
                 'modified_date': 'by modified date'
             }.get(sort_method, 'by name (ascending)')
-            logging.info(f"Numbered images already sorted {sort_desc} (from Drive API)")
-        
-        filtered_images.extend(numbered_images)
+            logging.info(f"Selected images by position (sorted {sort_desc} by Drive API): positions {image_start_number} to {image_start_number + len(position_selected) - 1}")
+            filtered_images.extend(position_selected)
     
     # Handle timestamp images
     if timestamp_images:
@@ -2647,7 +2657,6 @@ def list_images(drive_service, config: dict):
     
     # Final sort of all filtered images (only if user wants number_extracted)
     # Otherwise, images are already sorted according to user's preference
-    sort_method = config.get('image_sort_method', 'number_extracted')
     if filtered_images and sort_method == 'number_extracted':
         # Sort mixed list: numbered images by number, timestamp images by timestamp
         def mixed_sorting_key(img):
@@ -2672,19 +2681,14 @@ def list_images(drive_service, config: dict):
         filtered_images.sort(key=mixed_sorting_key)
         logging.info("Final sort: numbered images by extracted number, timestamp images by timestamp")
     
-    # If no images were selected by number/timestamp filters, fall back to position-based selection
-    # Note: all_images are already sorted according to image_sort_method (via Drive API orderBy)
-    if not filtered_images and all_images and not retry_mode:
+    # Fallback: if no images selected and using number_extracted, try position-based
+    if not filtered_images and all_images and not retry_mode and sort_method == 'number_extracted':
+        # all_images already sorted by Drive API (default to name_asc for fallback)
         start_pos = max(1, image_start_number) - 1
         end_pos = min(len(all_images), start_pos + image_count)
         fallback_selected = all_images[start_pos:end_pos]
         if fallback_selected:
-            sort_desc = {
-                'name_asc': 'by name (ascending)',
-                'created_date': 'by created date',
-                'modified_date': 'by modified date'
-            }.get(sort_method, 'by name (ascending)')
-            logging.info(f"No numeric/timestamp matches; falling back to position selection (sorted {sort_desc}): items {image_start_number} to {image_start_number + len(fallback_selected) - 1}")
+            logging.info(f"No numeric/timestamp matches; falling back to position selection (sorted by name): items {image_start_number} to {image_start_number + len(fallback_selected) - 1}")
             filtered_images = fallback_selected
 
     logging.info(f"Selected {len(filtered_images)} total images for processing")
