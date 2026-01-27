@@ -273,29 +273,77 @@ class PreFlightValidator:
             image_start = config.get('image_start_number', 1)
             image_count = config.get('image_count', 1)
             
-            # Sort files naturally (by number if possible)
-            try:
-                # Try to extract numbers from filenames for sorting
-                def extract_number(filename):
-                    import re
-                    numbers = re.findall(r'\d+', filename)
-                    return int(numbers[0]) if numbers else 0
+            # Extract numbers from filenames using the same logic as the main code
+            from transcribe import extract_image_number
+            
+            # Extract numbers from all image files
+            extracted_numbers = []
+            for filename in image_files:
+                number = extract_image_number(filename)
+                if number is not None:
+                    extracted_numbers.append(number)
+            
+            # If we found numeric patterns, validate against extracted numbers
+            if extracted_numbers:
+                extracted_numbers = sorted(set(extracted_numbers))
+                min_number = min(extracted_numbers)
+                max_number = max(extracted_numbers)
                 
-                image_files_sorted = sorted(image_files, key=extract_number)
-            except:
-                image_files_sorted = sorted(image_files)
-            
-            expected_count = len(image_files_sorted)
-            if image_count > expected_count:
-                result.warnings.append(
-                    f"Requested {image_count} images, but only {expected_count} found in directory"
-                )
-            
-            # Check if specific images exist (if image_start_number is used)
-            if image_start > 1:
+                # Check if requested range exists
+                requested_end = image_start + image_count - 1
+                
+                if image_start < min_number:
+                    result.errors.append(
+                        f"Image start number {image_start} is less than minimum available number {min_number}"
+                    )
+                elif image_start > max_number:
+                    result.errors.append(
+                        f"Image start number {image_start} exceeds maximum available number {max_number}"
+                    )
+                elif requested_end > max_number:
+                    result.warnings.append(
+                        f"Requested range {image_start}-{requested_end} extends beyond maximum available number {max_number}"
+                    )
+                
+                # Check if specific numbers in range exist
+                missing_numbers = []
+                for num in range(image_start, image_start + image_count):
+                    if num not in extracted_numbers:
+                        missing_numbers.append(num)
+                
+                if missing_numbers:
+                    if len(missing_numbers) <= 5:
+                        result.warnings.append(
+                            f"Some requested image numbers are missing: {missing_numbers}"
+                        )
+                    else:
+                        result.warnings.append(
+                            f"Many requested image numbers are missing ({len(missing_numbers)} out of {image_count})"
+                        )
+            else:
+                # No numeric patterns detected - use position-based validation
+                # Sort files naturally (by number if possible)
+                try:
+                    # Try to extract numbers from filenames for sorting
+                    def extract_number(filename):
+                        import re
+                        numbers = re.findall(r'\d+', filename)
+                        return int(numbers[0]) if numbers else 0
+                    
+                    image_files_sorted = sorted(image_files, key=extract_number)
+                except:
+                    image_files_sorted = sorted(image_files)
+                
+                expected_count = len(image_files_sorted)
+                if image_count > expected_count:
+                    result.warnings.append(
+                        f"Requested {image_count} images, but only {expected_count} found in directory"
+                    )
+                
+                # For position-based selection, check if start position is valid
                 if image_start > len(image_files_sorted):
                     result.errors.append(
-                        f"Image start number {image_start} exceeds available images ({len(image_files_sorted)})"
+                        f"Image start position {image_start} exceeds available images ({len(image_files_sorted)})"
                     )
         
         elif mode == 'googlecloud':

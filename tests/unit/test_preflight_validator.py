@@ -267,3 +267,68 @@ class TestPreFlightValidator:
         
         # Should not have image warnings
         assert not any("no images" in warning.lower() for warning in result.warnings)
+    
+    def test_validate_images_with_extracted_numbers(self, validator, temp_dir):
+        """Test validation correctly handles image numbers extracted from filenames."""
+        # Create test image files with pattern like 0001_00155.jpeg
+        test_files = [
+            "0001_00155.jpeg",
+            "0001_00156.jpeg"
+        ]
+        for filename in test_files:
+            image_path = os.path.join(temp_dir, filename)
+            with open(image_path, 'w') as f:
+                f.write("fake image")
+        
+        config = {
+            "mode": "local",
+            "local": {
+                "image_dir": temp_dir,
+                "output_dir": temp_dir
+            },
+            "context": {
+                "archive_reference": "Ф. 487"
+            },
+            "image_start_number": 155,  # Should extract 155 from 0001_00155.jpeg
+            "image_count": 2  # Should find 155 and 156
+        }
+        
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test_key"}):
+            result = validator.validate(config, "local")
+        
+        # Should NOT have error about exceeding available images
+        # The validator should recognize that 155 and 156 exist in the filenames
+        assert not any("exceeds available images" in error.lower() for error in result.errors)
+        assert not any("exceeds maximum" in error.lower() for error in result.errors)
+        assert not any("less than minimum" in error.lower() for error in result.errors)
+    
+    def test_validate_images_number_out_of_range(self, validator, temp_dir):
+        """Test validation correctly detects when requested image number doesn't exist."""
+        # Create test image files with pattern like 0001_00155.jpeg
+        test_files = [
+            "0001_00155.jpeg",
+            "0001_00156.jpeg"
+        ]
+        for filename in test_files:
+            image_path = os.path.join(temp_dir, filename)
+            with open(image_path, 'w') as f:
+                f.write("fake image")
+        
+        config = {
+            "mode": "local",
+            "local": {
+                "image_dir": temp_dir,
+                "output_dir": temp_dir
+            },
+            "context": {
+                "archive_reference": "Ф. 487"
+            },
+            "image_start_number": 200,  # This number doesn't exist in files
+            "image_count": 1
+        }
+        
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test_key"}):
+            result = validator.validate(config, "local")
+        
+        # Should have error about number exceeding maximum
+        assert any("exceeds maximum" in error.lower() for error in result.errors)

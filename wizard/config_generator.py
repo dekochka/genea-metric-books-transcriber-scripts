@@ -100,6 +100,9 @@ class ConfigGenerator:
         if "image_count" in wizard_data:
             config["image_count"] = wizard_data["image_count"]
         
+        if "image_sort_method" in wizard_data:
+            config["image_sort_method"] = wizard_data["image_sort_method"]
+        
         if mode == "googlecloud":
             if "batch_size_for_doc" in wizard_data:
                 config["batch_size_for_doc"] = wizard_data["batch_size_for_doc"]

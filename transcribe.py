@@ -605,10 +605,8 @@ class LocalImageSource(ImageSourceStrategy):
             pattern = os.path.join(self.image_dir, ext)
             all_image_paths.extend(glob.glob(pattern))
         
-        # Sort by filename
-        all_image_paths.sort()
-        
-        logging.info(f"Found {len(all_image_paths)} total images in local directory (sorted by filename)")
+        # Get sort method from config (default: name_asc)
+        sort_method = config.get('image_sort_method', 'name_asc')
         
         # Convert to dict format compatible with existing code
         all_images = []
@@ -618,12 +616,34 @@ class LocalImageSource(ImageSourceStrategy):
             abs_path = os.path.abspath(img_path)
             # Convert backslashes to forward slashes for file:// URLs (Windows compatibility)
             normalized_path = abs_path.replace('\\', '/')
+            
+            # Get file stats for sorting by date
+            try:
+                stat = os.stat(img_path)
+                created_time = stat.st_ctime
+                modified_time = stat.st_mtime
+            except OSError:
+                created_time = 0
+                modified_time = 0
+            
             all_images.append({
                 'name': filename,
                 'path': img_path,
                 'id': img_path,  # Use path as ID for local mode
-                'webViewLink': f"file://{normalized_path}"  # Local file URL (Windows-compatible)
+                'webViewLink': f"file://{normalized_path}",  # Local file URL (Windows-compatible)
+                '_created_time': created_time,  # Internal: for sorting
+                '_modified_time': modified_time  # Internal: for sorting
             })
+        
+        # Sort images based on selected method
+        all_images = self._sort_images(all_images, sort_method)
+        
+        sort_desc = {
+            'name_asc': 'by name (ascending)',
+            'created_date': 'by created date',
+            'modified_date': 'by modified date'
+        }.get(sort_method, 'by name (ascending)')
+        logging.info(f"Found {len(all_images)} total images in local directory (sorted {sort_desc})")
         
         # RETRY MODE: If enabled, filter for specific failed images only
         if retry_mode:
@@ -705,16 +725,10 @@ class LocalImageSource(ImageSourceStrategy):
                     continue
             
             # Check if filename matches the pattern PREFIX_XXXXX.jpg/jpeg
-            elif has_jpeg_extension(filename) and '_' in filename:
-                try:
-                    ext_len = 5 if filename.lower().endswith('.jpeg') else 4
-                    base_no_ext = filename[:-ext_len]
-                    underscore_idx = base_no_ext.rfind('_')
-                    if underscore_idx != -1:
-                        suffix = base_no_ext[underscore_idx + 1:]
-                        if suffix.isdigit():
-                            number = int(suffix)
-                except Exception:
+            # IMPROVED: Use extract_image_number for better pattern detection (handles _, -, ., etc.)
+            elif has_jpeg_extension(filename):
+                number = extract_image_number(filename)
+                if number is None:
                     continue
             
             # If we found a valid number, check if it's in the desired range
@@ -735,28 +749,30 @@ class LocalImageSource(ImageSourceStrategy):
             
             logging.info(f"Filtering numbered images from {start_filename_pattern1} to {end_filename_pattern1} OR {start_filename_pattern2} to {end_filename_pattern2} OR {start_filename_pattern3} to {end_filename_pattern3}")
             
-            # Sort numbered images numerically
-            def extract_number_for_sorting(img):
-                filename = img['name']
-                lower = filename.lower()
-                if filename.startswith('image (') and (lower.endswith(').jpg') or lower.endswith(').jpeg')):
-                    start_idx = filename.find('(') + 1
-                    end_idx = filename.find(')')
-                    number_str = filename[start_idx:end_idx]
-                elif filename.startswith('image') and has_jpeg_extension(filename) and '(' not in filename and ' - ' not in filename and '_' not in filename:
-                    ext_len = 5 if lower.endswith('.jpeg') else 4
-                    number_str = filename[5:-ext_len]
-                elif has_jpeg_extension(filename) and '_' in filename:
-                    ext_len = 5 if lower.endswith('.jpeg') else 4
-                    base_no_ext = filename[:-ext_len]
-                    underscore_idx = base_no_ext.rfind('_')
-                    number_str = base_no_ext[underscore_idx + 1:]
-                else:
-                    ext_len = 5 if lower.endswith('.jpeg') else 4
-                    number_str = filename[:-ext_len]
-                return int(number_str)
+            # Sort numbered images based on user's preference
+            sort_method = config.get('image_sort_method', 'number_extracted')
             
-            numbered_images.sort(key=extract_number_for_sorting)
+            if sort_method == 'number_extracted':
+                # Sort by extracted number (default when pattern detection works)
+                def extract_number_for_sorting(img):
+                    filename = img['name']
+                    number = extract_image_number(filename)
+                    if number is not None:
+                        return number
+                    # Fallback: return 0 if no number can be extracted (shouldn't happen for numbered_images)
+                    return 0
+                numbered_images.sort(key=extract_number_for_sorting)
+                logging.info("Sorted numbered images by extracted number")
+            else:
+                # Use user-selected sorting method (name, created_date, modified_date)
+                numbered_images = self._sort_images(numbered_images, sort_method)
+                sort_desc = {
+                    'name_asc': 'by name (ascending)',
+                    'created_date': 'by created date',
+                    'modified_date': 'by modified date'
+                }.get(sort_method, 'by name (ascending)')
+                logging.info(f"Sorted numbered images {sort_desc} (user preference)")
+            
             filtered_images.extend(numbered_images)
         
         # Handle timestamp images
@@ -790,12 +806,19 @@ class LocalImageSource(ImageSourceStrategy):
                 logging.info(f"Selected {len(selected_timestamp_images)} timestamp images from position {image_start_number} to {start_pos + len(selected_timestamp_images)}")
         
         # Fallback: if no images selected, use position-based selection
+        # Note: all_images are already sorted according to image_sort_method
         if not filtered_images and all_images:
             start_pos = max(1, image_start_number) - 1
             end_pos = min(len(all_images), start_pos + image_count)
             fallback_selected = all_images[start_pos:end_pos]
             if fallback_selected:
-                logging.info(f"No numeric/timestamp matches; falling back to position selection: items {image_start_number} to {image_start_number + len(fallback_selected) - 1}")
+                sort_method = config.get('image_sort_method', 'name_asc')
+                sort_desc = {
+                    'name_asc': 'by name (ascending)',
+                    'created_date': 'by created date',
+                    'modified_date': 'by modified date'
+                }.get(sort_method, 'by name (ascending)')
+                logging.info(f"No numeric/timestamp matches; falling back to position selection (sorted {sort_desc}): items {image_start_number} to {image_start_number + len(fallback_selected) - 1}")
                 filtered_images = fallback_selected
         
         logging.info(f"Selected {len(filtered_images)} total images for processing")
@@ -832,6 +855,32 @@ class LocalImageSource(ImageSourceStrategy):
         # Normalize path separators to forward slashes for consistency across platforms
         path = image_info['path']
         return path.replace('\\', '/')
+    
+    def _sort_images(self, images: list[dict], sort_method: str) -> list[dict]:
+        """
+        Sort images based on the specified method.
+        
+        Args:
+            images: List of image dictionaries
+            sort_method: One of 'name_asc', 'created_date', 'modified_date'
+            
+        Returns:
+            Sorted list of images
+        """
+        if sort_method == 'name_asc':
+            # Sort by filename (ascending)
+            images.sort(key=lambda img: img['name'])
+        elif sort_method == 'created_date':
+            # Sort by created date (oldest first)
+            images.sort(key=lambda img: img.get('_created_time', img.get('createdTime', 0)))
+        elif sort_method == 'modified_date':
+            # Sort by modified date (oldest first)
+            images.sort(key=lambda img: img.get('_modified_time', img.get('modifiedTime', 0)))
+        else:
+            # Default: sort by name
+            images.sort(key=lambda img: img['name'])
+        
+        return images
 
 
 class DriveImageSource(ImageSourceStrategy):
@@ -2084,6 +2133,7 @@ def extract_image_number(filename):
     """
     Extract the numeric identifier from an image filename.
     Supports the same patterns as list_images().
+    Improved to detect numbers before special symbols (-, _, ., etc.).
     Returns the extracted number, or None if no number can be extracted.
     """
     import re
@@ -2096,15 +2146,25 @@ def extract_image_number(filename):
     # Regex pattern for timestamp format: image - YYYY-MM-DDTHHMMSS.mmm.jpg/jpeg
     timestamp_pattern = re.compile(r'^image - (\d{4}-\d{2}-\d{2}T\d{6}\.\d{3})\.(?:jpg|jpeg)$', re.IGNORECASE)
     
+    # Regex pattern for photo timestamp format: photo_YYYY-MM-DD HH.MM.SS.jpeg
+    # Examples: photo_2026-01-24 20.33.55.jpeg, photo_2026-01-24 20.34.02.jpeg
+    photo_timestamp_pattern = re.compile(r'^photo_\d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.\d{2}\.(?:jpg|jpeg)$', re.IGNORECASE)
+    
     # Regex pattern for IMG_YYYYMMDD_XXXX.jpg format (e.g., IMG_20250814_0036.jpg)
     img_date_pattern = re.compile(r'^IMG_\d{8}_(\d+)\.(?:jpg|jpeg)$', re.IGNORECASE)
     
     number = None
     
-    # Check for timestamp pattern first
+    # Check for timestamp patterns first (these should return None)
     timestamp_match = timestamp_pattern.match(filename)
     if timestamp_match:
         # For timestamp images, we can't extract a meaningful number
+        return None
+    
+    # Check for photo timestamp pattern (e.g., photo_2026-01-24 20.33.55.jpeg)
+    photo_timestamp_match = photo_timestamp_pattern.match(filename)
+    if photo_timestamp_match:
+        # For photo timestamp images, we can't extract a meaningful number
         return None
     
     # Check for IMG_YYYYMMDD_XXXX.jpg pattern
@@ -2115,8 +2175,9 @@ def extract_image_number(filename):
         except ValueError:
             pass
     
-    # Check if filename matches the pattern image (N).jpg/jpeg
-    if filename.startswith('image (') and (filename.lower().endswith(').jpg') or filename.lower().endswith(').jpeg')):
+    # Check if filename matches the pattern image (N).jpg/jpeg (case-insensitive)
+    filename_lower = filename.lower()
+    if filename_lower.startswith('image (') and (filename_lower.endswith(').jpg') or filename_lower.endswith(').jpeg')):
         try:
             start_idx = filename.find('(') + 1
             end_idx = filename.find(')')
@@ -2125,17 +2186,17 @@ def extract_image_number(filename):
         except (ValueError, IndexError):
             pass
     
-    # Check if filename matches the pattern imageXXXXX.jpg/jpeg
-    if filename.startswith('image') and has_jpeg_extension(filename) and '(' not in filename and ' - ' not in filename and '_' not in filename:
+    # Check if filename matches the pattern imageXXXXX.jpg/jpeg (case-insensitive)
+    if filename_lower.startswith('image') and has_jpeg_extension(filename) and '(' not in filename and ' - ' not in filename and '_' not in filename:
         try:
-            ext_len = 5 if filename.lower().endswith('.jpeg') else 4
+            ext_len = 5 if filename_lower.endswith('.jpeg') else 4
             number_str = filename[5:-ext_len]
             return int(number_str)
         except ValueError:
             pass
     
     # Check if filename matches the pattern XXXXX.jpg/jpeg
-    if has_jpeg_extension(filename) and not filename.startswith('image') and '_' not in filename:
+    if has_jpeg_extension(filename) and not filename_lower.startswith('image') and '_' not in filename:
         try:
             ext_len = 5 if filename.lower().endswith('.jpeg') else 4
             number_str = filename[:-ext_len]
@@ -2144,20 +2205,117 @@ def extract_image_number(filename):
             pass
     
     # Check if filename matches the pattern PREFIX_XXXXX.jpg/jpeg (e.g., 004933159_00216.jpeg)
-    if has_jpeg_extension(filename) and '_' in filename:
+    # IMPROVED: Also handles patterns like PREFIX-XXXXX.jpg, PREFIX.XXXXX.jpg, etc.
+    if has_jpeg_extension(filename):
         try:
             ext_len = 5 if filename.lower().endswith('.jpeg') else 4
             base_no_ext = filename[:-ext_len]
-            # Take numeric part after the last underscore
-            underscore_idx = base_no_ext.rfind('_')
-            if underscore_idx != -1:
-                suffix = base_no_ext[underscore_idx + 1:]
+            
+            # Try to find number after last special symbol (_, -, ., etc.)
+            # Look for patterns like: PREFIX_XXXXX, PREFIX-XXXXX, PREFIX.XXXXX
+            # Find the last occurrence of common separators
+            separators = ['_', '-', '.']
+            last_sep_idx = -1
+            last_sep_char = None
+            
+            for sep in separators:
+                idx = base_no_ext.rfind(sep)
+                if idx > last_sep_idx:
+                    last_sep_idx = idx
+                    last_sep_char = sep
+            
+            if last_sep_idx != -1:
+                # Extract suffix after the last separator
+                suffix = base_no_ext[last_sep_idx + 1:]
                 if suffix.isdigit():
                     return int(suffix)
+            
+            # Fallback: if filename has underscore but no separator found, try underscore specifically
+            if '_' in base_no_ext:
+                underscore_idx = base_no_ext.rfind('_')
+                if underscore_idx != -1:
+                    suffix = base_no_ext[underscore_idx + 1:]
+                    if suffix.isdigit():
+                        return int(suffix)
         except Exception:
             pass
     
     return None
+
+
+def scan_available_image_numbers(image_source, config: dict) -> tuple[list[int], str]:
+    """
+    Scan available images and extract all image numbers found.
+    
+    Args:
+        image_source: ImageSourceStrategy instance (LocalImageSource or DriveImageSource)
+        config: Configuration dictionary (will be modified to scan all images)
+        
+    Returns:
+        Tuple of (list of found numbers, pattern description)
+    """
+    import copy
+    
+    # Create a temporary config without filtering to scan all images
+    # Deep copy to avoid modifying original config
+    scan_config = copy.deepcopy(config)
+    scan_config['image_start_number'] = 1
+    scan_config['image_count'] = 1000000  # Large number to get all images
+    
+    # For GOOGLECLOUD mode, set max_images in the right place
+    if 'googlecloud' in scan_config:
+        scan_config['googlecloud'] = scan_config.get('googlecloud', {}).copy()
+        scan_config['max_images'] = 10000  # Limit scan to first 10000 images
+    else:
+        scan_config['max_images'] = 10000  # Limit scan to first 10000 images
+    
+    try:
+        all_images = image_source.list_images(scan_config)
+        found_numbers = []
+        
+        for img in all_images:
+            number = extract_image_number(img['name'])
+            if number is not None:
+                found_numbers.append(number)
+        
+        found_numbers = sorted(set(found_numbers))  # Remove duplicates and sort
+        
+        # Determine pattern description
+        if found_numbers:
+            min_num = min(found_numbers)
+            max_num = max(found_numbers)
+            
+            # Try to find a representative sample that shows a clear pattern
+            # Check multiple images to find one with a clear pattern
+            sample_name = ""
+            for img in all_images[:10]:  # Check first 10 images
+                name = img['name']
+                if '_' in name:
+                    sample_name = name
+                    pattern_desc = f"Pattern detected: PREFIX_XXXXX (e.g., {sample_name}) - use number after underscore"
+                    break
+                elif '-' in name and not name.startswith('image -'):
+                    sample_name = name
+                    pattern_desc = f"Pattern detected: PREFIX-XXXXX (e.g., {sample_name}) - use number after dash"
+                    break
+                elif '.' in name and not name.lower().endswith(('.jpg', '.jpeg')):
+                    sample_name = name
+                    pattern_desc = f"Pattern detected: PREFIX.XXXXX (e.g., {sample_name}) - use number after dot"
+                    break
+            
+            # If no clear pattern found, use first image as example
+            if not sample_name and all_images:
+                sample_name = all_images[0]['name']
+                pattern_desc = f"Found numbers range: {min_num} to {max_num} (example: {sample_name})"
+            elif not sample_name:
+                pattern_desc = f"Found numbers range: {min_num} to {max_num}"
+        else:
+            pattern_desc = "No numeric patterns detected in filenames"
+        
+        return found_numbers, pattern_desc
+    except Exception as e:
+        logging.warning(f"Error scanning image numbers: {str(e)}")
+        return [], f"Error scanning images: {str(e)}"
 
 
 def get_folder_name(drive_service, drive_folder_id: str):
@@ -2217,6 +2375,17 @@ def list_images(drive_service, config: dict):
     if image_count is None:
         raise KeyError("'image_count' not found in config")
     
+    # Get sort method from config (default: name_asc)
+    sort_method = config.get('image_sort_method', 'name_asc')
+    
+    # Map sort method to Drive API orderBy parameter
+    order_by_map = {
+        'name_asc': 'name',
+        'created_date': 'createdTime',
+        'modified_date': 'modifiedTime'
+    }
+    order_by = order_by_map.get(sort_method, 'name')
+    
     query = (
         f"mimeType='image/jpeg' and '{drive_folder_id}' in parents and trashed=false"
     )
@@ -2227,11 +2396,19 @@ def list_images(drive_service, config: dict):
     # Fetch all images with pagination (up to max_images)
     while len(all_images) < max_images:
         try:
-            # Add orderBy parameter to sort by name
+            # Request fields based on sort method
+            if sort_method == 'created_date':
+                fields = "nextPageToken,files(id,name,webViewLink,createdTime)"
+            elif sort_method == 'modified_date':
+                fields = "nextPageToken,files(id,name,webViewLink,modifiedTime)"
+            else:
+                fields = "nextPageToken,files(id,name,webViewLink)"
+            
+            # Add orderBy parameter based on sort method
             resp = drive_service.files().list(
                 q=query,
-                fields="nextPageToken,files(id,name,webViewLink)",
-                orderBy="name",  # Sort by filename
+                fields=fields,
+                orderBy=order_by,  # Sort by selected method
                 pageSize=100,  # Fetch 100 files per request
                 pageToken=page_token
             ).execute()
@@ -2276,7 +2453,12 @@ def list_images(drive_service, config: dict):
     
     # Limit to max_images
     all_images = all_images[:max_images]
-    logging.info(f"Found {len(all_images)} total images in folder (sorted by filename)")
+    sort_desc = {
+        'name_asc': 'by name (ascending)',
+        'created_date': 'by created date',
+        'modified_date': 'by modified date'
+    }.get(sort_method, 'by name (ascending)')
+    logging.info(f"Found {len(all_images)} total images in folder (sorted {sort_desc})")
     
     # RETRY MODE: If enabled, filter for specific failed images only
     if retry_mode:
@@ -2372,17 +2554,11 @@ def list_images(drive_service, config: dict):
                 continue
 
         # Check if filename matches the pattern PREFIX_XXXXX.jpg/jpeg (e.g., 004933159_00216.jpeg)
-        elif has_jpeg_extension(filename) and '_' in filename:
-            try:
-                ext_len = 5 if filename.lower().endswith('.jpeg') else 4
-                base_no_ext = filename[:-ext_len]
-                # Take numeric part after the last underscore
-                underscore_idx = base_no_ext.rfind('_')
-                if underscore_idx != -1:
-                    suffix = base_no_ext[underscore_idx + 1:]
-                    if suffix.isdigit():
-                        number = int(suffix)
-            except Exception:
+        # IMPROVED: Also handles patterns like PREFIX-XXXXX.jpg, PREFIX.XXXXX.jpg, etc.
+        elif has_jpeg_extension(filename):
+            # Use improved extract_image_number function for better pattern detection
+            number = extract_image_number(filename)
+            if number is None:
                 continue
         
         # If we found a valid number, check if it's in the desired range
@@ -2404,32 +2580,35 @@ def list_images(drive_service, config: dict):
         
         logging.info(f"Filtering numbered images from {start_filename_pattern1} to {end_filename_pattern1} OR {start_filename_pattern2} to {end_filename_pattern2} OR {start_filename_pattern3} to {end_filename_pattern3}")
         
-        # Sort numbered images numerically by their extracted number
-        def extract_number_for_sorting(img):
-            filename = img['name']
-            lower = filename.lower()
-            if filename.startswith('image (') and (lower.endswith(').jpg') or lower.endswith(').jpeg')):
-                # Extract number from "image (N).jpg" format
-                start_idx = filename.find('(') + 1
-                end_idx = filename.find(')')
-                number_str = filename[start_idx:end_idx]
-            elif filename.startswith('image') and has_jpeg_extension(filename) and '(' not in filename and ' - ' not in filename and '_' not in filename:
-                # Extract number from "imageXXXXX.jpg" format
-                ext_len = 5 if lower.endswith('.jpeg') else 4
-                number_str = filename[5:-ext_len]  # Remove "image" prefix and extension suffix
-            elif has_jpeg_extension(filename) and '_' in filename:
-                # Extract number from "PREFIX_XXXXX.jpg/jpeg" format
-                ext_len = 5 if lower.endswith('.jpeg') else 4
-                base_no_ext = filename[:-ext_len]
-                underscore_idx = base_no_ext.rfind('_')
-                number_str = base_no_ext[underscore_idx + 1:]
-            else:
-                # Extract number from "XXXXX.jpg" format
-                ext_len = 5 if lower.endswith('.jpeg') else 4
-                number_str = filename[:-ext_len]  # Remove extension suffix
-            return int(number_str)
+        # Sort numbered images based on user's preference
+        sort_method = config.get('image_sort_method', 'number_extracted')
         
-        numbered_images.sort(key=extract_number_for_sorting)
+        if sort_method == 'number_extracted':
+            # Sort by extracted number (default when pattern detection works)
+            def extract_number_for_sorting(img):
+                filename = img['name']
+                number = extract_image_number(filename)
+                if number is not None:
+                    return number
+                # Fallback: return 0 if no number can be extracted (shouldn't happen for numbered_images)
+                return 0
+            numbered_images.sort(key=extract_number_for_sorting)
+            logging.info("Sorted numbered images by extracted number")
+        elif sort_method == 'name_asc':
+            # Sort by filename (already sorted by Drive API, but ensure consistency)
+            numbered_images.sort(key=lambda img: img['name'])
+            logging.info("Sorted numbered images by name (ascending)")
+        # Note: For Drive, created_date and modified_date sorting is handled at the API level
+        # when fetching all_images, so numbered_images are already in that order
+        else:
+            # For created_date/modified_date, images are already sorted by Drive API
+            # Just log the method used
+            sort_desc = {
+                'created_date': 'by created date',
+                'modified_date': 'by modified date'
+            }.get(sort_method, 'by name (ascending)')
+            logging.info(f"Numbered images already sorted {sort_desc} (from Drive API)")
+        
         filtered_images.extend(numbered_images)
     
     # Handle timestamp images
@@ -2466,8 +2645,10 @@ def list_images(drive_service, config: dict):
             filenames = [img['name'] for img in selected_timestamp_images]
             logging.info(f"Selected timestamp files: {filenames}")
     
-    # Final sort of all filtered images
-    if filtered_images:
+    # Final sort of all filtered images (only if user wants number_extracted)
+    # Otherwise, images are already sorted according to user's preference
+    sort_method = config.get('image_sort_method', 'number_extracted')
+    if filtered_images and sort_method == 'number_extracted':
         # Sort mixed list: numbered images by number, timestamp images by timestamp
         def mixed_sorting_key(img):
             filename = img['name']
@@ -2483,37 +2664,27 @@ def list_images(drive_service, config: dict):
                     return (1, datetime.min)
             else:
                 # Numbered image - sort by number
-                lower = filename.lower()
-                if filename.startswith('image (') and (lower.endswith(').jpg') or lower.endswith(').jpeg')):
-                    start_idx = filename.find('(') + 1
-                    end_idx = filename.find(')')
-                    number_str = filename[start_idx:end_idx]
-                elif filename.startswith('image') and has_jpeg_extension(filename) and '(' not in filename and ' - ' not in filename and '_' not in filename:
-                    ext_len = 5 if lower.endswith('.jpeg') else 4
-                    number_str = filename[5:-ext_len]
-                elif has_jpeg_extension(filename) and '_' in filename:
-                    ext_len = 5 if lower.endswith('.jpeg') else 4
-                    base_no_ext = filename[:-ext_len]
-                    underscore_idx = base_no_ext.rfind('_')
-                    number_str = base_no_ext[underscore_idx + 1:]
-                else:
-                    ext_len = 5 if lower.endswith('.jpeg') else 4
-                    number_str = filename[:-ext_len]
-                try:
-                    return (0, int(number_str))  # 0 to sort numbered images first
-                except ValueError:
-                    return (0, 0)
+                number = extract_image_number(filename)
+                if number is not None:
+                    return (0, number)  # 0 to sort numbered images first
+                return (0, 0)
         
         filtered_images.sort(key=mixed_sorting_key)
+        logging.info("Final sort: numbered images by extracted number, timestamp images by timestamp")
     
     # If no images were selected by number/timestamp filters, fall back to position-based selection
+    # Note: all_images are already sorted according to image_sort_method (via Drive API orderBy)
     if not filtered_images and all_images and not retry_mode:
-        # all_images are already sorted by name from the Drive API
         start_pos = max(1, image_start_number) - 1
         end_pos = min(len(all_images), start_pos + image_count)
         fallback_selected = all_images[start_pos:end_pos]
         if fallback_selected:
-            logging.info(f"No numeric/timestamp matches; falling back to position selection: items {image_start_number} to {image_start_number + len(fallback_selected) - 1}")
+            sort_desc = {
+                'name_asc': 'by name (ascending)',
+                'created_date': 'by created date',
+                'modified_date': 'by modified date'
+            }.get(sort_method, 'by name (ascending)')
+            logging.info(f"No numeric/timestamp matches; falling back to position selection (sorted {sort_desc}): items {image_start_number} to {image_start_number + len(fallback_selected) - 1}")
             filtered_images = fallback_selected
 
     logging.info(f"Selected {len(filtered_images)} total images for processing")
@@ -4475,11 +4646,12 @@ def process_all_local(images: list, handlers: dict, prompt_text: str, config: di
                 ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
                 
                 # Update progress bar with cost info
-                cost_str = f"Est. cost: ${current_cost:.4f}" if usage_metadata and current_cost > 0 else ""
+                cost_str = f"{t('log.est_cost', lang)} ${current_cost:.4f}" if usage_metadata and current_cost > 0 else ""
+                processed_label = t('log.processed', lang)
                 progress.update(
                     task,
                     advance=1,
-                    description=f"[cyan]Processed: {image_name[:40]}... {cost_str}[/cyan]"
+                    description=f"[cyan]{processed_label} {image_name[:40]}... {cost_str}[/cyan]"
                 )
                 
                 # Write transcription incrementally to log file
@@ -4682,6 +4854,8 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
     total_completion_tokens = 0
     total_tokens = 0
     
+    from wizard.i18n import t
+    
     # Gemini 3 Flash pricing (as of January 2026)
     # Pricing for gemini-3-flash-preview model
     # Note: Official Google pricing shows $0.50/$3.00, but this project uses $0.15/$0.60
@@ -4806,7 +4980,8 @@ def process_batches_googlecloud(images: list, handlers: dict, prompt_text: str, 
                         ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] ✓ Completed {image_name} - Transcription: {transcription_elapsed:.1f}s, Total: {image_total_elapsed:.1f}s")
                         
                         # Update progress bar with cost info (advance once per image)
-                        cost_str = f"Est. cost: ${current_cost:.4f}" if usage_metadata and current_cost > 0 else ""
+                        cost_str = f"{t('log.est_cost', lang)} ${current_cost:.4f}" if usage_metadata and current_cost > 0 else ""
+                        processed_label = t('log.processed', lang)
                         progress.update(
                             task,
                             advance=1,
@@ -5080,8 +5255,33 @@ def main(config: dict, prompt_text: str, ai_logger, logs_dir: str, log_filename:
                 logging.error(f"No retry images found from the retry_image_list")
                 ai_logger.error(f"No retry images found from list of {len(retry_image_list)} images")
             else:
-                logging.error(f"No images found for the specified range (start: {image_start_number}, count: {image_count})")
-                ai_logger.error(f"No images found for range {image_start_number} to {image_start_number + image_count - 1}")
+                # Scan available images to provide helpful error message
+                found_numbers, pattern_desc = scan_available_image_numbers(image_source, normalized_config)
+                
+                error_msg = f"No images found for the specified range (start: {image_start_number}, count: {image_count})"
+                ai_error_msg = f"No images found for range {image_start_number} to {image_start_number + image_count - 1}"
+                
+                if found_numbers:
+                    min_num = min(found_numbers)
+                    max_num = max(found_numbers)
+                    sample_numbers = found_numbers[:10]  # Show first 10 numbers
+                    sample_str = ', '.join(map(str, sample_numbers))
+                    if len(found_numbers) > 10:
+                        sample_str += f", ... (total {len(found_numbers)} numbers found)"
+                    
+                    error_msg += f"\n  Available image numbers in folder: {sample_str}"
+                    error_msg += f"\n  Range: {min_num} to {max_num}"
+                    error_msg += f"\n  {pattern_desc}"
+                    error_msg += f"\n  Suggested image_start_number: {min_num}"
+                    
+                    ai_error_msg += f"\n  Available numbers: {sample_str} (range: {min_num}-{max_num})"
+                    ai_error_msg += f"\n  Suggested image_start_number: {min_num}"
+                else:
+                    error_msg += f"\n  {pattern_desc}"
+                    error_msg += "\n  No numeric patterns detected in image filenames"
+                
+                logging.error(error_msg)
+                ai_logger.error(ai_error_msg)
             return
         
         # Initialize output

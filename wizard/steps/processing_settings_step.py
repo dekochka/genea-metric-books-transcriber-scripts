@@ -77,16 +77,26 @@ class ProcessingSettingsStep(WizardStep):
             if archive_index:
                 data["archive_index"] = archive_index
         
-        # Image start number
+        # Image start number - detect minimum from available images
+        suggested_start = self._detect_min_image_number()
+        default_start = str(suggested_start) if suggested_start else t('processing.image_start_default', lang)
+        
+        if suggested_start:
+            self.console.print(f"[dim]Detected minimum image number: {suggested_start} (from available files)[/dim]")
+        else:
+            # No numeric patterns detected - inform user
+            self.console.print(f"[yellow][dim]No numeric patterns detected in image filenames. Using position-based selection (1-indexed).[/dim][/yellow]")
+            self.console.print(f"[dim]For timestamp-based files (e.g., photo_2026-01-24 20.33.55.jpeg), use position 1 to start from the first file.[/dim]")
+        
         image_start = questionary.text(
             t('processing.image_start_prompt', lang),
-            default=t('processing.image_start_default', lang)
+            default=default_start
         ).ask()
         
         try:
-            data["image_start_number"] = int(image_start) if image_start else 1
+            data["image_start_number"] = int(image_start) if image_start else (suggested_start or 1)
         except ValueError:
-            data["image_start_number"] = 1
+            data["image_start_number"] = suggested_start or 1
         
         # Image count
         image_count = questionary.text(
@@ -97,6 +107,53 @@ class ProcessingSettingsStep(WizardStep):
             data["image_count"] = int(image_count) if image_count else 1
         except ValueError:
             data["image_count"] = 1
+        
+        # Image sorting method - check if pattern extraction is successful
+        self.console.print(f"\n[dim]{t('processing.sort_method_description', lang)}[/dim]")
+        
+        # Check if we can extract numbers from images (pattern detection successful)
+        can_extract_numbers = suggested_start is not None
+        
+        # Build choices list
+        choices = []
+        default_value = "name_asc"
+        
+        if can_extract_numbers:
+            # Add "by number extracted" as first option (recommended) when pattern detection works
+            choices.append(
+                questionary.Choice(
+                    t('processing.sort_method_number_extracted', lang),
+                    value="number_extracted"
+                )
+            )
+            default_value = "number_extracted"  # Default to number extraction when available
+        
+        # Always include these options
+        choices.extend([
+            questionary.Choice(
+                t('processing.sort_method_name_asc', lang),
+                value="name_asc"
+            ),
+            questionary.Choice(
+                t('processing.sort_method_created', lang),
+                value="created_date"
+            ),
+            questionary.Choice(
+                t('processing.sort_method_modified', lang),
+                value="modified_date"
+            ),
+        ])
+        
+        sort_method = questionary.select(
+            t('processing.sort_method_prompt', lang),
+            choices=choices,
+            default=default_value
+        ).ask()
+        
+        if sort_method:
+            data["image_sort_method"] = sort_method
+        else:
+            data["image_sort_method"] = default_value
         
         # Batch size (only for googlecloud mode)
         mode = self.controller.get_data("mode")
@@ -157,6 +214,50 @@ class ProcessingSettingsStep(WizardStep):
         # Fallback: remove spaces and punctuation, lowercase
         normalized = re.sub(r'[^\w]', '', archive_ref).lower()
         return normalized
+    
+    def _detect_min_image_number(self) -> int | None:
+        """
+        Detect minimum image number from available image files.
+        
+        Returns:
+            Minimum image number found, or None if no numbers detected
+        """
+        import glob
+        from transcribe import extract_image_number
+        
+        mode = self.controller.get_data("mode")
+        
+        if mode == "local":
+            local_data = self.controller.get_data("local", {})
+            image_dir = local_data.get("image_dir")
+            
+            if not image_dir or not os.path.isdir(image_dir):
+                return None
+            
+            # Scan image files
+            extensions = ['*.jpg', '*.jpeg', '*.JPG', '*.JPEG']
+            image_files = []
+            for ext in extensions:
+                pattern = os.path.join(image_dir, ext)
+                image_files.extend(glob.glob(pattern))
+            
+            if not image_files:
+                return None
+            
+            # Extract numbers from filenames
+            numbers = []
+            for img_path in image_files:
+                filename = os.path.basename(img_path)
+                number = extract_image_number(filename)
+                if number is not None:
+                    numbers.append(number)
+            
+            if numbers:
+                return min(numbers)
+        
+        # For GOOGLECLOUD mode, we'd need to initialize services which is complex
+        # Skip for now - user can enter manually
+        return None
     
     def _list_available_templates(self) -> list[Dict[str, str]]:
         """

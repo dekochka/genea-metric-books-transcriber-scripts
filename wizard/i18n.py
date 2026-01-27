@@ -154,6 +154,12 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'processing.batch_size_prompt': 'Enter batch size for Google Doc writing (default: 3):',
         'processing.batch_size_default': '3',
         'processing.max_images_prompt': 'Enter maximum images to fetch from Drive (or press Enter to skip):',
+        'processing.sort_method_prompt': 'Select image sorting method:',
+        'processing.sort_method_number_extracted': 'By extracted number - Sort by numeric pattern in filename (recommended when pattern detected)',
+        'processing.sort_method_name_asc': 'By name (ascending) - Natural filename order',
+        'processing.sort_method_created': 'By created date - Oldest first',
+        'processing.sort_method_modified': 'By modified date - Oldest first',
+        'processing.sort_method_description': 'Choose how images should be sorted. "By extracted number" is recommended when numeric patterns are detected.',
         
         # Log Messages
         'log.run_summary': 'RUN SUMMARY',
@@ -176,6 +182,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'log.processing_images': 'Processing {count} images...',
         'log.processing_image': 'Processing: {name}...',
         'log.processing_image_detail': 'Processing image {current}/{total}: \'{name}\'',
+        'log.processed': 'Processed:',
+        'log.est_cost': 'Est. cost:',
         'log.output_type_log_file': 'Log File',
         'log.output_type_markdown': 'Markdown File',
         'log.output_type_word': 'Word Document',
@@ -327,6 +335,12 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'processing.batch_size_prompt': 'Введіть розмір пакета для запису в Google Doc (за замовчуванням: 3):',
         'processing.batch_size_default': '3',
         'processing.max_images_prompt': 'Введіть максимальну кількість зображень для завантаження з Drive (або натисніть Enter, щоб пропустити):',
+        'processing.sort_method_prompt': 'Виберіть метод сортування зображень:',
+        'processing.sort_method_number_extracted': 'За витягнутим номером - Сортування за числовим шаблоном у назві файлу (рекомендовано, коли шаблон виявлено)',
+        'processing.sort_method_name_asc': 'За назвою (за зростанням) - Природний порядок імен файлів',
+        'processing.sort_method_created': 'За датою створення - Спочатку найстаріші',
+        'processing.sort_method_modified': 'За датою зміни - Спочатку найстаріші',
+        'processing.sort_method_description': 'Виберіть, як слід сортувати зображення. "За витягнутим номером" рекомендується, коли виявлено числові шаблони.',
         
         # Log Messages
         'log.run_summary': 'ПІДСУМОК ВИКОНАННЯ',
@@ -349,6 +363,8 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         'log.processing_images': 'Обробка {count} зображень...',
         'log.processing_image': 'Обробка: {name}...',
         'log.processing_image_detail': 'Обробка зображення {current}/{total}: \'{name}\'',
+        'log.processed': 'Оброблено:',
+        'log.est_cost': 'Орієнтовна вартість:',
         'log.output_type_log_file': 'Файл логу',
         'log.output_type_markdown': 'Markdown файл',
         'log.output_type_word': 'Документ Word',
