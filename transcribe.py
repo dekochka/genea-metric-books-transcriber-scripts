@@ -427,11 +427,11 @@ def setup_logging(config: dict) -> tuple:
     # Configure logging with file and console handlers
     file_handler = logging.FileHandler(log_filename, encoding='utf-8')
     file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'))
+    file_handler.setFormatter(logging.Formatter('%(asctime)s [%(lineno)d] - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
     
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'))
+    console_handler.setFormatter(logging.Formatter('%(asctime)s [%(lineno)d] - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
     
     root_logger.setLevel(logging.INFO)
     root_logger.addHandler(file_handler)
