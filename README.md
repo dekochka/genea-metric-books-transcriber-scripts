@@ -1,11 +1,7 @@
-# Genea Metric Books Transcriber Scripts
+# GeneaScript - Genea Metric Books Transcriber
 
-This toolkit transcribes images of handwritten records from metric books using Google's Gemini AI models. The tool supports **two operation modes**:
-
-- **LOCAL Mode**: Process images from your local file system using Gemini Developer API (no Google Cloud setup required)
-- **GOOGLECLOUD Mode**: Process images from Google Drive using Vertex AI and write results to Google Docs (original functionality)
-
-A recovery script can rebuild the Google Doc from AI logs if the main run fails late.
+| <img src="img/GeneaScript_logo_med.png" alt="GeneaScript" width="120"/> | This toolkit transcribes images of handwritten records from metric books using Google's Gemini AI models. The tool supports **two operation modes**:<br/><br/>• **LOCAL Mode**: Process images from your local file system using Gemini Developer API (no Google Cloud setup required)<br/>• **GOOGLECLOUD Mode**: Process images from Google Drive using Vertex AI and write results to Google Docs (original functionality)<br/><br/>A recovery script can rebuild the Google Doc from AI logs if the main run fails late. |
+|:---:|:---|
 
 ## Overview
 
