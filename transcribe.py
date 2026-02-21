@@ -29,6 +29,8 @@ import base64
 import json
 import traceback
 import yaml
+import threading
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
@@ -447,6 +449,64 @@ def setup_logging(config: dict) -> tuple:
     ai_logger.propagate = False  # Prevent duplicate logging
     
     return log_filename, ai_log_filename, ai_logger
+
+
+# ------------------------- TIMEOUT UTILITIES -------------------------
+
+class TimeoutContext:
+    """Context manager for cross-platform operation timeout using threading.Timer.
+
+    Replaces Unix-only signal.SIGALRM with cross-platform threading approach.
+    Timer runs in daemon thread and sets timeout flag if operation exceeds duration.
+    Automatic cleanup via __exit__ ensures timer.cancel() always called.
+
+    Args:
+        timeout_seconds: Maximum duration in seconds before timeout
+        operation_name: Descriptive name for timeout error messages
+
+    Raises:
+        TimeoutError: If operation exceeds timeout_seconds
+
+    Example:
+        try:
+            with TimeoutContext(60, "API call"):
+                response = api_client.call()
+        except TimeoutError:
+            # Handle timeout
+    """
+
+    def __init__(self, timeout_seconds: int, operation_name: str):
+        """Initialize timeout context with duration and operation name."""
+        self.timeout_seconds = timeout_seconds
+        self.operation_name = operation_name
+        self.timed_out = False
+        self.start_time = None
+        self.timer = None
+
+    def _on_timeout(self):
+        """Callback that sets timed_out flag when timer fires."""
+        self.timed_out = True
+
+    def __enter__(self):
+        """Start timer as daemon thread and record start time."""
+        self.start_time = time.time()
+        self.timer = threading.Timer(self.timeout_seconds, self._on_timeout)
+        self.timer.daemon = True  # Daemon thread won't block program exit
+        self.timer.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Cancel timer, check timed_out flag, raise TimeoutError if timeout occurred."""
+        if self.timer is not None:
+            self.timer.cancel()
+
+        if self.timed_out:
+            elapsed = time.time() - self.start_time
+            raise TimeoutError(
+                f"{self.operation_name} timed out after {self.timeout_seconds}s (elapsed: {elapsed:.1f}s)"
+            )
+
+        return False  # Don't suppress exceptions
 
 
 # ------------------------- MODE ABSTRACTION LAYER - STRATEGY PATTERN -------------------------
