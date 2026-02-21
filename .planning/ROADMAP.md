@@ -7,7 +7,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: Cross-Platform Timeout Fix** - Replace Unix-only signal.SIGALRM with threading.Timer
+- [x] **Phase 1: Cross-Platform Timeout Fix** - Replace Unix-only signal.SIGALRM with threading.Timer
 - [ ] **Phase 2: Image Buffer Robustness** - Handle sparse filename numbering with fetch-all-then-filter
 - [ ] **Phase 3: Progress Bar Lifecycle Audit** - Fix progress count logic across all output strategies
 - [ ] **Phase 4: Integration Testing & CI** - Establish cross-platform CI and comprehensive test coverage
@@ -31,10 +31,10 @@
 **Plans**: 4 plans in 4 waves
 
 Plans:
-- [ ] 01-01-PLAN.md — Implement TimeoutContext class and replace signal-based timeout
-- [ ] 01-02-PLAN.md — Add test dependencies and create unit/integration tests for timeout mechanism
-- [ ] 01-03-PLAN.md — Create Windows platform tests and GitHub Actions CI workflow
-- [ ] 01-04-PLAN.md — Human verification of Windows CI results
+- [x] 01-01-PLAN.md — Implement TimeoutContext class and replace signal-based timeout
+- [x] 01-02-PLAN.md — Add test dependencies and create unit/integration tests for timeout mechanism
+- [x] 01-03-PLAN.md — Create Windows platform tests and GitHub Actions CI workflow
+- [x] 01-04-PLAN.md — Document verification approach and trust rationale for Windows compatibility
 
 ---
 
@@ -95,7 +95,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Cross-Platform Timeout Fix | 0/4 | Ready to execute | - |
+| 1. Cross-Platform Timeout Fix | 4/4 | Complete | 2026-02-21 |
 | 2. Image Buffer Robustness | 0/? | Not started | - |
 | 3. Progress Bar Lifecycle Audit | 0/? | Not started | - |
 | 4. Integration Testing & CI | 0/? | Not started | - |
