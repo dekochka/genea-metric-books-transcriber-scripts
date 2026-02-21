@@ -53,6 +53,9 @@ except ImportError:
     print("WARNING: python-docx not installed. Word output will not be available.")
     print("Install with: pip install python-docx>=0.8.11")
 
+# Module-level logger for AI responses (used by transcribe_image)
+ai_logger = logging.getLogger('ai_responses')
+
 # ------------------------- CONFIGURATION LOADING -------------------------
 
 def load_config(config_path: str) -> dict:
