@@ -2493,10 +2493,16 @@ def list_images(drive_service, config: dict):
             files = resp.get('files', [])
             if not files:
                 break
-                
+
             all_images.extend(files)
+
+            # Truncate to max_images if we exceeded the limit
+            if len(all_images) > max_images:
+                all_images = all_images[:max_images]
+                break  # Stop fetching - we have enough images
+
             page_token = resp.get('nextPageToken')
-            
+
             if not page_token:
                 break
                 

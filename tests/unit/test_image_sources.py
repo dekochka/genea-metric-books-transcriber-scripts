@@ -264,3 +264,29 @@ class TestDriveImageSource:
         assert len(result) == 100
         assert result[0]['name'] == 'image00050.jpg'
         assert result[99]['name'] == 'image00149.jpg'
+
+    @patch('transcribe.list_images')
+    def test_drive_respects_max_images_limit(self, mock_list_images, mock_drive_service):
+        """Test DriveImageSource respects user's max_images config limit."""
+        # Mock list_images to return only up to max_images
+        # Simulate what happens when max_images=150 and folder has 500 images
+        mock_files = [{'id': str(i), 'name': f'image{i:05d}.jpg', 'webViewLink': f'https://drive.google.com/{i}'}
+                      for i in range(1, 151)]  # Only first 150 images
+
+        mock_list_images.return_value = mock_files
+
+        source = DriveImageSource(mock_drive_service, "test_folder")
+        config = {
+            'drive_folder_id': 'test_folder',
+            'image_start_number': 1,
+            'image_count': 500,  # Request 500 images
+            'image_sort_method': 'name_asc',
+            'max_images': 150  # But limit fetch to 150
+        }
+
+        result = source.list_images(config)
+
+        # Should find only 150 images (limited by max_images)
+        assert len(result) == 150
+        assert result[0]['name'] == 'image00001.jpg'
+        assert result[149]['name'] == 'image00150.jpg'
