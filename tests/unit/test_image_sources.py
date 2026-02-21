@@ -156,3 +156,137 @@ class TestDriveImageSource:
         img_info = {'name': 'image1.jpg', 'webViewLink': 'https://drive.google.com/file/view'}
         url = source.get_image_url(img_info)
         assert url == 'https://drive.google.com/file/view'
+
+    @patch('transcribe.list_images')
+    def test_drive_sparse_numbering(self, mock_list_images, mock_drive_service):
+        """Test DriveImageSource handles sparse filename numbering (gaps of 100+)."""
+        # Mock list_images to return images with large gaps: img_0500, img_0520, img_0700, img_0800
+        mock_files = [
+            {'id': '1', 'name': 'image00500.jpg', 'webViewLink': 'https://drive.google.com/1'},
+            {'id': '2', 'name': 'image00520.jpg', 'webViewLink': 'https://drive.google.com/2'},
+            {'id': '3', 'name': 'image00700.jpg', 'webViewLink': 'https://drive.google.com/3'},
+            {'id': '4', 'name': 'image00800.jpg', 'webViewLink': 'https://drive.google.com/4'},
+        ]
+        mock_list_images.return_value = mock_files
+
+        source = DriveImageSource(mock_drive_service, "test_folder")
+        config = {
+            'drive_folder_id': 'test_folder',
+            'image_start_number': 500,
+            'image_count': 301,  # Should capture 500, 520, 700, 800
+            'image_sort_method': 'name_asc'
+        }
+
+        result = source.list_images(config)
+
+        # Should find all 4 images (500, 520, 700, 800 all in range 500-800)
+        assert len(result) == 4
+        assert result[0]['name'] == 'image00500.jpg'
+        assert result[3]['name'] == 'image00800.jpg'
+
+    @patch('transcribe.list_images')
+    def test_drive_contiguous_numbering(self, mock_list_images, mock_drive_service):
+        """Test DriveImageSource handles contiguous numbering (1, 2, 3, ...)."""
+        mock_files = [{'id': str(i), 'name': f'image{i:05d}.jpg', 'webViewLink': f'https://drive.google.com/{i}'}
+                      for i in range(1, 51)]
+        mock_list_images.return_value = mock_files[9:29]  # Return filtered result
+
+        source = DriveImageSource(mock_drive_service, "test_folder")
+        config = {
+            'drive_folder_id': 'test_folder',
+            'image_start_number': 10,
+            'image_count': 20,
+            'image_sort_method': 'name_asc'
+        }
+
+        result = source.list_images(config)
+
+        # Should find exactly 20 images (10-29)
+        assert len(result) == 20
+        assert result[0]['name'] == 'image00010.jpg'
+        assert result[19]['name'] == 'image00029.jpg'
+
+    @patch('transcribe.list_images')
+    def test_drive_empty_folder(self, mock_list_images, mock_drive_service):
+        """Test DriveImageSource handles empty folder gracefully."""
+        mock_list_images.return_value = []
+
+        source = DriveImageSource(mock_drive_service, "test_folder")
+        config = {
+            'drive_folder_id': 'test_folder',
+            'image_start_number': 1,
+            'image_count': 10,
+            'image_sort_method': 'name_asc'
+        }
+
+        result = source.list_images(config)
+        assert len(result) == 0
+
+    @patch('transcribe.list_images')
+    def test_drive_single_image(self, mock_list_images, mock_drive_service):
+        """Test DriveImageSource handles single image in folder."""
+        mock_list_images.return_value = [
+            {'id': '1', 'name': 'image00001.jpg', 'webViewLink': 'https://drive.google.com/1'}
+        ]
+
+        source = DriveImageSource(mock_drive_service, "test_folder")
+        config = {
+            'drive_folder_id': 'test_folder',
+            'image_start_number': 1,
+            'image_count': 1,
+            'image_sort_method': 'name_asc'
+        }
+
+        result = source.list_images(config)
+        assert len(result) == 1
+        assert result[0]['name'] == 'image00001.jpg'
+
+    @patch('transcribe.list_images')
+    def test_drive_pagination_large_folder(self, mock_list_images, mock_drive_service):
+        """Test DriveImageSource handles pagination for 1000+ images."""
+        # Mock list_images to return paginated results (100 images across 2 pages)
+        mock_files = [{'id': str(i), 'name': f'image{i:05d}.jpg', 'webViewLink': f'https://drive.google.com/{i}'}
+                      for i in range(50, 150)]  # Return filtered result (50-149)
+
+        mock_list_images.return_value = mock_files
+
+        source = DriveImageSource(mock_drive_service, "test_folder")
+        config = {
+            'drive_folder_id': 'test_folder',
+            'image_start_number': 50,
+            'image_count': 100,
+            'image_sort_method': 'name_asc'
+        }
+
+        result = source.list_images(config)
+
+        # Should find 100 images (50-149)
+        assert len(result) == 100
+        assert result[0]['name'] == 'image00050.jpg'
+        assert result[99]['name'] == 'image00149.jpg'
+
+    @patch('transcribe.list_images')
+    def test_drive_respects_max_images_limit(self, mock_list_images, mock_drive_service):
+        """Test DriveImageSource respects user's max_images config limit."""
+        # Mock list_images to return only up to max_images
+        # Simulate what happens when max_images=150 and folder has 500 images
+        mock_files = [{'id': str(i), 'name': f'image{i:05d}.jpg', 'webViewLink': f'https://drive.google.com/{i}'}
+                      for i in range(1, 151)]  # Only first 150 images
+
+        mock_list_images.return_value = mock_files
+
+        source = DriveImageSource(mock_drive_service, "test_folder")
+        config = {
+            'drive_folder_id': 'test_folder',
+            'image_start_number': 1,
+            'image_count': 500,  # Request 500 images
+            'image_sort_method': 'name_asc',
+            'max_images': 150  # But limit fetch to 150
+        }
+
+        result = source.list_images(config)
+
+        # Should find only 150 images (limited by max_images)
+        assert len(result) == 150
+        assert result[0]['name'] == 'image00001.jpg'
+        assert result[149]['name'] == 'image00150.jpg'

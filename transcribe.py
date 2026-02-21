@@ -2433,30 +2433,28 @@ def list_images(drive_service, config: dict):
         raise KeyError("'drive_folder_id' not found in config (checked googlecloud.drive_folder_id and top-level)")
     
     document_name = googlecloud_config.get('document_name') or config.get('document_name', 'Unknown')
-    
-    # Auto-calculate max_images if not provided
-    # Use image_start_number + image_count + buffer to ensure we fetch enough images
+
+    # Safety limit for pagination (prevents infinite loops in edge cases)
+    MAX_IMAGES_SAFETY_LIMIT = 10000
+
+    # Respect user's max_images config if provided, otherwise use safety limit
+    # This allows users to limit API calls while still supporting large folders
     max_images = config.get('max_images')
     if max_images is None:
-        image_start_number = config.get('image_start_number', 1)
-        image_count = config.get('image_count', 1)
-        # Calculate needed: start + count - 1, plus buffer for non-matching images
-        # Buffer of 200 images to account for images that don't match the pattern
-        calculated_max = image_start_number + image_count + 200
-        # But cap at reasonable maximum (1,000) to avoid excessive API calls
-        max_images = min(calculated_max, 1000)
-        logging.info(f"Auto-calculated max_images: {max_images} (based on image_start_number={image_start_number}, image_count={image_count})")
-    
+        max_images = MAX_IMAGES_SAFETY_LIMIT
+
+    logging.info(f"Fetching all images from folder {drive_folder_id} (pagination enabled for large folders, max {max_images})")
+
     retry_mode = config.get('retry_mode', False)
     retry_image_list = config.get('retry_image_list', [])
     image_start_number = config.get('image_start_number', 1)
     image_count = config.get('image_count')
     if image_count is None:
         raise KeyError("'image_count' not found in config")
-    
+
     # Get sort method from config (default: name_asc)
     sort_method = config.get('image_sort_method', 'name_asc')
-    
+
     # Map sort method to Drive API orderBy parameter
     order_by_map = {
         'name_asc': 'name',
@@ -2464,15 +2462,15 @@ def list_images(drive_service, config: dict):
         'modified_date': 'modifiedTime'
     }
     order_by = order_by_map.get(sort_method, 'name')
-    
+
     query = (
         f"mimeType='image/jpeg' and '{drive_folder_id}' in parents and trashed=false"
     )
-    
+
     all_images = []
     page_token = None
-    
-    # Fetch all images with pagination (up to max_images)
+
+    # Fetch all images with pagination (up to max_images limit)
     while len(all_images) < max_images:
         try:
             # Request fields based on sort method
@@ -2495,10 +2493,16 @@ def list_images(drive_service, config: dict):
             files = resp.get('files', [])
             if not files:
                 break
-                
+
             all_images.extend(files)
+
+            # Truncate to max_images if we exceeded the limit
+            if len(all_images) > max_images:
+                all_images = all_images[:max_images]
+                break  # Stop fetching - we have enough images
+
             page_token = resp.get('nextPageToken')
-            
+
             if not page_token:
                 break
                 
@@ -2529,9 +2533,14 @@ def list_images(drive_service, config: dict):
             else:
                 logging.error(f"Error fetching images from Google Drive: {str(e)}")
                 break
-    
-    # Limit to max_images
-    all_images = all_images[:max_images]
+
+    # Warn if limit was reached
+    if len(all_images) >= max_images:
+        if max_images == MAX_IMAGES_SAFETY_LIMIT:
+            logging.warning(f"Reached safety limit of {max_images} images. Folder may contain more images.")
+        else:
+            logging.warning(f"Reached configured max_images limit of {max_images}. Folder may contain more images.")
+
     sort_desc = {
         'name_asc': 'by name (ascending)',
         'created_date': 'by created date',
