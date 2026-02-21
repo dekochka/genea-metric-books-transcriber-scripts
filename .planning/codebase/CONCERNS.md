@@ -56,12 +56,14 @@
 - Workaround: Recent fix in v0.5-beta-wizard-mode but may have edge cases
 - Fix: Comprehensive audit of all progress bar update call sites
 
-**Image Number Buffer Insufficient for Sparse Naming:**
-- Symptoms: Script may not fetch enough images if filenames are very sparse
-- Files: `transcribe.py:2372-2378`
-- Trigger: Using `image_start_number=500` with only 20 actual images in folder, buffer of 200 may not be enough
-- Workaround: Fetch more images than needed (current 200-image buffer)
-- Fix: Fetch ALL images first, then filter and select range. More robust but slower for large folders.
+**Image Number Buffer Insufficient for Sparse Naming:** ✅ FIXED
+- Status: Fixed in Phase 2 (2026-02-21)
+- Previous symptoms: Script would not fetch enough images if filenames were very sparse (e.g., gaps of 100+ between numbers)
+- Previous trigger: Using `image_start_number=500` with sparse numbering (500, 520, 700, 800), 200-image buffer would miss higher-numbered files
+- Fix implemented: Fetch ALL images first with pagination (up to user's `max_images` or 10,000 safety limit), then filter by image number range
+- Files changed: `transcribe.py:2437-2474`
+- Backward compatibility: Preserved - respects user's `max_images` config if provided
+- Test coverage: 5 comprehensive unit tests added covering sparse, contiguous, empty, single-image, and pagination scenarios
 
 ## Security Considerations
 
