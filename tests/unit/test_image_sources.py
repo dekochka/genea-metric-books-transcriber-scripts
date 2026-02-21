@@ -91,11 +91,13 @@ class TestLocalImageSource:
         assert bytes_data == b"fake image 1"
     
     def test_get_image_url(self, test_image_dir):
-        """Test get_image_url() returns file path."""
+        """Test get_image_url() returns file path with normalized separators."""
         source = LocalImageSource(test_image_dir)
         img_info = {'name': 'image00001.jpg', 'path': os.path.join(test_image_dir, 'image00001.jpg')}
         url = source.get_image_url(img_info)
-        assert url == img_info['path']
+        # get_image_url() normalizes path separators to forward slashes for cross-platform compatibility
+        expected_url = img_info['path'].replace('\\', '/')
+        assert url == expected_url
 
 
 class TestDriveImageSource:

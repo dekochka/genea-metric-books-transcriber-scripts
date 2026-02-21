@@ -664,11 +664,14 @@ class LocalImageSource(ImageSourceStrategy):
         # Supported extensions (case-insensitive)
         extensions = ['*.jpg', '*.jpeg', '*.JPG', '*.JPEG']
         all_image_paths = []
-        
+
         for ext in extensions:
             pattern = os.path.join(self.image_dir, ext)
             all_image_paths.extend(glob.glob(pattern))
-        
+
+        # Deduplicate paths (Windows filesystem is case-insensitive, may return duplicates)
+        all_image_paths = list(set(all_image_paths))
+
         # Get sort method from config (default: name_asc)
         sort_method = config.get('image_sort_method', 'name_asc')
         
