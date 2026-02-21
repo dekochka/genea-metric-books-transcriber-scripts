@@ -97,10 +97,11 @@ if max_images is None:
 - Filtering by image_start_number and image_count (lines 2644-2646) - this is the correct behavior
 
 **Implementation details:**
-- Remove lines 2437-2448 (max_images calculation)
-- Change line 2476 from `while len(all_images) < max_images:` to `while True:`
+- Remove lines 2437-2448 (max_images calculation), replace with safety limit: `MAX_IMAGES_SAFETY_LIMIT = 10000  # Safety limit for pagination`
+- Change line 2476 from `while len(all_images) < max_images:` to `while len(all_images) < MAX_IMAGES_SAFETY_LIMIT:`
+- Keep safety check with informative error if limit hit
 - Remove line 2534 `all_images = all_images[:max_images]` (no longer needed)
-- Add early logging after drive_folder_id extraction: `logging.info(f"Fetching all images from folder {drive_folder_id} (pagination enabled for large folders)")`
+- Add early logging after drive_folder_id extraction: `logging.info(f"Fetching all images from folder {drive_folder_id} (pagination enabled for large folders, max {MAX_IMAGES_SAFETY_LIMIT})")`
 
 **Why this works for sparse patterns:**
 - Old: Buffer limited to start + count + 200, so img_0500 to img_0700 would fetch up to ~920 images, missing img_0800+
