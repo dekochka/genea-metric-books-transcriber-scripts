@@ -109,12 +109,17 @@ class TestTimeoutIntegration:
         mock_models.generate_content.side_effect = generate_content_side_effect
 
         # Mock time.time() for elapsed time calculations (multiple timeout scenarios)
-        time_values = [0, 0, 0, 0]  # function start, attempt 1 start
-        time_values.extend([60.1, 60.1, 60.1, 60.1])  # attempt 1 timeout
-        time_values.extend([90, 90, 90, 90])  # after retry delay
-        time_values.extend([210, 210, 210, 210])  # attempt 2 timeout (90 + 120)
-        time_values.extend([240, 240, 240, 240])  # after retry delay
-        time_values.extend([540, 540, 540, 540])  # attempt 3 timeout (240 + 300)
+        # Use itertools.cycle to handle any number of time.time() calls (including logging)
+        from itertools import cycle, chain
+        time_values = chain(
+            [0, 0, 0, 0],  # function start, attempt 1 start
+            [60.1, 60.1, 60.1, 60.1],  # attempt 1 timeout
+            [90, 90, 90, 90],  # after retry delay
+            [210, 210, 210, 210],  # attempt 2 timeout (90 + 120)
+            [240, 240, 240, 240],  # after retry delay
+            [540, 540, 540, 540],  # attempt 3 timeout (240 + 300)
+            cycle([540])  # Infinite 540 for any additional time.time() calls (e.g., logging)
+        )
 
         with patch('transcribe.time.time', side_effect=time_values):
             # Call transcribe_image
@@ -187,12 +192,17 @@ class TestTimeoutIntegration:
                 return self.ctx.__exit__(exc_type, exc_val, exc_tb)
 
         # Mock time.time() for elapsed time calculations
-        time_values = [0, 0, 0, 0]  # function start, attempt 1 start
-        time_values.extend([60.1, 60.1, 60.1, 60.1])  # attempt 1 timeout
-        time_values.extend([90, 90, 90, 90])  # after retry delay
-        time_values.extend([210, 210, 210, 210])  # attempt 2 timeout
-        time_values.extend([240, 240, 240, 240])  # after retry delay
-        time_values.extend([540, 540, 540, 540])  # attempt 3 timeout
+        # Use itertools.cycle to handle any number of time.time() calls (including logging)
+        from itertools import cycle, chain
+        time_values = chain(
+            [0, 0, 0, 0],  # function start, attempt 1 start
+            [60.1, 60.1, 60.1, 60.1],  # attempt 1 timeout
+            [90, 90, 90, 90],  # after retry delay
+            [210, 210, 210, 210],  # attempt 2 timeout
+            [240, 240, 240, 240],  # after retry delay
+            [540, 540, 540, 540],  # attempt 3 timeout
+            cycle([540])  # Infinite 540 for any additional time.time() calls (e.g., logging)
+        )
 
         with patch('transcribe.TimeoutContext', MockTimeoutContext):
             with patch('transcribe.time.time', side_effect=time_values):
