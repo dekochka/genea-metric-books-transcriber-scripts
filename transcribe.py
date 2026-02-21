@@ -2795,9 +2795,6 @@ def download_image(drive_service, file_id, file_name, document_name: str):
 
 
 def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr_model_id: str):
-    import signal
-    import time
-    
     function_start_time = time.time()
     logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription for image '{file_name}' (size: {len(image_bytes)} bytes)")
     ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting transcription for {file_name} ===")
@@ -2855,37 +2852,25 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
     for attempt in range(max_retries):
         attempt_start_time = time.time()
         timeout_seconds = timeout_seconds_list[attempt]
-        
-        # Define timeout handler inside loop to properly capture timeout_seconds
-        def timeout_handler(signum, frame):
-            elapsed = time.time() - function_start_time
-            error_msg = f"Vertex AI API call timed out after {timeout_seconds/60:.1f} minutes (total elapsed: {elapsed:.1f}s) for {file_name}"
-            logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] {error_msg}")
-            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] TIMEOUT: {error_msg}")
-            raise TimeoutError(error_msg)
-        
+
         try:
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} for image '{file_name}' (timeout: {timeout_seconds/60:.1f} min)")
             ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} starting for {file_name} (timeout: {timeout_seconds/60:.1f} min)")
-            
-            # Set up timeout with exponential backoff (1 min, 2 min, 5 min)
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(timeout_seconds)
+
+            # Cross-platform timeout using threading.Timer (replaces Unix-only signal.SIGALRM)
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Timeout set to {timeout_seconds/60:.1f} minutes for '{file_name}' (attempt {attempt + 1}/{max_retries})")
-            
+
             api_call_start = time.time()
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Making API call to Vertex AI for '{file_name}'...")
             ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] API call initiated for {file_name}")
-            
-            # Generate content
-            response = genai_client.models.generate_content(
-                model=ocr_model_id,
-                contents=[content],
-                config=generate_content_config
-            )
-            
-            # Cancel the timeout
-            signal.alarm(0)
+
+            # Generate content with timeout context
+            with TimeoutContext(timeout_seconds, f"Vertex AI call for {file_name}"):
+                response = genai_client.models.generate_content(
+                    model=ocr_model_id,
+                    contents=[content],
+                    config=generate_content_config
+                )
             
             api_call_elapsed = time.time() - api_call_start
             elapsed_time = time.time() - attempt_start_time
@@ -2947,9 +2932,6 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
             return text, elapsed_time, usage_metadata
             
         except (TimeoutError, ConnectionError, OSError) as e:
-            # Cancel any pending timeout
-            signal.alarm(0)
-            
             attempt_elapsed = time.time() - attempt_start_time
             total_elapsed = time.time() - function_start_time
             error_type = type(e).__name__
@@ -3002,9 +2984,6 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
             
             # If it's a timeout error, treat it like TimeoutError and retry
             if is_timeout_error and attempt < max_retries - 1:
-                # Cancel any pending timeout
-                signal.alarm(0)
-                
                 attempt_elapsed = time.time() - attempt_start_time
                 total_elapsed = time.time() - function_start_time
                 
@@ -3020,11 +2999,8 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
                 retry_delay *= 2  # Exponential backoff
                 logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retry delay completed, starting attempt {attempt + 2}/{max_retries}...")
                 continue  # Explicitly continue to next iteration
-                
+
             # Not a timeout error or all retries exhausted - handle as unexpected error
-            # Cancel any pending timeout
-            signal.alarm(0)
-            
             attempt_elapsed = time.time() - attempt_start_time
             total_elapsed = time.time() - function_start_time
             error_type = type(e).__name__
