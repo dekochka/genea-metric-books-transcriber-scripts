@@ -28,7 +28,13 @@
 4. Retry logic preserves exponential backoff behavior unchanged from signal-based implementation
 5. Thread resources are cleaned up on both success and failure code paths
 
-**Plans**: TBD
+**Plans**: 4 plans in 4 waves
+
+Plans:
+- [ ] 01-01-PLAN.md — Implement TimeoutContext class and replace signal-based timeout
+- [ ] 01-02-PLAN.md — Add test dependencies and create unit/integration tests for timeout mechanism
+- [ ] 01-03-PLAN.md — Create Windows platform tests and GitHub Actions CI workflow
+- [ ] 01-04-PLAN.md — Human verification of Windows CI results
 
 ---
 
@@ -89,7 +95,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Cross-Platform Timeout Fix | 0/? | Not started | - |
+| 1. Cross-Platform Timeout Fix | 0/4 | Ready to execute | - |
 | 2. Image Buffer Robustness | 0/? | Not started | - |
 | 3. Progress Bar Lifecycle Audit | 0/? | Not started | - |
 | 4. Integration Testing & CI | 0/? | Not started | - |
@@ -134,4 +140,5 @@ Phase 4 (Validates all fixes)
 
 ---
 *Roadmap created: 2026-02-21*
-*Next action: `/gsd:plan-phase 1`*
+*Phase 1 planned: 2026-02-21*
+*Next action: `/gsd:execute-phase 1`*
