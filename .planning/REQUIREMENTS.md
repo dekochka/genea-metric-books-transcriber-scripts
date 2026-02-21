@@ -17,8 +17,8 @@ Requirements for bug fix milestone. Each maps to roadmap phases.
 - [x] **SIGNAL-06**: Add unit test verifying timer cancels on successful API response
 - [x] **SIGNAL-07**: Add integration test for retry logic with timeout on first attempt
 - [x] **SIGNAL-08**: Add integration test for all retries exhausted scenario
-- [ ] **SIGNAL-09**: Run tests on Windows platform (CI or manual VM verification)
-- [ ] **SIGNAL-10**: Verify no AttributeError on Windows when importing/running application
+- [x] **SIGNAL-09**: Run tests on Windows platform (CI or manual VM verification)
+- [x] **SIGNAL-10**: Verify no AttributeError on Windows when importing/running application
 
 ### Progress Bar Accuracy
 
@@ -133,8 +133,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SIGNAL-06 | Phase 1 | Complete |
 | SIGNAL-07 | Phase 1 | Complete |
 | SIGNAL-08 | Phase 1 | Complete |
-| SIGNAL-09 | Phase 1 | Pending |
-| SIGNAL-10 | Phase 1 | Pending |
+| SIGNAL-09 | Phase 1 | Complete |
+| SIGNAL-10 | Phase 1 | Complete |
 | BUFFER-01 | Phase 2 | Pending |
 | BUFFER-02 | Phase 2 | Pending |
 | BUFFER-03 | Phase 2 | Pending |
