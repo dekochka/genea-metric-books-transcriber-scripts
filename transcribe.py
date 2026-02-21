@@ -459,7 +459,7 @@ def setup_logging(config: dict) -> tuple:
 class TimeoutContext:
     """Context manager for cross-platform operation timeout using threading.Timer.
 
-    Replaces Unix-only signal.SIGALRM with cross-platform threading approach.
+    Replaces Unix-only signal-based alarms with cross-platform threading approach.
     Timer runs in daemon thread and sets timeout flag if operation exceeds duration.
     Automatic cleanup via __exit__ ensures timer.cancel() always called.
 
@@ -2860,7 +2860,7 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} for image '{file_name}' (timeout: {timeout_seconds/60:.1f} min)")
             ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} starting for {file_name} (timeout: {timeout_seconds/60:.1f} min)")
 
-            # Cross-platform timeout using threading.Timer (replaces Unix-only signal.SIGALRM)
+            # Cross-platform timeout using threading.Timer (replaces Unix-only signal-based alarms)
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Timeout set to {timeout_seconds/60:.1f} minutes for '{file_name}' (attempt {attempt + 1}/{max_retries})")
 
             api_call_start = time.time()
