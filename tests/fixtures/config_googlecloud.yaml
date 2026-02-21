@@ -7,7 +7,7 @@ googlecloud:
   drive_folder_id: "1YHAeW5Yi8oeKqvQHHKHf8u0o_MpTKJPR"
   region: "global"
   ocr_model_id: "gemini-3-flash-preview"
-  adc_file: "application_default_credentials.json"
+  adc_file: "tests/fixtures/mock_adc.json"
   document_name: "Test Document"
   title_page_filename: "cover-title-page.jpg"
 
