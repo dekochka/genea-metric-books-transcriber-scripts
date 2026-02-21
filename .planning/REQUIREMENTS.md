@@ -9,10 +9,10 @@ Requirements for bug fix milestone. Each maps to roadmap phases.
 
 ### Signal Handling (Cross-Platform Compatibility)
 
-- [ ] **SIGNAL-01**: Replace signal.SIGALRM with threading.Timer in VertexAIClient retry logic
-- [ ] **SIGNAL-02**: Preserve exponential backoff timing (60s, 120s, 300s) across all timeout attempts
-- [ ] **SIGNAL-03**: Handle TimeoutError exceptions consistently with existing retry mechanism
-- [ ] **SIGNAL-04**: Clean up timer resources on both success and failure paths
+- [x] **SIGNAL-01**: Replace signal.SIGALRM with threading.Timer in VertexAIClient retry logic
+- [x] **SIGNAL-02**: Preserve exponential backoff timing (60s, 120s, 300s) across all timeout attempts
+- [x] **SIGNAL-03**: Handle TimeoutError exceptions consistently with existing retry mechanism
+- [x] **SIGNAL-04**: Clean up timer resources on both success and failure paths
 - [ ] **SIGNAL-05**: Add unit test verifying timeout fires correctly after specified duration
 - [ ] **SIGNAL-06**: Add unit test verifying timer cancels on successful API response
 - [ ] **SIGNAL-07**: Add integration test for retry logic with timeout on first attempt
@@ -70,7 +70,7 @@ Requirements for bug fix milestone. Each maps to roadmap phases.
 - [ ] **QUALITY-01**: Add changelog entries for all three bug fixes with clear user impact description
 - [ ] **QUALITY-02**: Verify backward compatibility with legacy flat YAML config format
 - [ ] **QUALITY-03**: Verify backward compatibility with new wizard-generated hierarchical config format
-- [ ] **QUALITY-04**: Document threading.Timer timeout mechanism in code comments
+- [x] **QUALITY-04**: Document threading.Timer timeout mechanism in code comments
 - [ ] **QUALITY-05**: Document progress bar state machine in inline comments
 - [ ] **QUALITY-06**: Update README with Windows compatibility confirmation
 - [ ] **QUALITY-07**: Run full regression test suite in both LOCAL and GOOGLECLOUD modes
@@ -125,10 +125,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SIGNAL-01 | Phase 1 | Pending |
-| SIGNAL-02 | Phase 1 | Pending |
-| SIGNAL-03 | Phase 1 | Pending |
-| SIGNAL-04 | Phase 1 | Pending |
+| SIGNAL-01 | Phase 1 | Complete |
+| SIGNAL-02 | Phase 1 | Complete |
+| SIGNAL-03 | Phase 1 | Complete |
+| SIGNAL-04 | Phase 1 | Complete |
 | SIGNAL-05 | Phase 1 | Pending |
 | SIGNAL-06 | Phase 1 | Pending |
 | SIGNAL-07 | Phase 1 | Pending |
@@ -174,7 +174,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | QUALITY-01 | Phase 4 | Pending |
 | QUALITY-02 | Phase 4 | Pending |
 | QUALITY-03 | Phase 4 | Pending |
-| QUALITY-04 | Phase 1 | Pending |
+| QUALITY-04 | Phase 1 | Complete |
 | QUALITY-05 | Phase 3 | Pending |
 | QUALITY-06 | Phase 4 | Pending |
 | QUALITY-07 | Phase 4 | Pending |
