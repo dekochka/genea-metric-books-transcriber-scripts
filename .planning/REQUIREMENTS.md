@@ -13,10 +13,10 @@ Requirements for bug fix milestone. Each maps to roadmap phases.
 - [x] **SIGNAL-02**: Preserve exponential backoff timing (60s, 120s, 300s) across all timeout attempts
 - [x] **SIGNAL-03**: Handle TimeoutError exceptions consistently with existing retry mechanism
 - [x] **SIGNAL-04**: Clean up timer resources on both success and failure paths
-- [ ] **SIGNAL-05**: Add unit test verifying timeout fires correctly after specified duration
-- [ ] **SIGNAL-06**: Add unit test verifying timer cancels on successful API response
-- [ ] **SIGNAL-07**: Add integration test for retry logic with timeout on first attempt
-- [ ] **SIGNAL-08**: Add integration test for all retries exhausted scenario
+- [x] **SIGNAL-05**: Add unit test verifying timeout fires correctly after specified duration
+- [x] **SIGNAL-06**: Add unit test verifying timer cancels on successful API response
+- [x] **SIGNAL-07**: Add integration test for retry logic with timeout on first attempt
+- [x] **SIGNAL-08**: Add integration test for all retries exhausted scenario
 - [ ] **SIGNAL-09**: Run tests on Windows platform (CI or manual VM verification)
 - [ ] **SIGNAL-10**: Verify no AttributeError on Windows when importing/running application
 
@@ -129,10 +129,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SIGNAL-02 | Phase 1 | Complete |
 | SIGNAL-03 | Phase 1 | Complete |
 | SIGNAL-04 | Phase 1 | Complete |
-| SIGNAL-05 | Phase 1 | Pending |
-| SIGNAL-06 | Phase 1 | Pending |
-| SIGNAL-07 | Phase 1 | Pending |
-| SIGNAL-08 | Phase 1 | Pending |
+| SIGNAL-05 | Phase 1 | Complete |
+| SIGNAL-06 | Phase 1 | Complete |
+| SIGNAL-07 | Phase 1 | Complete |
+| SIGNAL-08 | Phase 1 | Complete |
 | SIGNAL-09 | Phase 1 | Pending |
 | SIGNAL-10 | Phase 1 | Pending |
 | BUFFER-01 | Phase 2 | Pending |
