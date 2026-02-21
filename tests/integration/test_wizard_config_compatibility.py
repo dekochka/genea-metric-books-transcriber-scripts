@@ -153,17 +153,17 @@ class TestConfigCompatibility:
             assert legacy_mode == 'local'
         except ValueError:
             # If validation fails, at least verify the file structure
-            with open(legacy_path, 'r') as f:
+            with open(legacy_path, 'r', encoding='utf-8') as f:
                 legacy_data = yaml.safe_load(f)
             assert legacy_data['mode'] == 'local'
-        
+
         try:
             wizard_loaded = load_config(wizard_path)
             wizard_mode = detect_mode(wizard_loaded)
             assert wizard_mode == 'local'
         except ValueError:
             # If validation fails, at least verify the file structure
-            with open(wizard_path, 'r') as f:
+            with open(wizard_path, 'r', encoding='utf-8') as f:
                 wizard_data = yaml.safe_load(f)
             assert wizard_data['mode'] == 'local'
     
@@ -188,9 +188,9 @@ class TestConfigCompatibility:
             yaml.dump(wizard_config, f, default_flow_style=False, allow_unicode=True)
         
         # Load configs directly (bypassing load_config validation)
-        with open(legacy_path, 'r') as f:
+        with open(legacy_path, 'r', encoding='utf-8') as f:
             legacy_loaded = yaml.safe_load(f)
-        with open(wizard_path, 'r') as f:
+        with open(wizard_path, 'r', encoding='utf-8') as f:
             wizard_loaded = yaml.safe_load(f)
         
         # validate_config should accept both formats (may fail for missing files, but format is valid)
@@ -269,7 +269,7 @@ class TestConfigCompatibility:
             assert 'context' in config
         except ValueError:
             # If validation fails, at least verify structure
-            with open(config_path, 'r') as f:
+            with open(config_path, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
             assert 'prompt_file' in config
             assert 'prompt_template' in config

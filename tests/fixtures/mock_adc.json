@@ -1,0 +1,7 @@
+{
+  "type": "authorized_user",
+  "client_id": "mock-client-id.apps.googleusercontent.com",
+  "client_secret": "mock-client-secret",
+  "refresh_token": "mock-refresh-token",
+  "token_uri": "https://oauth2.googleapis.com/token"
+}

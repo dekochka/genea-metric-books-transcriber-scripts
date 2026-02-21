@@ -29,6 +29,8 @@ import base64
 import json
 import traceback
 import yaml
+import threading
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
@@ -50,6 +52,9 @@ except ImportError:
     Document = None
     print("WARNING: python-docx not installed. Word output will not be available.")
     print("Install with: pip install python-docx>=0.8.11")
+
+# Module-level logger for AI responses (used by transcribe_image)
+ai_logger = logging.getLogger('ai_responses')
 
 # ------------------------- CONFIGURATION LOADING -------------------------
 
@@ -449,6 +454,64 @@ def setup_logging(config: dict) -> tuple:
     return log_filename, ai_log_filename, ai_logger
 
 
+# ------------------------- TIMEOUT UTILITIES -------------------------
+
+class TimeoutContext:
+    """Context manager for cross-platform operation timeout using threading.Timer.
+
+    Replaces Unix-only signal-based alarms with cross-platform threading approach.
+    Timer runs in daemon thread and sets timeout flag if operation exceeds duration.
+    Automatic cleanup via __exit__ ensures timer.cancel() always called.
+
+    Args:
+        timeout_seconds: Maximum duration in seconds before timeout
+        operation_name: Descriptive name for timeout error messages
+
+    Raises:
+        TimeoutError: If operation exceeds timeout_seconds
+
+    Example:
+        try:
+            with TimeoutContext(60, "API call"):
+                response = api_client.call()
+        except TimeoutError:
+            # Handle timeout
+    """
+
+    def __init__(self, timeout_seconds: int, operation_name: str):
+        """Initialize timeout context with duration and operation name."""
+        self.timeout_seconds = timeout_seconds
+        self.operation_name = operation_name
+        self.timed_out = False
+        self.start_time = None
+        self.timer = None
+
+    def _on_timeout(self):
+        """Callback that sets timed_out flag when timer fires."""
+        self.timed_out = True
+
+    def __enter__(self):
+        """Start timer as daemon thread and record start time."""
+        self.start_time = time.time()
+        self.timer = threading.Timer(self.timeout_seconds, self._on_timeout)
+        self.timer.daemon = True  # Daemon thread won't block program exit
+        self.timer.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Cancel timer, check timed_out flag, raise TimeoutError if timeout occurred."""
+        if self.timer is not None:
+            self.timer.cancel()
+
+        if self.timed_out:
+            elapsed = time.time() - self.start_time
+            raise TimeoutError(
+                f"{self.operation_name} timed out after {self.timeout_seconds}s (elapsed: {elapsed:.1f}s)"
+            )
+
+        return False  # Don't suppress exceptions
+
+
 # ------------------------- MODE ABSTRACTION LAYER - STRATEGY PATTERN -------------------------
 
 class AuthenticationStrategy(ABC):
@@ -601,11 +664,14 @@ class LocalImageSource(ImageSourceStrategy):
         # Supported extensions (case-insensitive)
         extensions = ['*.jpg', '*.jpeg', '*.JPG', '*.JPEG']
         all_image_paths = []
-        
+
         for ext in extensions:
             pattern = os.path.join(self.image_dir, ext)
             all_image_paths.extend(glob.glob(pattern))
-        
+
+        # Deduplicate paths (Windows filesystem is case-insensitive, may return duplicates)
+        all_image_paths = list(set(all_image_paths))
+
         # Get sort method from config (default: name_asc)
         sort_method = config.get('image_sort_method', 'name_asc')
         
@@ -2735,9 +2801,6 @@ def download_image(drive_service, file_id, file_name, document_name: str):
 
 
 def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr_model_id: str):
-    import signal
-    import time
-    
     function_start_time = time.time()
     logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription for image '{file_name}' (size: {len(image_bytes)} bytes)")
     ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting transcription for {file_name} ===")
@@ -2795,37 +2858,25 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
     for attempt in range(max_retries):
         attempt_start_time = time.time()
         timeout_seconds = timeout_seconds_list[attempt]
-        
-        # Define timeout handler inside loop to properly capture timeout_seconds
-        def timeout_handler(signum, frame):
-            elapsed = time.time() - function_start_time
-            error_msg = f"Vertex AI API call timed out after {timeout_seconds/60:.1f} minutes (total elapsed: {elapsed:.1f}s) for {file_name}"
-            logging.error(f"[{datetime.now().strftime('%H:%M:%S')}] {error_msg}")
-            ai_logger.error(f"[{datetime.now().strftime('%H:%M:%S')}] TIMEOUT: {error_msg}")
-            raise TimeoutError(error_msg)
-        
+
         try:
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} for image '{file_name}' (timeout: {timeout_seconds/60:.1f} min)")
             ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] Attempt {attempt + 1}/{max_retries} starting for {file_name} (timeout: {timeout_seconds/60:.1f} min)")
-            
-            # Set up timeout with exponential backoff (1 min, 2 min, 5 min)
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(timeout_seconds)
+
+            # Cross-platform timeout using threading.Timer (replaces Unix-only signal-based alarms)
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Timeout set to {timeout_seconds/60:.1f} minutes for '{file_name}' (attempt {attempt + 1}/{max_retries})")
-            
+
             api_call_start = time.time()
             logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Making API call to Vertex AI for '{file_name}'...")
             ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] API call initiated for {file_name}")
-            
-            # Generate content
-            response = genai_client.models.generate_content(
-                model=ocr_model_id,
-                contents=[content],
-                config=generate_content_config
-            )
-            
-            # Cancel the timeout
-            signal.alarm(0)
+
+            # Generate content with timeout context
+            with TimeoutContext(timeout_seconds, f"Vertex AI call for {file_name}"):
+                response = genai_client.models.generate_content(
+                    model=ocr_model_id,
+                    contents=[content],
+                    config=generate_content_config
+                )
             
             api_call_elapsed = time.time() - api_call_start
             elapsed_time = time.time() - attempt_start_time
@@ -2887,9 +2938,6 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
             return text, elapsed_time, usage_metadata
             
         except (TimeoutError, ConnectionError, OSError) as e:
-            # Cancel any pending timeout
-            signal.alarm(0)
-            
             attempt_elapsed = time.time() - attempt_start_time
             total_elapsed = time.time() - function_start_time
             error_type = type(e).__name__
@@ -2942,9 +2990,6 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
             
             # If it's a timeout error, treat it like TimeoutError and retry
             if is_timeout_error and attempt < max_retries - 1:
-                # Cancel any pending timeout
-                signal.alarm(0)
-                
                 attempt_elapsed = time.time() - attempt_start_time
                 total_elapsed = time.time() - function_start_time
                 
@@ -2960,11 +3005,8 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
                 retry_delay *= 2  # Exponential backoff
                 logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Retry delay completed, starting attempt {attempt + 2}/{max_retries}...")
                 continue  # Explicitly continue to next iteration
-                
+
             # Not a timeout error or all retries exhausted - handle as unexpected error
-            # Cancel any pending timeout
-            signal.alarm(0)
-            
             attempt_elapsed = time.time() - attempt_start_time
             total_elapsed = time.time() - function_start_time
             error_type = type(e).__name__
