@@ -56,6 +56,24 @@ except ImportError:
 # Module-level logger for AI responses (used by transcribe_image)
 ai_logger = logging.getLogger('ai_responses')
 
+
+def get_image_mime_type(filename: str) -> str:
+    """
+    Infer MIME type from filename extension.
+
+    Falls back to JPEG to preserve existing behavior for unknown extensions.
+    """
+    extension = os.path.splitext(filename.lower())[1]
+    extension_to_mime = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.webp': 'image/webp',
+        '.heic': 'image/heic',
+        '.heif': 'image/heif',
+    }
+    return extension_to_mime.get(extension, 'image/jpeg')
+
 # ------------------------- CONFIGURATION LOADING -------------------------
 
 def load_config(config_path: str) -> dict:
@@ -662,7 +680,10 @@ class LocalImageSource(ImageSourceStrategy):
         image_count = config.get('image_count', 1000)
         
         # Supported extensions (case-insensitive)
-        extensions = ['*.jpg', '*.jpeg', '*.JPG', '*.JPEG']
+        extensions = [
+            '*.jpg', '*.jpeg', '*.png', '*.webp', '*.heic', '*.heif',
+            '*.JPG', '*.JPEG', '*.PNG', '*.WEBP', '*.HEIC', '*.HEIF'
+        ]
         all_image_paths = []
 
         for ext in extensions:
@@ -1065,9 +1086,10 @@ class GeminiDevClient(AIClientStrategy):
         logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] Starting transcription for image '{filename}' (size: {len(image_bytes)} bytes)")
         
         # Create image part
+        image_mime_type = get_image_mime_type(filename)
         image_part = types.Part.from_bytes(
             data=image_bytes,
-            mime_type="image/jpeg"
+            mime_type=image_mime_type
         )
         
         # Create content with prompt and image
@@ -2815,9 +2837,10 @@ def transcribe_image(genai_client, image_bytes, file_name, prompt_text: str, ocr
     ai_logger.info(f"[{datetime.now().strftime('%H:%M:%S')}] === Starting transcription for {file_name} ===")
     
     # Create image part using base64 encoding
+    image_mime_type = get_image_mime_type(file_name)
     image_part = types.Part.from_bytes(
         data=image_bytes,
-        mime_type="image/jpeg"
+        mime_type=image_mime_type
     )
     
             # Create content with instruction and image
@@ -3084,7 +3107,11 @@ def upload_image_to_drive(drive_service, image_bytes, filename: str, drive_folde
             'name': filename,
             'parents': [drive_folder_id]
         }
-        media = MediaIoBaseUpload(io.BytesIO(image_bytes), mimetype='image/jpeg', resumable=True)
+        media = MediaIoBaseUpload(
+            io.BytesIO(image_bytes),
+            mimetype=get_image_mime_type(filename),
+            resumable=True
+        )
         
         file = drive_service.files().create(
             body=file_metadata,
