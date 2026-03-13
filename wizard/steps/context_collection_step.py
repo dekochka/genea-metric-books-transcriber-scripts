@@ -491,10 +491,13 @@ class ContextCollectionStep(WizardStep):
         
         # List image files (aligned with Google AI API supported MIME types)
         image_extensions = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'}
-        image_files = [
-            f for f in os.listdir(image_dir)
-            if os.path.splitext(f.lower())[1] in image_extensions
-        ]
+        image_files = sorted(
+            [
+                f for f in os.listdir(image_dir)
+                if os.path.splitext(f.lower())[1] in image_extensions
+            ],
+            key=str.casefold
+        )
         
         if not image_files:
             self.console.print(f"[yellow]No image files found in {image_dir}[/yellow]")
@@ -634,10 +637,13 @@ class ContextCollectionStep(WizardStep):
             image_mime_types = {
                 'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/bmp'
             }
-            image_files = [
-                f for f in files
-                if f.get('mimeType', '').startswith('image/')
-            ]
+            image_files = sorted(
+                [
+                    f for f in files
+                    if f.get('mimeType', '').startswith('image/')
+                ],
+                key=lambda file_info: file_info.get('name', '').casefold()
+            )
             
             lang = self.controller.get_language()
             if not image_files:
